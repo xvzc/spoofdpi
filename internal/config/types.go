@@ -426,26 +426,31 @@ type HTTPSOptions struct {
 }
 
 // MarshalJSON omits FakePacket (a 64-byte buffer that's noise in trace
-// logs) and uses the enum's MarshalText for SplitMode. Length is
-// surfaced separately so the user knows whether a packet is set.
+// logs), surfaces fake-packet length separately, and renders
+// CustomSegmentPlans as a compact "N items" count for the same reason
+// MatchAttrs does — segment plans are static config the user defined,
+// not something to re-dump on every match trace.
 func (o HTTPSOptions) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Disorder           bool               `json:"disorder"`
-		FakeCount          uint8              `json:"fake-count"`
-		FakePacketLen      int                `json:"fake-packet-len,omitempty"`
-		SplitMode          HTTPSSplitModeType `json:"split-mode"`
-		ChunkSize          uint8              `json:"chunk-size"`
-		Skip               bool               `json:"skip"`
-		CustomSegmentPlans []SegmentPlan      `json:"custom-segments,omitempty"`
+	out := struct {
+		Disorder       bool               `json:"disorder"`
+		FakeCount      uint8              `json:"fake-count"`
+		FakePacketLen  int                `json:"fake-packet-len,omitempty"`
+		SplitMode      HTTPSSplitModeType `json:"split-mode"`
+		ChunkSize      uint8              `json:"chunk-size"`
+		Skip           bool               `json:"skip"`
+		CustomSegments string             `json:"custom-segments,omitempty"`
 	}{
-		Disorder:           o.Disorder,
-		FakeCount:          o.FakeCount,
-		FakePacketLen:      fakePacketLen(o.FakePacket),
-		SplitMode:          o.SplitMode,
-		ChunkSize:          o.ChunkSize,
-		Skip:               o.Skip,
-		CustomSegmentPlans: o.CustomSegmentPlans,
-	})
+		Disorder:      o.Disorder,
+		FakeCount:     o.FakeCount,
+		FakePacketLen: fakePacketLen(o.FakePacket),
+		SplitMode:     o.SplitMode,
+		ChunkSize:     o.ChunkSize,
+		Skip:          o.Skip,
+	}
+	if n := len(o.CustomSegmentPlans); n > 0 {
+		out.CustomSegments = fmt.Sprintf("%d items", n)
+	}
+	return json.Marshal(out)
 }
 
 func fakePacketLen(m *proto.TLSMessage) int {
@@ -643,8 +648,26 @@ func (a *AddrMatch) UnmarshalTOML(data any) (err error) {
 // └──────────────┘
 
 type MatchAttrs struct {
-	Domains []string    `toml:"domain" json:"domains,omitempty"`
-	Addrs   []AddrMatch `toml:"addr"   json:"addrs,omitempty"`
+	Domains []string    `toml:"domain"`
+	Addrs   []AddrMatch `toml:"addr"`
+}
+
+// MarshalJSON renders Match as compact "N items" counts instead of
+// dumping every domain/addr — match patterns are static config the
+// user already knows from their TOML, and full lists make rule-match
+// trace logs unreadable when a rule covers dozens of patterns.
+func (a MatchAttrs) MarshalJSON() ([]byte, error) {
+	out := struct {
+		Domains string `json:"domains,omitempty"`
+		Addrs   string `json:"addrs,omitempty"`
+	}{}
+	if n := len(a.Domains); n > 0 {
+		out.Domains = fmt.Sprintf("%d items", n)
+	}
+	if n := len(a.Addrs); n > 0 {
+		out.Addrs = fmt.Sprintf("%d items", n)
+	}
+	return json.Marshal(out)
 }
 
 func (a *MatchAttrs) UnmarshalTOML(data any) (err error) {

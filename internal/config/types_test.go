@@ -669,11 +669,75 @@ func TestRule_JSON_includesBlockAndRuntime(t *testing.T) {
 	assert.Contains(t, got, `"name":"blk"`)
 	assert.Contains(t, got, `"priority":50`)
 	assert.Contains(t, got, `"block":true`)
-	assert.Contains(t, got, `"match":{"domains":["example.com"]}`)
+	assert.Contains(t, got, `"match":{"domains":"1 items"}`)
 	assert.Contains(t, got, `"runtime":`)
 	assert.Contains(t, got, `"split-mode":"chunk"`)
 	assert.Contains(t, got, `"chunk-size":8`)
 	// The previously-broken short tags should be gone.
 	assert.NotContains(t, got, "qt:omitempty")
 	assert.NotContains(t, got, "ca:omitempty")
+}
+
+func TestMatchAttrs_MarshalJSON_countsOnly(t *testing.T) {
+	addr := AddrMatch{
+		CIDR: net.IPNet{
+			IP:   net.ParseIP("10.0.0.0").To4(),
+			Mask: net.CIDRMask(8, 32),
+		},
+	}
+	tcs := []struct {
+		name string
+		in   MatchAttrs
+		want string
+	}{
+		{
+			name: "domains only",
+			in:   MatchAttrs{Domains: []string{"a.com", "b.com", "c.com"}},
+			want: `{"domains":"3 items"}`,
+		},
+		{
+			name: "addrs only",
+			in:   MatchAttrs{Addrs: []AddrMatch{addr, addr}},
+			want: `{"addrs":"2 items"}`,
+		},
+		{
+			name: "both",
+			in: MatchAttrs{
+				Domains: []string{"a.com"},
+				Addrs:   []AddrMatch{addr},
+			},
+			want: `{"domains":"1 items","addrs":"1 items"}`,
+		},
+		{
+			name: "empty",
+			in:   MatchAttrs{},
+			want: `{}`,
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := json.Marshal(tc.in)
+			assert.NoError(t, err)
+			assert.JSONEq(t, tc.want, string(b))
+		})
+	}
+}
+
+func TestHTTPSOptions_MarshalJSON_customSegmentsAsCount(t *testing.T) {
+	o := HTTPSOptions{
+		SplitMode: HTTPSSplitModeCustom,
+		ChunkSize: 8,
+		CustomSegmentPlans: []SegmentPlan{
+			{From: SegmentFromHead, At: 1},
+			{From: SegmentFromHead, At: 3},
+			{From: SegmentFromSNI, At: 4},
+		},
+	}
+	b, err := json.Marshal(o)
+	assert.NoError(t, err)
+	got := string(b)
+	assert.Contains(t, got, `"custom-segments":"3 items"`)
+	// Individual plan entries must NOT appear.
+	assert.NotContains(t, got, `"At":`)
+	assert.NotContains(t, got, `"From":`)
 }
