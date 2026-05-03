@@ -147,7 +147,7 @@ func TestDomainMatcher_DuplicateDomainResolution(t *testing.T) {
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "conflict")
 		assert.Contains(t, err.Error(), "priority 10")
-		assert.Contains(t, err.Error(), "dup.example.com")
+		assert.Contains(t, err.Error(), "'dup.example.com'")
 		assert.Contains(t, err.Error(), "'first'")
 		assert.Contains(t, err.Error(), "'second'")
 	})
