@@ -27,9 +27,6 @@ var (
 			Bold(true).
 			MarginLeft(26)
 
-	logStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240"))
-
 	spinnerFrames = []string{
 		"⢀⠀", "⡀⠀", "⠄⠀", "⢂⠀", "⡂⠀", "⠅⠀", "⢃⠀", "⡃⠀", "⠍⠀", "⢋⠀", "⡋⠀", "⠍⠁", "⢋⠁", "⡋⠁",
 		"⠍⠉", "⠋⠉", "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩", "⠈⢙", "⠈⡙", "⢈⠩", "⡀⢙", "⠄⡙", "⢂⠩", "⡂⢘", "⠅⡘",
@@ -330,7 +327,7 @@ func (m model) View() string {
 	return fmt.Sprintf(
 		"%s\n%s\n%s",
 		m.headerView(),
-		logStyle.Render(m.viewport.View()),
+		m.viewport.View(),
 		m.footerView(),
 	)
 }
