@@ -72,7 +72,7 @@ func main() {
 	}
 }
 
-func runApp(mainctx context.Context, configDir string, cfg *config.Config) error {
+func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err error) {
 	appctx, cancel := signal.NotifyContext(
 		session.WithNewTraceID(mainctx),
 		syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP,
@@ -98,6 +98,27 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) error
 
 	logging.SetGlobalLogger(appctx, cfg.Startup.App.LogLevel, sw)
 	logger := log.Logger.With().Ctx(appctx).Logger()
+
+	// In TUI mode the alt-screen has already been claimed by startTUI.
+	// Letting a setup error bubble up via `return err` would land in
+	// main's fmt.Println + os.Exit(1) path, which tears down the alt
+	// screen before the user can read what went wrong.
+	//
+	// Catch the error here instead: log it through the configured logger
+	// so it shows up in the TUI, park on appctx until the user dismisses
+	// with Ctrl+C, and clear `err` so main exits cleanly.
+	//
+	// Headless mode keeps the original behavior — the error propagates
+	// to main, which prints "application failed to start" to stderr and
+	// exits with status 1.
+	defer func() {
+		if err == nil || cfg.Startup.App.NoTUI {
+			return
+		}
+		logger.Error().Err(err).Msg("startup failed")
+		<-appctx.Done()
+		err = nil
+	}()
 
 	logger.Info().Str("version", version).Msg("spoofdpi")
 	if configDir != "" {
@@ -127,8 +148,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) error
 	resolver := createResolver(logger, cfg)
 	srv, err := createServer(appctx, logger, cfg, resolver)
 	if err != nil {
-		logger.Error().Err(err).Msg("failed to create server")
-		return err
+		return fmt.Errorf("create server: %w", err)
 	}
 
 	logger.Info().Msg("dns info")
@@ -167,18 +187,18 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) error
 	}
 
 	time.Sleep(300 * time.Millisecond)
-	err = srv.ListenAndServe(appctx)
-	if err != nil {
-		logger.Error().Err(err).Msg("server failed to start")
-	} else {
-		logger.Info().Msgf("server started on %s", srv.Addr())
-		if cfg.Startup.App.AutoConfigureNetwork {
-			unset, err := srv.AutoConfigureNetwork(appctx)
-			if err != nil {
-				logger.Error().Err(err).Msg("failed to set system network config")
-			} else if unset != nil {
-				defer unset()
-			}
+	if err := srv.ListenAndServe(appctx); err != nil {
+		return fmt.Errorf("listen and serve: %w", err)
+	}
+	logger.Info().Msgf("server started on %s", srv.Addr())
+	if cfg.Startup.App.AutoConfigureNetwork {
+		unset, acErr := srv.AutoConfigureNetwork(appctx)
+		if acErr != nil {
+			// Non-fatal: server is running, just couldn't auto-set
+			// system proxy. Log and continue rather than tearing down.
+			logger.Error().Err(acErr).Msg("failed to set system network config")
+		} else if unset != nil {
+			defer unset()
 		}
 	}
 
