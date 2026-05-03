@@ -104,8 +104,8 @@ func (t *DomainMatcher) Add(r *config.Rule) error {
 		if existing := n.rule; existing != nil {
 			if existing.Priority == r.Priority {
 				return fmt.Errorf(
-					"conflicting rules with the same priority %d for domain %q: %q and %q",
-					r.Priority, domain, existing.Name, r.Name,
+					"rules '%s' and '%s' conflict on %s (priority %d)",
+					existing.Name, r.Name, domain, r.Priority,
 				)
 			}
 			if r.Priority < existing.Priority {

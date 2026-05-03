@@ -145,9 +145,10 @@ func TestDomainMatcher_DuplicateDomainResolution(t *testing.T) {
 
 		err := m.Add(mkRule("second", 10))
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "same priority")
+		assert.Contains(t, err.Error(), "conflict")
+		assert.Contains(t, err.Error(), "priority 10")
 		assert.Contains(t, err.Error(), "dup.example.com")
-		assert.Contains(t, err.Error(), `"first"`)
-		assert.Contains(t, err.Error(), `"second"`)
+		assert.Contains(t, err.Error(), "'first'")
+		assert.Contains(t, err.Error(), "'second'")
 	})
 }
