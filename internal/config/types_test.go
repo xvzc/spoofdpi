@@ -1,12 +1,15 @@
 package config
 
 import (
+	"encoding/json"
+	"net"
 	"testing"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
+	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
 // ┌─────────────────┐
@@ -512,4 +515,165 @@ split-mode = "custom"
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "custom-segments must be provided")
 	})
+}
+
+// ┌──────────────────┐
+// │ MARSHAL JSON     │
+// └──────────────────┘
+
+func TestAddrMatch_MarshalJSON(t *testing.T) {
+	tcs := []struct {
+		name string
+		in   AddrMatch
+		want string
+	}{
+		{
+			name: "cidr only",
+			in: AddrMatch{
+				CIDR: net.IPNet{IP: net.ParseIP("10.0.0.0").To4(), Mask: net.CIDRMask(8, 32)},
+			},
+			want: `{"cidr":"10.0.0.0/8"}`,
+		},
+		{
+			name: "cidr with single port",
+			in: AddrMatch{
+				CIDR: net.IPNet{
+					IP:   net.ParseIP("10.0.0.0").To4(),
+					Mask: net.CIDRMask(8, 32),
+				},
+				PortFrom: 8080,
+				PortTo:   8080,
+			},
+			want: `{"cidr":"10.0.0.0/8","ports":"8080"}`,
+		},
+		{
+			name: "cidr with port range",
+			in: AddrMatch{
+				CIDR: net.IPNet{
+					IP:   net.ParseIP("10.0.0.0").To4(),
+					Mask: net.CIDRMask(8, 32),
+				},
+				PortFrom: 80,
+				PortTo:   443,
+			},
+			want: `{"cidr":"10.0.0.0/8","ports":"80-443"}`,
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := json.Marshal(tc.in)
+			assert.NoError(t, err)
+			assert.Equal(t, tc.want, string(b))
+		})
+	}
+}
+
+func TestEnums_MarshalText_StringForms(t *testing.T) {
+	tcs := []struct {
+		name string
+		in   any
+		want string
+	}{
+		{"DNSMode udp", DNSModeUDP, `"udp"`},
+		{"DNSMode https", DNSModeHTTPS, `"https"`},
+		{"DNSQuery ipv4", DNSQueryIPv4, `"ipv4"`},
+		{"HTTPSSplitMode chunk", HTTPSSplitModeChunk, `"chunk"`},
+		{"AppMode socks5", AppModeSOCKS5, `"socks5"`},
+		{"SegmentFrom sni", SegmentFromSNI, `"sni"`},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := json.Marshal(tc.in)
+			assert.NoError(t, err)
+			assert.Equal(t, tc.want, string(b))
+		})
+	}
+}
+
+func TestConnOptions_MarshalJSON_durationsAsString(t *testing.T) {
+	o := ConnOptions{
+		DefaultFakeTTL: 8,
+		DNSTimeout:     5000 * time.Millisecond,
+		TCPTimeout:     10000 * time.Millisecond,
+		UDPIdleTimeout: 25000 * time.Millisecond,
+	}
+	b, err := json.Marshal(o)
+	assert.NoError(t, err)
+	const want = `{"default-fake-ttl":8,"dns-timeout":"5s",` +
+		`"tcp-timeout":"10s","udp-idle-timeout":"25s"}`
+	assert.JSONEq(t, want, string(b))
+}
+
+func TestDNSOptions_MarshalJSON_addrAsString(t *testing.T) {
+	o := DNSOptions{
+		Mode:     DNSModeHTTPS,
+		Addr:     net.TCPAddr{IP: net.ParseIP("8.8.8.8"), Port: 53},
+		HTTPSURL: "https://dns.google/dns-query",
+		QType:    DNSQueryIPv4,
+		Cache:    true,
+	}
+	b, err := json.Marshal(o)
+	assert.NoError(t, err)
+	const want = `{"mode":"https","addr":"8.8.8.8:53",` +
+		`"https-url":"https://dns.google/dns-query",` +
+		`"qtype":"ipv4","cache":true}`
+	assert.JSONEq(t, want, string(b))
+}
+
+func TestHTTPSOptions_MarshalJSON_omitsFakePacketBytes(t *testing.T) {
+	o := HTTPSOptions{
+		Disorder:   false,
+		FakeCount:  2,
+		FakePacket: proto.NewFakeTLSMessage([]byte{0x01, 0x02, 0x03}),
+		SplitMode:  HTTPSSplitModeChunk,
+		ChunkSize:  8,
+		Skip:       false,
+	}
+	b, err := json.Marshal(o)
+	assert.NoError(t, err)
+	got := string(b)
+	assert.NotContains(t, got, "fake-packet\":")
+	assert.Contains(t, got, `"fake-packet-len":3`)
+	assert.Contains(t, got, `"split-mode":"chunk"`)
+}
+
+func TestUDPOptions_MarshalJSON_omitsFakePacketBytes(t *testing.T) {
+	o := UDPOptions{
+		FakeCount:  0,
+		FakePacket: make([]byte, 64),
+	}
+	b, err := json.Marshal(o)
+	assert.NoError(t, err)
+	got := string(b)
+	assert.NotContains(t, got, "fake-packet\":")
+	assert.Contains(t, got, `"fake-packet-len":64`)
+}
+
+func TestRule_JSON_includesBlockAndRuntime(t *testing.T) {
+	cfg := DefaultConfig()
+	rt := cfg.Runtime
+	rt.HTTPS.SplitMode = HTTPSSplitModeChunk
+	rt.HTTPS.ChunkSize = 8
+
+	rule := &Rule{
+		Name:     "blk",
+		Priority: 50,
+		Block:    true,
+		Match: &MatchAttrs{
+			Domains: []string{"example.com"},
+		},
+		Runtime: rt,
+	}
+
+	got := string(rule.JSON())
+	assert.Contains(t, got, `"name":"blk"`)
+	assert.Contains(t, got, `"priority":50`)
+	assert.Contains(t, got, `"block":true`)
+	assert.Contains(t, got, `"match":{"domains":["example.com"]}`)
+	assert.Contains(t, got, `"runtime":`)
+	assert.Contains(t, got, `"split-mode":"chunk"`)
+	assert.Contains(t, got, `"chunk-size":8`)
+	// The previously-broken short tags should be gone.
+	assert.NotContains(t, got, "qt:omitempty")
+	assert.NotContains(t, got, "ca:omitempty")
 }

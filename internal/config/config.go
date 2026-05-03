@@ -34,10 +34,10 @@ type StartupConfig struct {
 // so adding a new section doesn't require touching every signature, and
 // rule overrides can swap the whole RuntimeConfig in a single assignment.
 type RuntimeConfig struct {
-	Conn  ConnOptions
-	DNS   DNSOptions
-	HTTPS HTTPSOptions
-	UDP   UDPOptions
+	Conn  ConnOptions  `json:"conn"`
+	DNS   DNSOptions   `json:"dns"`
+	HTTPS HTTPSOptions `json:"https"`
+	UDP   UDPOptions   `json:"udp"`
 }
 
 func (c *Config) UnmarshalTOML(data any) (err error) {

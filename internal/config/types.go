@@ -92,6 +92,10 @@ func (t AppModeType) String() string {
 	return availableAppModeValues[t]
 }
 
+func (t AppModeType) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
+}
+
 // ┌────────────────────┐
 // │ CONNECTION OPTIONS │
 // └────────────────────┘
@@ -101,6 +105,22 @@ type ConnOptions struct {
 	DNSTimeout     time.Duration `toml:"dns-timeout"`
 	TCPTimeout     time.Duration `toml:"tcp-timeout"`
 	UDPIdleTimeout time.Duration `toml:"udp-idle-timeout"`
+}
+
+// MarshalJSON renders durations via String() (e.g. "10s") instead of
+// raw nanoseconds so trace logs are readable.
+func (o ConnOptions) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		DefaultFakeTTL uint8  `json:"default-fake-ttl"`
+		DNSTimeout     string `json:"dns-timeout"`
+		TCPTimeout     string `json:"tcp-timeout"`
+		UDPIdleTimeout string `json:"udp-idle-timeout"`
+	}{
+		DefaultFakeTTL: o.DefaultFakeTTL,
+		DNSTimeout:     o.DNSTimeout.String(),
+		TCPTimeout:     o.TCPTimeout.String(),
+		UDPIdleTimeout: o.UDPIdleTimeout.String(),
+	})
 }
 
 func (o *ConnOptions) UnmarshalTOML(data any) (err error) {
@@ -187,16 +207,43 @@ func (t DNSModeType) String() string {
 	return availableDNSModeValues[t]
 }
 
+func (t DNSModeType) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
+}
+
 func (t DNSQueryType) String() string {
 	return availableDNSQueryValues[t]
 }
 
+func (t DNSQueryType) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
+}
+
 type DNSOptions struct {
-	Mode     DNSModeType  `toml:"mode"      json:"mo,omitempty"`
-	Addr     net.TCPAddr  `toml:"addr"      json:"ad,omitempty"`
-	HTTPSURL string       `toml:"https-url" json:"hu,omitempty"`
-	QType    DNSQueryType `toml:"qtype"     json:"qt:omitempty"`
-	Cache    bool         `toml:"cache"     json:"ca:omitempty"`
+	Mode     DNSModeType  `toml:"mode"`
+	Addr     net.TCPAddr  `toml:"addr"`
+	HTTPSURL string       `toml:"https-url"`
+	QType    DNSQueryType `toml:"qtype"`
+	Cache    bool         `toml:"cache"`
+}
+
+// MarshalJSON renders Addr as "host:port" (net.TCPAddr's default
+// JSON dumps each field separately) and lets the enums use their
+// MarshalText for string output.
+func (o DNSOptions) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Mode     DNSModeType  `json:"mode"`
+		Addr     string       `json:"addr"`
+		HTTPSURL string       `json:"https-url"`
+		QType    DNSQueryType `json:"qtype"`
+		Cache    bool         `json:"cache"`
+	}{
+		Mode:     o.Mode,
+		Addr:     o.Addr.String(),
+		HTTPSURL: o.HTTPSURL,
+		QType:    o.QType,
+		Cache:    o.Cache,
+	})
 }
 
 func (o *DNSOptions) UnmarshalTOML(data any) (err error) {
@@ -309,6 +356,10 @@ func (k HTTPSSplitModeType) String() string {
 	return availableHTTPSModeValues[k]
 }
 
+func (k HTTPSSplitModeType) MarshalText() ([]byte, error) {
+	return []byte(k.String()), nil
+}
+
 type SegmentFromType int
 
 var availableSegmentFromValues = []string{"head", "sni"}
@@ -320,6 +371,10 @@ const (
 
 func (s SegmentFromType) String() string {
 	return availableSegmentFromValues[s]
+}
+
+func (s SegmentFromType) MarshalText() ([]byte, error) {
+	return []byte(s.String()), nil
 }
 
 type SegmentPlan struct {
@@ -361,13 +416,43 @@ func (s *SegmentPlan) UnmarshalTOML(data any) (err error) {
 }
 
 type HTTPSOptions struct {
-	Disorder           bool               `toml:"disorder"        json:"ds,omitempty"`
-	FakeCount          uint8              `toml:"fake-count"      json:"fc,omitempty"`
-	FakePacket         *proto.TLSMessage  `toml:"fake-packet"     json:"fp,omitempty"`
-	SplitMode          HTTPSSplitModeType `toml:"split-mode"      json:"sm,omitempty"`
-	ChunkSize          uint8              `toml:"chunk-size"      json:"cs,omitempty"`
-	Skip               bool               `toml:"skip"            json:"sk,omitempty"`
-	CustomSegmentPlans []SegmentPlan      `toml:"custom-segments" json:"cseg,omitempty"`
+	Disorder           bool               `toml:"disorder"`
+	FakeCount          uint8              `toml:"fake-count"`
+	FakePacket         *proto.TLSMessage  `toml:"fake-packet"`
+	SplitMode          HTTPSSplitModeType `toml:"split-mode"`
+	ChunkSize          uint8              `toml:"chunk-size"`
+	Skip               bool               `toml:"skip"`
+	CustomSegmentPlans []SegmentPlan      `toml:"custom-segments"`
+}
+
+// MarshalJSON omits FakePacket (a 64-byte buffer that's noise in trace
+// logs) and uses the enum's MarshalText for SplitMode. Length is
+// surfaced separately so the user knows whether a packet is set.
+func (o HTTPSOptions) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Disorder           bool               `json:"disorder"`
+		FakeCount          uint8              `json:"fake-count"`
+		FakePacketLen      int                `json:"fake-packet-len,omitempty"`
+		SplitMode          HTTPSSplitModeType `json:"split-mode"`
+		ChunkSize          uint8              `json:"chunk-size"`
+		Skip               bool               `json:"skip"`
+		CustomSegmentPlans []SegmentPlan      `json:"custom-segments,omitempty"`
+	}{
+		Disorder:           o.Disorder,
+		FakeCount:          o.FakeCount,
+		FakePacketLen:      fakePacketLen(o.FakePacket),
+		SplitMode:          o.SplitMode,
+		ChunkSize:          o.ChunkSize,
+		Skip:               o.Skip,
+		CustomSegmentPlans: o.CustomSegmentPlans,
+	})
+}
+
+func fakePacketLen(m *proto.TLSMessage) int {
+	if m == nil {
+		return 0
+	}
+	return len(m.Raw())
 }
 
 func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
@@ -439,8 +524,21 @@ func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
 // └─────────────┘
 
 type UDPOptions struct {
-	FakeCount  int    `toml:"fake-count"  json:"fc,omitempty"`
-	FakePacket []byte `toml:"fake-packet" json:"fp,omitempty"`
+	FakeCount  int    `toml:"fake-count"`
+	FakePacket []byte `toml:"fake-packet"`
+}
+
+// MarshalJSON omits the raw FakePacket bytes (default is 64 zeros,
+// dumped as base64 they're trace-log noise) but surfaces the length
+// so the user can tell whether a packet is configured.
+func (o UDPOptions) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		FakeCount     int `json:"fake-count"`
+		FakePacketLen int `json:"fake-packet-len,omitempty"`
+	}{
+		FakeCount:     o.FakeCount,
+		FakePacketLen: len(o.FakePacket),
+	})
 }
 
 func (o *UDPOptions) UnmarshalTOML(data any) (err error) {
@@ -499,9 +597,28 @@ func (o *PolicyOptions) UnmarshalTOML(data any) error {
 // └──────────────┘
 
 type AddrMatch struct {
-	CIDR     net.IPNet `toml:"cidr" json:"cd,omitempty"`
-	PortFrom uint16    `toml:"port" json:"pf,omitempty"`
-	PortTo   uint16    `toml:"port" json:"pt,omitempty"`
+	CIDR     net.IPNet `toml:"cidr"`
+	PortFrom uint16    `toml:"port"`
+	PortTo   uint16    `toml:"port"`
+}
+
+// MarshalJSON renders an AddrMatch in human-friendly form for trace
+// logs: net.IPNet's default JSON dumps the mask as base64, and
+// PortFrom/PortTo as separate ints obscure that they're a range.
+func (a AddrMatch) MarshalJSON() ([]byte, error) {
+	out := struct {
+		CIDR  string `json:"cidr"`
+		Ports string `json:"ports,omitempty"`
+	}{CIDR: a.CIDR.String()}
+	switch {
+	case a.PortFrom == 0 && a.PortTo == 0:
+		// no port constraint — leave Ports empty
+	case a.PortFrom == a.PortTo:
+		out.Ports = fmt.Sprintf("%d", a.PortFrom)
+	default:
+		out.Ports = fmt.Sprintf("%d-%d", a.PortFrom, a.PortTo)
+	}
+	return json.Marshal(out)
 }
 
 func (a *AddrMatch) UnmarshalTOML(data any) (err error) {
@@ -526,8 +643,8 @@ func (a *AddrMatch) UnmarshalTOML(data any) (err error) {
 // └──────────────┘
 
 type MatchAttrs struct {
-	Domains []string    `toml:"domain" json:"do,omitempty"`
-	Addrs   []AddrMatch `toml:"addr"   json:"ad,omitempty"`
+	Domains []string    `toml:"domain" json:"domains,omitempty"`
+	Addrs   []AddrMatch `toml:"addr"   json:"addrs,omitempty"`
 }
 
 func (a *MatchAttrs) UnmarshalTOML(data any) (err error) {
@@ -560,11 +677,11 @@ func (a *MatchAttrs) UnmarshalTOML(data any) (err error) {
 // └──────┘
 
 type Rule struct {
-	Name     string        `toml:"name"     json:"nm,omitempty"`
-	Priority uint16        `toml:"priority" json:"pr,omitempty"`
-	Block    bool          `toml:"block"    json:"bk,omitempty"`
-	Match    *MatchAttrs   `toml:"match"    json:"mt,omitempty"`
-	Runtime  RuntimeConfig `toml:"-"        json:"R,omitempty"`
+	Name     string        `toml:"name"     json:"name"`
+	Priority uint16        `toml:"priority" json:"priority"`
+	Block    bool          `toml:"block"    json:"block"`
+	Match    *MatchAttrs   `toml:"match"    json:"match,omitempty"`
+	Runtime  RuntimeConfig `toml:"-"        json:"runtime"`
 }
 
 // UnmarshalTOML decodes the standalone fields of a Rule. The per-section
@@ -601,27 +718,14 @@ func (r *Rule) Clone() *Rule {
 	return &c
 }
 
+// JSON returns the rule serialized for trace logging. Per-section
+// MarshalJSON handles enum-as-string, addr-as-"host:port",
+// duration-as-string, IPNet-as-CIDR, and elides large fake-packet
+// buffers in favor of a length, so the output is compact and
+// human-readable on a single line.
 func (r *Rule) JSON() []byte {
-	data := map[string]any{
-		"name":     r.Name,
-		"priority": r.Priority,
-	}
-
-	if r.Match == nil {
-		data["match"] = nil
-	} else {
-		mm := map[string]any{}
-		if r.Match.Addrs != nil {
-			mm["addr"] = fmt.Sprintf("%v items", len(r.Match.Addrs))
-		}
-		if r.Match.Domains != nil {
-			mm["domain"] = fmt.Sprintf("%v items", len(r.Match.Domains))
-		}
-		data["match"] = mm
-	}
-
-	bytes, _ := json.Marshal(data)
-	return bytes
+	b, _ := json.Marshal(r)
+	return b
 }
 
 // MustParseLogLevel keeps the legacy string-to-zerolog conversion exported
