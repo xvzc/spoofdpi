@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
@@ -182,6 +183,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.viewport.Width = msg.Width
 			m.viewport.Height = msg.Height - verticalMarginHeight
+			m.updateViewport()
 		}
 
 	case spinner.TickMsg:
@@ -242,7 +244,18 @@ func (m *model) updateViewport() {
 		return
 	}
 	isAtBottom := m.viewport.AtBottom()
-	m.viewport.SetContent(strings.Join(m.filteredLogs, "\n"))
+	// bubbles/viewport horizontally cuts lines wider than its width instead
+	// of wrapping. Pre-wrap so each logical line fits and nothing gets
+	// chopped off the right edge.
+	width := m.viewport.Width
+	if width <= 0 {
+		width = 80
+	}
+	wrapped := make([]string, len(m.filteredLogs))
+	for i, line := range m.filteredLogs {
+		wrapped[i] = ansi.Wrap(line, width, " ")
+	}
+	m.viewport.SetContent(strings.Join(wrapped, "\n"))
 	if isAtBottom {
 		m.viewport.GotoBottom()
 	}
