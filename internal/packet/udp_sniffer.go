@@ -10,6 +10,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/cache"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/session"
 )
 
 var _ Sniffer = (*UDPSniffer)(nil)
@@ -55,7 +56,7 @@ func (us *UDPSniffer) StartCapturing() {
 	// Start a dedicated goroutine to process incoming packets.
 	go func() {
 		for packet := range packets {
-			us.processPacket(context.Background(), packet)
+			us.processPacket(session.WithNewTraceID(context.Background()), packet)
 		}
 	}()
 }
