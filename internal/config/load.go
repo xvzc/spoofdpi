@@ -35,7 +35,7 @@ func Load(cmd *cli.Command, cliOverrides []func(*Config)) (*Config, string, erro
 		return nil, "", err
 	}
 
-	rules, err := resolveRules(rawRules, cfg.Runtime, &cfg.WarnMsgs)
+	rules, err := resolveRules(rawRules, cfg.Runtime)
 	if err != nil {
 		return nil, "", err
 	}
@@ -116,11 +116,7 @@ func extractRawOverrides(path string) ([]map[string]any, error) {
 // preserves existing values for absent keys, sparse rule overrides
 // inherit unset fields from base — that's the point of doing this
 // after Finalize rather than at decode time.
-func resolveRules(
-	raw []map[string]any,
-	base RuntimeConfig,
-	warnMsgs *[]string,
-) ([]Rule, error) {
+func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 	rules := make([]Rule, 0, len(raw))
 	for i, item := range raw {
 		r := Rule{ //exhaustruct:enforce
@@ -130,6 +126,15 @@ func resolveRules(
 			Match:    nil,
 			Runtime:  base,
 		}
+
+		// Override semantics: https.skip is intentionally NOT inherited
+		// from base. Policy overrides always start with skip=false; only
+		// the rule's own TOML can set it to true. This way a global
+		// https.skip=true on the static config can leave non-matched
+		// traffic alone without silently turning override rules into
+		// no-ops. The rule's HTTPS UnmarshalTOML below will overwrite
+		// this only if the rule explicitly sets skip.
+		r.Runtime.HTTPS.Skip = false
 
 		if v, ok := item["name"].(string); ok {
 			r.Name = v
@@ -171,34 +176,7 @@ func resolveRules(
 			}
 		}
 
-		// Transitional: rules currently inherit base's https.skip when they
-		// don't set it explicitly, which makes a global skip=true silently
-		// disable desync inside otherwise-tuned rules. Force-reset to false
-		// when no explicit skip is present and warn the user — eventually
-		// resolveRules will require https.skip to be set explicitly.
-		if !hasExplicitKey(item, "https", "skip") && base.HTTPS.Skip {
-			label := r.Name
-			if label == "" {
-				label = fmt.Sprintf("#%d", i)
-			}
-			*warnMsgs = append(*warnMsgs, fmt.Sprintf(
-				"policy override %q inherits https.skip=true from base; auto-resetting to false. Set [policy.overrides.https].skip explicitly — this auto-reset will be removed in a future version.",
-				label,
-			))
-			r.Runtime.HTTPS.Skip = false
-		}
-
 		rules = append(rules, r)
 	}
 	return rules, nil
-}
-
-// hasExplicitKey reports whether item[section] is a table that contains key.
-func hasExplicitKey(item map[string]any, section, key string) bool {
-	sub, ok := item[section].(map[string]any)
-	if !ok {
-		return false
-	}
-	_, present := sub[key]
-	return present
 }
