@@ -97,12 +97,23 @@ func (t *DomainMatcher) Add(r *config.Rule) error {
 			}
 		}
 
-		if n.rule != nil {
-			// Use %q for quoted strings. It formats "example.com" automatically.
-			return fmt.Errorf("exact same rule already exists: %q", domain)
+		// Resolve collisions by priority instead of refusing them outright.
+		// Two rules covering the exact same domain are only ambiguous when
+		// they share a priority — different priorities are deterministic
+		// (the higher priority wins, the lower one is dropped).
+		if existing := n.rule; existing != nil {
+			if existing.Priority == r.Priority {
+				return fmt.Errorf(
+					"conflicting rules with the same priority %d for domain %q: %q and %q",
+					r.Priority, domain, existing.Name, r.Name,
+				)
+			}
+			if r.Priority < existing.Priority {
+				continue // existing has higher priority — keep it
+			}
+			// new rule has higher priority — fall through to overwrite
 		}
 
-		// Update the rule at this node.
 		n.rule = r
 	}
 

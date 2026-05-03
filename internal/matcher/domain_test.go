@@ -105,3 +105,49 @@ func TestDomainMatcher(t *testing.T) {
 }
 
 func domainPtr(s string) *string { return &s }
+
+// TestDomainMatcher_DuplicateDomainResolution pins the priority-based
+// collision policy: two rules covering the exact same domain are
+// only rejected when they share a priority. Different priorities are
+// deterministic — the higher priority wins, the lower one is dropped.
+func TestDomainMatcher_DuplicateDomainResolution(t *testing.T) {
+	mkRule := func(name string, priority uint16) *config.Rule {
+		return &config.Rule{
+			Name:     name,
+			Priority: priority,
+			Match:    &config.MatchAttrs{Domains: []string{"dup.example.com"}},
+		}
+	}
+
+	t.Run("higher-priority new rule overwrites existing", func(t *testing.T) {
+		m := NewDomainMatcher()
+		assert.NoError(t, m.Add(mkRule("low", 10)))
+		assert.NoError(t, m.Add(mkRule("high", 20)))
+
+		got := m.Search(&Selector{Domain: domainPtr("dup.example.com")})
+		assert.NotNil(t, got)
+		assert.Equal(t, "high", got.Name)
+	})
+
+	t.Run("lower-priority new rule is dropped silently", func(t *testing.T) {
+		m := NewDomainMatcher()
+		assert.NoError(t, m.Add(mkRule("high", 20)))
+		assert.NoError(t, m.Add(mkRule("low", 10)))
+
+		got := m.Search(&Selector{Domain: domainPtr("dup.example.com")})
+		assert.NotNil(t, got)
+		assert.Equal(t, "high", got.Name)
+	})
+
+	t.Run("equal priority returns error", func(t *testing.T) {
+		m := NewDomainMatcher()
+		assert.NoError(t, m.Add(mkRule("first", 10)))
+
+		err := m.Add(mkRule("second", 10))
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "same priority")
+		assert.Contains(t, err.Error(), "dup.example.com")
+		assert.Contains(t, err.Error(), `"first"`)
+		assert.Contains(t, err.Error(), `"second"`)
+	})
+}
