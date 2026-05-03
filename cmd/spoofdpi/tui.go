@@ -250,7 +250,7 @@ func (m *model) updateViewport() {
 	}
 	wrapped := make([]string, len(m.filteredLogs))
 	for i, line := range m.filteredLogs {
-		wrapped[i] = ansi.Wrap(line, width, " ")
+		wrapped[i] = ansi.Hardwrap(line, width, false)
 	}
 	m.viewport.SetContent(strings.Join(wrapped, "\n"))
 	if isAtBottom {
