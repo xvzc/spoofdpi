@@ -115,7 +115,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 		if err == nil || cfg.Startup.App.NoTUI {
 			return
 		}
-		logger.Error().Err(err).Msg("startup failed")
+		logger.Error().Err(err).Msg("application failed to start")
 		<-appctx.Done()
 		err = nil
 	}()
