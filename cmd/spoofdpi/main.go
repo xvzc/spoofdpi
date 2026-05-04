@@ -342,7 +342,8 @@ func createServer(
 			ruleMatcher,
 			tcpSniffer,
 			sysNet,
-			cfg,
+			cfg.Startup.App.ListenAddr,
+			&cfg.Runtime,
 		), nil
 	case config.AppModeSOCKS5:
 		connectHandler := socks5.NewConnectHandler(
@@ -379,7 +380,8 @@ func createServer(
 				logging.WithScope(logger, "sys"),
 				defaultRoute,
 			),
-			cfg,
+			cfg.Startup.App.ListenAddr,
+			&cfg.Runtime,
 		), nil
 	case config.AppModeTUN:
 		if err != nil {

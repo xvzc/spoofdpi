@@ -33,10 +33,11 @@ type HTTPProxy struct {
 	httpHandler  *HTTPHandler
 	httpsHandler *HTTPSHandler
 	ruleMatcher  matcher.RuleMatcher
-	sysNet       HTTPSystemNetwork
 
 	tcpSniffer packet.Sniffer
-	cfg        *config.Config
+	sysNet     HTTPSystemNetwork
+	listenAddr net.TCPAddr
+	rt         *config.RuntimeConfig
 }
 
 func NewHTTPProxy(
@@ -47,7 +48,8 @@ func NewHTTPProxy(
 	ruleMatcher matcher.RuleMatcher,
 	tcpSniffer packet.Sniffer,
 	sysNet HTTPSystemNetwork,
-	cfg *config.Config,
+	listenAddr net.TCPAddr,
+	rt *config.RuntimeConfig,
 ) server.Server {
 	return &HTTPProxy{
 		logger:       logger,
@@ -57,7 +59,8 @@ func NewHTTPProxy(
 		ruleMatcher:  ruleMatcher,
 		tcpSniffer:   tcpSniffer,
 		sysNet:       sysNet,
-		cfg:          cfg,
+		listenAddr:   listenAddr,
+		rt:           rt,
 	}
 }
 
@@ -70,11 +73,11 @@ func (p *HTTPProxy) ListenAndServe(
 		p.tcpSniffer.StartCapturing()
 	}
 
-	listener, err := net.ListenTCP("tcp", &p.cfg.Startup.App.ListenAddr)
+	listener, err := net.ListenTCP("tcp", &p.listenAddr)
 	if err != nil {
 		return fmt.Errorf(
 			"error creating listener on %s: %w",
-			p.cfg.Startup.App.ListenAddr.String(),
+			p.listenAddr.String(),
 			err,
 		)
 	}
@@ -128,7 +131,7 @@ func (p *HTTPProxy) AutoConfigureNetwork(ctx context.Context) (func(), error) {
 
 	pacContent := fmt.Sprintf(`function FindProxyForURL(url, host) {
     return "PROXY 127.0.0.1:%d; DIRECT";
-}`, p.cfg.Startup.App.ListenAddr.Port)
+}`, p.listenAddr.Port)
 
 	pacURL, pacServer, err := netutil.RunPACServer(pacContent)
 	if err != nil {
@@ -136,7 +139,7 @@ func (p *HTTPProxy) AutoConfigureNetwork(ctx context.Context) (func(), error) {
 	}
 
 	newState, err := createState(
-		p.sysNet.DefaultRoute(), uint16(p.cfg.Startup.App.ListenAddr.Port), pacURL,
+		p.sysNet.DefaultRoute(), uint16(p.listenAddr.Port), pacURL,
 	)
 	if err != nil {
 		_ = pacServer.Close()
@@ -192,7 +195,7 @@ func (p *HTTPProxy) AutoConfigureNetwork(ctx context.Context) (func(), error) {
 }
 
 func (p *HTTPProxy) Addr() string {
-	return p.cfg.Startup.App.ListenAddr.String()
+	return p.listenAddr.String()
 }
 
 func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
@@ -261,11 +264,11 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 		Domain:  host, // Updated from Domain to Host
 		Addrs:   addrs,
 		Port:    dstPort,
-		Timeout: p.cfg.Runtime.Conn.TCPTimeout,
+		Timeout: p.rt.Conn.TCPTimeout,
 	}
 
 	// Avoid recursively querying self.
-	ok, err := dst.IsValid(&p.cfg.Startup.App.ListenAddr)
+	ok, err := dst.IsValid(&p.listenAddr)
 	if err != nil {
 		logger.Debug().Err(err).Msg("error validating dst addrs")
 		if !ok {

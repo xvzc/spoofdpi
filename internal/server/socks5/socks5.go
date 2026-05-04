@@ -37,11 +37,12 @@ type SOCKS5Proxy struct {
 	connectHandler      *ConnectHandler
 	bindHandler         *BindHandler
 	udpAssociateHandler *UdpAssociateHandler
-	sysNet              SOCKS5SystemNetwork
 
 	tcpSniffer packet.Sniffer
 	udpSniffer packet.Sniffer
-	cfg        *config.Config
+	sysNet     SOCKS5SystemNetwork
+	listenAddr net.TCPAddr
+	rt         *config.RuntimeConfig
 }
 
 func NewSOCKS5Proxy(
@@ -54,7 +55,8 @@ func NewSOCKS5Proxy(
 	tcpSniffer packet.Sniffer,
 	udpSniffer packet.Sniffer,
 	sysNet SOCKS5SystemNetwork,
-	cfg *config.Config,
+	listenAddr net.TCPAddr,
+	rt *config.RuntimeConfig,
 ) server.Server {
 	return &SOCKS5Proxy{
 		logger:              logger,
@@ -66,7 +68,8 @@ func NewSOCKS5Proxy(
 		tcpSniffer:          tcpSniffer,
 		udpSniffer:          udpSniffer,
 		sysNet:              sysNet,
-		cfg:                 cfg,
+		listenAddr:          listenAddr,
+		rt:                  rt,
 	}
 }
 
@@ -82,11 +85,11 @@ func (p *SOCKS5Proxy) ListenAndServe(
 		p.udpSniffer.StartCapturing()
 	}
 
-	listener, err := net.ListenTCP("tcp", &p.cfg.Startup.App.ListenAddr)
+	listener, err := net.ListenTCP("tcp", &p.listenAddr)
 	if err != nil {
 		return fmt.Errorf(
 			"error creating listener on %s: %w",
-			p.cfg.Startup.App.ListenAddr.String(),
+			p.listenAddr.String(),
 			err,
 		)
 	}
@@ -140,7 +143,7 @@ func (p *SOCKS5Proxy) AutoConfigureNetwork(ctx context.Context) (func(), error) 
 
 	pacContent := fmt.Sprintf(`function FindProxyForURL(url, host) {
     return "SOCKS5 127.0.0.1:%d; DIRECT";
-}`, p.cfg.Startup.App.ListenAddr.Port)
+}`, p.listenAddr.Port)
 
 	pacURL, pacServer, err := netutil.RunPACServer(pacContent)
 	if err != nil {
@@ -148,7 +151,7 @@ func (p *SOCKS5Proxy) AutoConfigureNetwork(ctx context.Context) (func(), error) 
 	}
 
 	newState, err := createState(
-		p.sysNet.DefaultRoute(), uint16(p.cfg.Startup.App.ListenAddr.Port), pacURL,
+		p.sysNet.DefaultRoute(), uint16(p.listenAddr.Port), pacURL,
 	)
 	if err != nil {
 		_ = pacServer.Close()
@@ -204,7 +207,7 @@ func (p *SOCKS5Proxy) AutoConfigureNetwork(ctx context.Context) (func(), error) 
 }
 
 func (p *SOCKS5Proxy) Addr() string {
-	return p.cfg.Startup.App.ListenAddr.String()
+	return p.listenAddr.String()
 }
 
 func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
@@ -286,7 +289,7 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 			Domain:  req.FQDN,
 			Addrs:   addrs,
 			Port:    req.Port,
-			Timeout: p.cfg.Runtime.Conn.TCPTimeout,
+			Timeout: p.rt.Conn.TCPTimeout,
 		}
 		if err = p.connectHandler.Handle(ctx, conn, req, dst, bestMatch); err != nil {
 			return // Handler logs error
