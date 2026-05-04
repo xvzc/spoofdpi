@@ -232,22 +232,21 @@ func (nd *NetworkDetector) GetGatewayMAC() net.HardwareAddr {
 	return nd.gatewayMAC
 }
 
-func (nd *NetworkDetector) WaitForGatewayMAC(
-	ctx context.Context,
-) (net.HardwareAddr, error) {
+// WaitForGatewayMAC blocks until the passive detector has observed the
+// upstream gateway's MAC address (or until ctx is cancelled). It does
+// not return the MAC — callers read it back via GetGatewayMAC() once
+// this returns. A nil MAC after wait means detection didn't complete
+// in time.
+func (nd *NetworkDetector) WaitForGatewayMAC(ctx context.Context) {
 	if nd.iface.HardwareAddr == nil {
-		return nil, nil
+		return
 	}
-
 	if nd.IsFound() {
-		return nd.GetGatewayMAC(), nil
+		return
 	}
-
 	select {
 	case <-nd.found:
-		return nd.GetGatewayMAC(), nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
 }
 

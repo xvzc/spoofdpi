@@ -15,6 +15,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/matcher"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"github.com/xvzc/spoofdpi/internal/session"
@@ -34,7 +35,8 @@ type HTTPProxy struct {
 	ruleMatcher  matcher.RuleMatcher
 	sysNet       HTTPSystemNetwork
 
-	cfg *config.Config
+	tcpSniffer packet.Sniffer
+	cfg        *config.Config
 }
 
 func NewHTTPProxy(
@@ -44,6 +46,7 @@ func NewHTTPProxy(
 	httpsHandler *HTTPSHandler,
 	ruleMatcher matcher.RuleMatcher,
 	sysNet HTTPSystemNetwork,
+	tcpSniffer packet.Sniffer,
 	cfg *config.Config,
 ) server.Server {
 	return &HTTPProxy{
@@ -53,6 +56,7 @@ func NewHTTPProxy(
 		httpsHandler: httpsHandler,
 		ruleMatcher:  ruleMatcher,
 		sysNet:       sysNet,
+		tcpSniffer:   tcpSniffer,
 		cfg:          cfg,
 	}
 }
@@ -60,6 +64,12 @@ func NewHTTPProxy(
 func (p *HTTPProxy) ListenAndServe(
 	appctx context.Context,
 ) error {
+	// Start pcap capture only if a sniffer was supplied
+	// (i.e., cfg.NeedsRawTCP() was true at startup).
+	if p.tcpSniffer != nil {
+		p.tcpSniffer.StartCapturing()
+	}
+
 	listener, err := net.ListenTCP("tcp", &p.cfg.Startup.App.ListenAddr)
 	if err != nil {
 		return fmt.Errorf(

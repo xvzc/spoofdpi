@@ -13,27 +13,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
-func TestCreateResolver(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Runtime.DNS = config.DNSOptions{
-		Mode:     config.DNSModeUDP,
-		Addr:     net.TCPAddr{IP: net.ParseIP("8.8.8.8"), Port: 53},
-		HTTPSURL: "https://dns.google/dns-query",
-		QType:    config.DNSQueryIPv4,
-		Cache:    true,
-	}
-	cfg.Runtime.Conn = config.ConnOptions{
-		DNSTimeout:     time.Duration(0),
-		TCPTimeout:     time.Duration(0),
-		UDPIdleTimeout: time.Duration(0),
-	}
-
-	logger := zerolog.Nop()
-	resolver := createResolver(logger, cfg)
-
-	assert.NotNil(t, resolver)
-}
-
 func TestCreateProxy_NoPcap(t *testing.T) {
 	// Setup configuration that dAppModeHTTP PCAP (root privileges)
 	cfg := &config.Config{}
@@ -75,9 +54,7 @@ func TestCreateProxy_NoPcap(t *testing.T) {
 	}
 
 	logger := zerolog.Nop()
-	resolver := createResolver(logger, cfg)
-
-	p, err := createServer(context.Background(), logger, cfg, resolver)
+	p, err := createServer(context.Background(), logger, cfg)
 	require.NoError(t, err)
 	assert.NotNil(t, p)
 }
@@ -134,9 +111,7 @@ func TestCreateProxy_WithPolicy(t *testing.T) {
 	}
 
 	logger := zerolog.Nop()
-	resolver := createResolver(logger, cfg)
-
-	p, err := createServer(context.Background(), logger, cfg, resolver)
+	p, err := createServer(context.Background(), logger, cfg)
 	require.NoError(t, err)
 	assert.NotNil(t, p)
 }

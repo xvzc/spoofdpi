@@ -18,6 +18,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/matcher"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"github.com/xvzc/spoofdpi/internal/session"
 	"golang.zx2c4.com/wireguard/tun"
@@ -52,6 +53,9 @@ type TunServer struct {
 	udpHandler *UDPHandler
 
 	sysNet TUNSystemNetwork // OS-specific network configuration
+
+	tcpSniffer packet.Sniffer
+	udpSniffer packet.Sniffer
 }
 
 func NewTUNServer(
@@ -60,6 +64,8 @@ func NewTUNServer(
 	tcpHandler *TCPHandler,
 	udpHandler *UDPHandler,
 	sysNet TUNSystemNetwork,
+	tcpSniffer packet.Sniffer,
+	udpSniffer packet.Sniffer,
 ) server.Server {
 	return &TunServer{
 		logger:     logger,
@@ -67,6 +73,8 @@ func NewTUNServer(
 		tcpHandler: tcpHandler,
 		udpHandler: udpHandler,
 		sysNet:     sysNet,
+		tcpSniffer: tcpSniffer,
+		udpSniffer: udpSniffer,
 	}
 }
 
@@ -74,6 +82,15 @@ func (s *TunServer) ListenAndServe(
 	appctx context.Context,
 ) error {
 	logger := logging.WithLocalScope(appctx, s.logger, "tun")
+
+	// Start pcap capture only if sniffers were supplied
+	// (i.e., cfg.NeedsRawTCP() / NeedsRawUDP() was true at startup).
+	if s.tcpSniffer != nil {
+		s.tcpSniffer.StartCapturing()
+	}
+	if s.udpSniffer != nil {
+		s.udpSniffer.StartCapturing()
+	}
 
 	tunDevice := s.sysNet.TunDevice()
 	if tunDevice == nil {

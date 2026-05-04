@@ -18,6 +18,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/matcher"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"github.com/xvzc/spoofdpi/internal/session"
@@ -38,7 +39,9 @@ type SOCKS5Proxy struct {
 	udpAssociateHandler *UdpAssociateHandler
 	sysNet              SOCKS5SystemNetwork
 
-	cfg *config.Config
+	tcpSniffer packet.Sniffer
+	udpSniffer packet.Sniffer
+	cfg        *config.Config
 }
 
 func NewSOCKS5Proxy(
@@ -49,6 +52,8 @@ func NewSOCKS5Proxy(
 	bindHandler *BindHandler,
 	udpAssociateHandler *UdpAssociateHandler,
 	sysNet SOCKS5SystemNetwork,
+	tcpSniffer packet.Sniffer,
+	udpSniffer packet.Sniffer,
 	cfg *config.Config,
 ) server.Server {
 	return &SOCKS5Proxy{
@@ -59,6 +64,8 @@ func NewSOCKS5Proxy(
 		bindHandler:         bindHandler,
 		udpAssociateHandler: udpAssociateHandler,
 		sysNet:              sysNet,
+		tcpSniffer:          tcpSniffer,
+		udpSniffer:          udpSniffer,
 		cfg:                 cfg,
 	}
 }
@@ -66,6 +73,15 @@ func NewSOCKS5Proxy(
 func (p *SOCKS5Proxy) ListenAndServe(
 	appctx context.Context,
 ) error {
+	// Start pcap capture only if sniffers were supplied
+	// (i.e., cfg.NeedsRawTCP() / NeedsRawUDP() was true at startup).
+	if p.tcpSniffer != nil {
+		p.tcpSniffer.StartCapturing()
+	}
+	if p.udpSniffer != nil {
+		p.udpSniffer.StartCapturing()
+	}
+
 	listener, err := net.ListenTCP("tcp", &p.cfg.Startup.App.ListenAddr)
 	if err != nil {
 		return fmt.Errorf(

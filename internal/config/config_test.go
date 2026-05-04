@@ -78,14 +78,14 @@ func TestConfig_UnmarshalTOML(t *testing.T) {
 	}
 }
 
-func TestConfig_ShouldEnablePcap(t *testing.T) {
+func TestConfig_NeedsRawTCP(t *testing.T) {
 	tcs := []struct {
 		name   string
 		config Config
 		expect bool
 	}{
 		{
-			name: "global fake count > 0",
+			name: "global https fake count > 0",
 			config: Config{
 				Runtime: RuntimeConfig{
 					HTTPS: HTTPSOptions{FakeCount: uint8(1)},
@@ -94,11 +94,8 @@ func TestConfig_ShouldEnablePcap(t *testing.T) {
 			expect: true,
 		},
 		{
-			name: "rule fake count > 0",
+			name: "rule https fake count > 0",
 			config: Config{
-				Runtime: RuntimeConfig{
-					HTTPS: HTTPSOptions{FakeCount: uint8(0)},
-				},
 				Startup: StartupConfig{
 					Policy: PolicyOptions{
 						Overrides: []Rule{
@@ -114,30 +111,77 @@ func TestConfig_ShouldEnablePcap(t *testing.T) {
 			expect: true,
 		},
 		{
-			name: "none",
+			name: "udp fake count alone is not TCP",
 			config: Config{
 				Runtime: RuntimeConfig{
-					HTTPS: HTTPSOptions{FakeCount: uint8(0)},
+					UDP: UDPOptions{FakeCount: 1},
 				},
+			},
+			expect: false,
+		},
+		{
+			name:   "none",
+			config: Config{},
+			expect: false,
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expect, tc.config.NeedsRawTCP())
+		})
+	}
+}
+
+func TestConfig_NeedsRawUDP(t *testing.T) {
+	tcs := []struct {
+		name   string
+		config Config
+		expect bool
+	}{
+		{
+			name: "global udp fake count > 0",
+			config: Config{
+				Runtime: RuntimeConfig{
+					UDP: UDPOptions{FakeCount: 1},
+				},
+			},
+			expect: true,
+		},
+		{
+			name: "rule udp fake count > 0",
+			config: Config{
 				Startup: StartupConfig{
 					Policy: PolicyOptions{
 						Overrides: []Rule{
 							{
 								Runtime: RuntimeConfig{
-									HTTPS: HTTPSOptions{FakeCount: uint8(0)},
+									UDP: UDPOptions{FakeCount: 1},
 								},
 							},
 						},
 					},
 				},
 			},
+			expect: true,
+		},
+		{
+			name: "https fake count alone is not UDP",
+			config: Config{
+				Runtime: RuntimeConfig{
+					HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+				},
+			},
+			expect: false,
+		},
+		{
+			name:   "none",
+			config: Config{},
 			expect: false,
 		},
 	}
-
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.expect, tc.config.ShouldEnablePcap())
+			assert.Equal(t, tc.expect, tc.config.NeedsRawUDP())
 		})
 	}
 }

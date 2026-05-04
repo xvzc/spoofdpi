@@ -145,18 +145,9 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 		logger.Warn().Msg(" 'tun' mode is an experimental feature")
 	}
 
-	resolver := createResolver(logger, cfg)
-	srv, err := createServer(appctx, logger, cfg, resolver)
+	srv, err := createServer(appctx, logger, cfg)
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
-	}
-
-	logger.Info().Msg("dns info")
-	logger.Info().Msgf(" query type '%s'", cfg.Runtime.DNS.QType.String())
-	logger.Info().Msgf(" resolvers")
-	dnsInfo := resolver.Info()
-	for i := range dnsInfo {
-		logger.Info().Str("dst", dnsInfo[i].Dst).Msgf("  %s", dnsInfo[i].Name)
 	}
 
 	logger.Info().Msg("https info")
@@ -209,147 +200,12 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	return nil
 }
 
-func createResolver(logger zerolog.Logger, cfg *config.Config) dns.Resolver {
-	// create a TTL cache for storing DNS records.
-
-	udpResolver := dns.NewUDPResolver(
-		logging.WithScope(logger, "dns"),
-		&cfg.Runtime,
-	)
-
-	dohResolver := dns.NewHTTPSResolver(
-		logging.WithScope(logger, "dns"),
-		&cfg.Runtime,
-	)
-
-	sysResolver := dns.NewSystemResolver(
-		logging.WithScope(logger, "dns"),
-		&cfg.Runtime,
-	)
-
-	cacheResolver := dns.NewCacheResolver(
-		logging.WithScope(logger, "dns"),
-		cache.NewTTLCache[string](
-			cache.TTLCacheAttrs{
-				NumOfShards:     64,
-				CleanupInterval: time.Duration(3 * time.Minute),
-			},
-		),
-	)
-
-	// create a resolver that routes DNS queries based on rules.
-	return dns.NewRouteResolver(
-		logging.WithScope(logger, "dns"),
-		dohResolver,
-		udpResolver,
-		sysResolver,
-		cacheResolver,
-		&cfg.Runtime,
-	)
-}
-
-func createPacketObjects(
-	logger zerolog.Logger,
-	cfg *config.Config,
-) (packet.Sniffer, packet.Writer, packet.Sniffer, packet.Writer, error) {
-	// create a network detector for passive discovery
-	networkDetector := packet.NewNetworkDetector(
-		logging.WithScope(logger, "pkt"),
-	)
-
-	if err := networkDetector.Start(context.Background()); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("error starting network detector: %w", err)
-	}
-
-	// Wait for gateway MAC with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	gatewayMAC, err := networkDetector.WaitForGatewayMAC(ctx)
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf(
-			"failed to detect gateway (timeout): %w",
-			err,
-		)
-	}
-
-	iface := networkDetector.GetInterface()
-
-	// create a pcap handle for packet capturing.
-	tcpHandle, err := packet.NewHandle(iface)
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf(
-			"error opening pcap handle on interface %s: %w",
-			iface.Name,
-			err,
-		)
-	}
-
-	udpHandle, err := packet.NewHandle(iface)
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf(
-			"error opening pcap handle on interface %s: %w",
-			iface.Name,
-			err,
-		)
-	}
-
-	logger.Info().Msg("network info")
-	logger.Info().Str("name", iface.Name).
-		Str("mac", iface.HardwareAddr.String()).
-		Msg(" interface")
-
-	gatewayMACStr := gatewayMAC.String()
-	if gatewayMACStr == "" {
-		gatewayMACStr = "none"
-	}
-	logger.Info().
-		Str("mac", gatewayMACStr).
-		Msg(" gateway (passive detection)")
-
-	hopCache := cache.NewLRUCache[netutil.IPKey](4096, nil)
-
-	// TCP Objects
-	tcpSniffer := packet.NewTCPSniffer(
-		logging.WithScope(logger, "pkt"),
-		hopCache,
-		tcpHandle,
-		uint8(cfg.Runtime.Conn.DefaultFakeTTL),
-	)
-	tcpSniffer.StartCapturing()
-
-	tcpWriter := packet.NewTCPWriter(
-		logging.WithScope(logger, "pkt"),
-		tcpHandle,
-		iface,
-		gatewayMAC,
-	)
-
-	// UDP Objects
-	udpSniffer := packet.NewUDPSniffer(
-		logging.WithScope(logger, "pkt"),
-		hopCache,
-		udpHandle,
-		uint8(cfg.Runtime.Conn.DefaultFakeTTL),
-	)
-	udpSniffer.StartCapturing()
-
-	udpWriter := packet.NewUDPWriter(
-		logging.WithScope(logger, "pkt"),
-		udpHandle,
-		iface,
-		gatewayMAC,
-	)
-
-	return tcpSniffer, tcpWriter, udpSniffer, udpWriter, nil
-}
-
 func createServer(
 	appctx context.Context,
 	logger zerolog.Logger,
 	cfg *config.Config,
-	resolver dns.Resolver,
 ) (server.Server, error) {
+	// --- Rule matcher ---
 	ruleMatcher := matcher.NewRuleMatcher(
 		matcher.NewAddrMatcher(),
 		matcher.NewDomainMatcher(),
@@ -362,26 +218,103 @@ func createServer(
 		}
 	}
 
-	var tcpSniffer packet.Sniffer
-	var tcpWriter packet.Writer
-	var udpSniffer packet.Sniffer
-	var udpWriter packet.Writer
+	// --- DNS resolver chain ---
+	resolver := dns.NewRouteResolver(
+		logging.WithScope(logger, "dns"),
+		dns.NewHTTPSResolver(logging.WithScope(logger, "dns"), &cfg.Runtime),
+		dns.NewUDPResolver(logging.WithScope(logger, "dns"), &cfg.Runtime),
+		dns.NewSystemResolver(logging.WithScope(logger, "dns"), &cfg.Runtime),
+		dns.NewCacheResolver(
+			logging.WithScope(logger, "dns"),
+			cache.NewTTLCache[string](cache.TTLCacheAttrs{
+				NumOfShards:     64,
+				CleanupInterval: 3 * time.Minute,
+			}),
+		),
+		&cfg.Runtime,
+	)
 
-	if cfg.ShouldEnablePcap() {
-		var err error
-		tcpSniffer, tcpWriter, udpSniffer, udpWriter, err = createPacketObjects(
-			logger,
-			cfg,
-		)
-		if err != nil {
-			return nil, err
+	logger.Info().Msg("dns info")
+	logger.Info().Msgf(" query type '%s'", cfg.Runtime.DNS.QType.String())
+	logger.Info().Msgf(" resolvers")
+	for _, ri := range resolver.Info() {
+		logger.Info().Str("dst", ri.Dst).Msgf("  %s", ri.Name)
+	}
+
+	// --- Raw packet IO (sniffer + writer) per L4, only when needed ---
+	var tcpSniffer, udpSniffer packet.Sniffer
+	var tcpWriter, udpWriter packet.Writer
+
+	needTCP := cfg.NeedsRawTCP()
+	needUDP := cfg.NeedsRawUDP()
+
+	if needTCP || needUDP {
+		// Passive network discovery — interface + upstream gateway MAC.
+		networkDetector := packet.NewNetworkDetector(logging.WithScope(logger, "pkt"))
+		if err := networkDetector.Start(appctx); err != nil {
+			return nil, fmt.Errorf("network detector start: %w", err)
+		}
+
+		waitCtx, cancel := context.WithTimeout(appctx, 10*time.Second)
+		networkDetector.WaitForGatewayMAC(waitCtx)
+		cancel()
+
+		iface := networkDetector.GetInterface()
+		gatewayMAC := networkDetector.GetGatewayMAC()
+		if gatewayMAC == nil {
+			return nil, fmt.Errorf("failed to detect gateway MAC within 10s")
+		}
+
+		logger.Info().Msg("network info")
+		logger.Info().
+			Str("name", iface.Name).
+			Str("mac", iface.HardwareAddr.String()).
+			Msg(" interface")
+		logger.Info().Str("mac", gatewayMAC.String()).Msg(" gateway (passive detection)")
+
+		// Shared cache for both TCP and UDP raw-packet stacks.
+		hopCache := cache.NewLRUCache[netutil.IPKey](4096, nil)
+
+		if needTCP {
+			handle, err := packet.NewHandle(iface)
+			if err != nil {
+				return nil, fmt.Errorf("tcp pcap handle on %s: %w", iface.Name, err)
+			}
+			tcpSniffer = packet.NewTCPSniffer(
+				logging.WithScope(logger, "pkt"),
+				hopCache,
+				handle,
+				uint8(cfg.Runtime.Conn.DefaultFakeTTL),
+			)
+			tcpWriter = packet.NewTCPWriter(
+				logging.WithScope(logger, "pkt"),
+				handle,
+				iface,
+				gatewayMAC,
+			)
+		}
+
+		if needUDP {
+			handle, err := packet.NewHandle(iface)
+			if err != nil {
+				return nil, fmt.Errorf("udp pcap handle on %s: %w", iface.Name, err)
+			}
+			udpSniffer = packet.NewUDPSniffer(
+				logging.WithScope(logger, "pkt"),
+				hopCache,
+				handle,
+				uint8(cfg.Runtime.Conn.DefaultFakeTTL),
+			)
+			udpWriter = packet.NewUDPWriter(
+				logging.WithScope(logger, "pkt"),
+				handle,
+				iface,
+				gatewayMAC,
+			)
 		}
 	}
 
-	desyncer := desync.NewTLSDesyncer(
-		tcpWriter,
-		tcpSniffer,
-	)
+	desyncer := desync.NewTLSDesyncer(tcpWriter, tcpSniffer)
 
 	defaultRoute, err := netutil.DefaultRoute()
 	if err != nil {
@@ -410,6 +343,7 @@ func createServer(
 			httpsHandler,
 			ruleMatcher,
 			sysNet,
+			tcpSniffer,
 			cfg,
 		), nil
 	case config.AppModeSOCKS5:
@@ -446,6 +380,8 @@ func createServer(
 				logging.WithScope(logger, "sys"),
 				defaultRoute,
 			),
+			tcpSniffer,
+			udpSniffer,
 			cfg,
 		), nil
 	case config.AppModeTUN:
@@ -495,6 +431,8 @@ func createServer(
 			tcpHandler,
 			udpHandler,
 			sysNet,
+			tcpSniffer,
+			udpSniffer,
 		), nil
 	default:
 		return nil, fmt.Errorf("unknown server mode: %s", cfg.Startup.App.Mode)
