@@ -1,10 +1,11 @@
 # Site configuration
 site_name: spoofdpi
-site_description: 'Lightweight and fast DPI circumvention tool.'
 site_author: 'xvzc'
-copyright: Copyright © 2025 xvzc. All rights reserved.
-repo_url: https://github.com/xvzc/spoofdpi
+site_description: 'Lightweight and fast DPI circumvention tool.'
+site_url: https://spoofdpi.dev
 repo_name: 'xvzc/spoofdpi'
+repo_url: https://github.com/xvzc/spoofdpi
+copyright: Copyright © 2025 xvzc. All rights reserved.
 
 extra_css:
  - style.css
