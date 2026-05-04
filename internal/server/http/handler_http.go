@@ -32,7 +32,7 @@ func (h *HTTPHandler) HandleRequest(
 ) error {
 	logger := logging.WithLocalScope(ctx, h.logger, "http")
 
-	rConn, err := netutil.DialFastest(ctx, "tcp", dst, 0, nil)
+	rConn, err := netutil.DialFastest(ctx, dst, "tcp", 0, nil)
 	if err != nil {
 		_ = proto.HTTPBadGatewayResponse().Write(lConn)
 		return err

@@ -98,10 +98,10 @@ func (nd *NetworkDetector) Start(ctx context.Context) error {
 }
 
 func (nd *NetworkDetector) probe(ctx context.Context) {
-	conn, err := netutil.DialFastest(ctx, "udp", &netutil.Destination{
+	conn, err := netutil.DialFastest(ctx, &netutil.Destination{
 		Addrs: dnsServers,
 		Port:  53,
-	}, 2*time.Second, nil)
+	}, "udp", 2*time.Second, nil)
 	if err != nil {
 		return
 	}
@@ -256,11 +256,11 @@ func (nd *NetworkDetector) GetInterface() *net.Interface {
 func findDefaultInterface(ctx context.Context) (*net.Interface, error) {
 	conn, err := netutil.DialFastest(
 		ctx,
-		"udp",
 		&netutil.Destination{
 			Addrs: dnsServers,
 			Port:  53,
 		},
+		"udp",
 		20*time.Second,
 		nil,
 	)

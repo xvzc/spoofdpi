@@ -93,7 +93,7 @@ func (h *TCPHandler) Handle(
 	// Handle as plain TCP — use base TCPTimeout; rule-aware override
 	// happens for TLS via handleTLS where the rule context is resolved.
 	rConn, err := netutil.DialFastest(
-		ctx, "tcp", dst, h.rt.Conn.TCPTimeout, sysNet.BindDialer,
+		ctx, dst, "tcp", h.rt.Conn.TCPTimeout, sysNet.BindDialer,
 	)
 	if err != nil {
 		logger.Error().Msgf("failed to dial %v", err)
@@ -181,7 +181,7 @@ func (h *TCPHandler) handleTLS(
 		h.sniffer.RegisterUntracked(dst.Addrs)
 	}
 	rConn, err := netutil.DialFastest(
-		ctx, "tcp", dst, rt.Conn.TCPTimeout, sysNet.BindDialer,
+		ctx, dst, "tcp", rt.Conn.TCPTimeout, sysNet.BindDialer,
 	)
 	if err != nil {
 		return err

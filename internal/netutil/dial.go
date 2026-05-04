@@ -24,8 +24,8 @@ type BindFunc func(dialer *net.Dialer, network string, targetIP net.IP) error
 // If bindFunc is not nil, it is called to configure the dialer before each dial attempt.
 func DialFastest(
 	ctx context.Context,
-	network string,
 	dst *Destination,
+	network string,
 	timeout time.Duration,
 	bindFunc BindFunc,
 ) (net.Conn, error) {
