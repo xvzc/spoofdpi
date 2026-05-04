@@ -47,7 +47,7 @@ func (h *HTTPSHandler) HandleRequest(
 ) error {
 	rt := h.rt
 	if rule != nil {
-		rt = &rule.Runtime
+		rt = &rule.Config
 	}
 
 	logger := logging.WithLocalScope(ctx, h.logger, "handshake")

@@ -34,9 +34,7 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 				ListenAddr:           net.TCPAddr{},
 				FreebsdFIB:           1,
 			},
-			Policy: PolicyOptions{ //exhaustruct:enforce
-				Overrides: nil,
-			},
+			Rules: nil,
 		},
 		Runtime: RuntimeConfig{ //exhaustruct:enforce
 			Conn: ConnOptions{ //exhaustruct:enforce

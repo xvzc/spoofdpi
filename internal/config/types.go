@@ -570,33 +570,6 @@ func (o *UDPOptions) UnmarshalTOML(data any) (err error) {
 	return err
 }
 
-// ┌────────────────┐
-// │ POLICY OPTIONS │
-// └────────────────┘
-
-type PolicyOptions struct {
-	// Overrides holds the fully-resolved per-rule configurations.
-	// Populated by Load.resolveRules (in load.go) after defaults+TOML+CLI
-	// are merged, so each rule's Runtime is pre-filled from the base
-	// RuntimeConfig and consumers can use rule.Runtime.X directly without
-	// re-merging at request time.
-	Overrides []Rule `toml:"-"`
-}
-
-func (o *PolicyOptions) UnmarshalTOML(data any) error {
-	if _, ok := data.(map[string]any); !ok {
-		return fmt.Errorf("non-table type policy config")
-	}
-
-	// Overrides themselves are intentionally NOT decoded here. Load
-	// extracts the raw [[policy.overrides]] entries separately and
-	// resolves them on top of the finalized base RuntimeConfig — see
-	// resolveRules in load.go. The deprecated 'policy.template' is also
-	// surfaced from Config.UnmarshalTOML, not here, so PolicyOptions can
-	// stay free of warning-collection state.
-	return nil
-}
-
 // ┌──────────────┐
 // │ ADDR MATCH   │
 // └──────────────┘
@@ -704,11 +677,11 @@ type Rule struct {
 	Priority uint16        `toml:"priority" json:"priority"`
 	Block    bool          `toml:"block"    json:"block"`
 	Match    *MatchAttrs   `toml:"match"    json:"match,omitempty"`
-	Runtime  RuntimeConfig `toml:"-"        json:"runtime"`
+	Config   RuntimeConfig `toml:"-"        json:"config"`
 }
 
 // UnmarshalTOML decodes the standalone fields of a Rule. The per-section
-// runtime overrides (dns/https/udp/connection) are NOT decoded here —
+// config overrides (dns/https/udp/connection) are NOT decoded here —
 // resolveRules in load.go handles them so it can pre-fill from the
 // finalized base RuntimeConfig before overlaying the rule's TOML.
 func (r *Rule) UnmarshalTOML(data any) (err error) {

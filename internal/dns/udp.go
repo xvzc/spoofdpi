@@ -48,7 +48,7 @@ func (ur *UDPResolver) Resolve(
 ) (*RecordSet, error) {
 	rt := ur.rt
 	if rule != nil {
-		rt = &rule.Runtime
+		rt = &rule.Config
 	}
 
 	resCh := lookupAllTypes(

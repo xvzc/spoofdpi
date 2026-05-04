@@ -56,7 +56,7 @@ func (rr *RouteResolver) Resolve(
 ) (*RecordSet, error) {
 	rt := rr.rt
 	if rule != nil {
-		rt = &rule.Runtime
+		rt = &rule.Config
 	}
 
 	logger := logging.WithLocalScope(ctx, rr.logger, "route")

@@ -8,7 +8,7 @@ import (
 // Config groups configuration by lifecycle:
 //
 //   - Startup is read once at boot (logger setup, mode selection, building
-//     the matcher from policy overrides) and is not needed at request time.
+//     the matcher from rules) and is not needed at request time.
 //   - Runtime is read on every request (per-traffic decisions about DPI
 //     bypass, DNS resolution, timeouts) and travels with handlers.
 type Config struct {
@@ -24,9 +24,15 @@ type Config struct {
 
 // StartupConfig holds the sections consumed only during server bootstrap.
 // After the server is up and the matcher is built, this can be discarded.
+//
+// Rules holds the fully-resolved per-rule configurations. Populated by
+// Load.resolveRules (in load.go) after defaults+TOML+CLI are merged, so
+// each rule's Config is pre-filled from the base RuntimeConfig and
+// consumers can use rule.Config.X directly without re-merging at request
+// time.
 type StartupConfig struct {
-	App    AppOptions
-	Policy PolicyOptions
+	App   AppOptions
+	Rules []Rule
 }
 
 // RuntimeConfig holds the sections accessed on the request hot path.
@@ -61,10 +67,6 @@ func (c *Config) UnmarshalTOML(data any) (err error) {
 	if udp := findStructFrom[UDPOptions](m, "udp", &err); udp != nil {
 		c.Runtime.UDP = *udp
 	}
-	if policy := findStructFrom[PolicyOptions](m, "policy", &err); policy != nil {
-		c.Startup.Policy = *policy
-	}
-
 	if policyMap, ok := m["policy"].(map[string]any); ok {
 		if _, hasTemplate := policyMap["template"]; hasTemplate {
 			c.WarnMsgs = append(
@@ -78,14 +80,14 @@ func (c *Config) UnmarshalTOML(data any) (err error) {
 }
 
 // NeedsRawTCP reports whether any TCP fake-packet feature is enabled —
-// either in the base config or in any policy override. The TCP raw
-// packet IO (sniffer + writer) is only set up when this returns true.
+// either in the base config or in any rule. The TCP raw packet IO
+// (sniffer + writer) is only set up when this returns true.
 func (c *Config) NeedsRawTCP() bool {
 	if c.Runtime.HTTPS.FakeCount > 0 {
 		return true
 	}
-	for _, r := range c.Startup.Policy.Overrides {
-		if r.Runtime.HTTPS.FakeCount > 0 {
+	for _, r := range c.Startup.Rules {
+		if r.Config.HTTPS.FakeCount > 0 {
 			return true
 		}
 	}
@@ -97,8 +99,8 @@ func (c *Config) NeedsRawUDP() bool {
 	if c.Runtime.UDP.FakeCount > 0 {
 		return true
 	}
-	for _, r := range c.Startup.Policy.Overrides {
-		if r.Runtime.UDP.FakeCount > 0 {
+	for _, r := range c.Startup.Rules {
+		if r.Config.UDP.FakeCount > 0 {
 			return true
 		}
 	}
@@ -108,7 +110,7 @@ func (c *Config) NeedsRawUDP() bool {
 // Finalize applies defaults that depend on other fields (e.g. ListenAddr
 // per Mode). Called after defaults+TOML+CLI layers are merged, before
 // Validate. Rule resolution is handled separately by Load via
-// resolveRules so PolicyOptions doesn't need to carry load-time scratch
+// resolveRules so StartupConfig doesn't need to carry load-time scratch
 // state into the runtime config.
 func (c *Config) Finalize() error {
 	if c.Startup.App.ListenAddr.IP == nil && c.Startup.App.ListenAddr.Port == 0 {
@@ -121,5 +123,13 @@ func (c *Config) Finalize() error {
 			Port: port,
 		}
 	}
+
+	switch c.Startup.App.Mode {
+	case AppModeSOCKS5:
+		c.WarnMsgs = append(c.WarnMsgs, "'socks5' mode is an experimental feature")
+	case AppModeTUN:
+		c.WarnMsgs = append(c.WarnMsgs, "'tun' mode is an experimental feature")
+	}
+
 	return nil
 }

@@ -75,7 +75,7 @@ func (dr *HTTPSResolver) Resolve(
 ) (*RecordSet, error) {
 	rt := dr.rt
 	if rule != nil {
-		rt = &rule.Runtime
+		rt = &rule.Config
 	}
 
 	upstream := rt.DNS.HTTPSURL

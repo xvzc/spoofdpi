@@ -138,13 +138,6 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 
 	logger.Info().Str("mode", cfg.Startup.App.Mode.String()).Msgf("app")
 
-	switch cfg.Startup.App.Mode {
-	case config.AppModeSOCKS5:
-		logger.Warn().Msg(" 'socks5' mode is an experimental feature")
-	case config.AppModeTUN:
-		logger.Warn().Msg(" 'tun' mode is an experimental feature")
-	}
-
 	srv, err := createServer(appctx, logger, cfg)
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
@@ -210,11 +203,9 @@ func createServer(
 		matcher.NewAddrMatcher(),
 		matcher.NewDomainMatcher(),
 	)
-	if cfg.Startup.Policy.Overrides != nil {
-		for _, r := range cfg.Startup.Policy.Overrides {
-			if err := ruleMatcher.Add(&r); err != nil {
-				return nil, err
-			}
+	for _, r := range cfg.Startup.Rules {
+		if err := ruleMatcher.Add(&r); err != nil {
+			return nil, err
 		}
 	}
 

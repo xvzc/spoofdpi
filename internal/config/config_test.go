@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,7 +42,7 @@ func TestConfig_UnmarshalTOML(t *testing.T) {
 			assert: func(t *testing.T, c Config) {
 				assert.Equal(t, "127.0.0.1:9090", c.Startup.App.ListenAddr.String())
 				assert.Equal(t, "1.1.1.1:53", c.Runtime.DNS.Addr.String())
-				// Policy.Overrides is populated by Load via resolveRules,
+				// Startup.Rules is populated by Load via resolveRules,
 				// not by Config.UnmarshalTOML; see TestResolveRules_*.
 			},
 		},
@@ -97,12 +98,10 @@ func TestConfig_NeedsRawTCP(t *testing.T) {
 			name: "rule https fake count > 0",
 			config: Config{
 				Startup: StartupConfig{
-					Policy: PolicyOptions{
-						Overrides: []Rule{
-							{
-								Runtime: RuntimeConfig{
-									HTTPS: HTTPSOptions{FakeCount: uint8(1)},
-								},
+					Rules: []Rule{
+						{
+							Config: RuntimeConfig{
+								HTTPS: HTTPSOptions{FakeCount: uint8(1)},
 							},
 						},
 					},
@@ -151,12 +150,10 @@ func TestConfig_NeedsRawUDP(t *testing.T) {
 			name: "rule udp fake count > 0",
 			config: Config{
 				Startup: StartupConfig{
-					Policy: PolicyOptions{
-						Overrides: []Rule{
-							{
-								Runtime: RuntimeConfig{
-									UDP: UDPOptions{FakeCount: 1},
-								},
+					Rules: []Rule{
+						{
+							Config: RuntimeConfig{
+								UDP: UDPOptions{FakeCount: 1},
 							},
 						},
 					},
@@ -198,9 +195,45 @@ func TestConfig_UnmarshalTOML_warnsOnPolicyTemplate(t *testing.T) {
 	assert.Contains(t, c.WarnMsgs[0], "policy.template")
 }
 
+func TestExtractRawRules_deprecatedPolicyOverridesEmitsWarning(t *testing.T) {
+	tomlContent := `
+[[policy.overrides]]
+    name = "legacy"
+    match = { domain = ["example.com"] }
+`
+	tmpDir := t.TempDir()
+	configPath := tmpDir + "/spoofdpi.toml"
+	require.NoError(t, os.WriteFile(configPath, []byte(tomlContent), 0o644))
+
+	cfg := DefaultConfig()
+	rules, err := extractRawRules(configPath, cfg)
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	require.Len(t, cfg.WarnMsgs, 1)
+	assert.Contains(t, cfg.WarnMsgs[0], "[[policy.overrides]]")
+	assert.Contains(t, cfg.WarnMsgs[0], "[[rules]]")
+}
+
+func TestExtractRawRules_newKeyEmitsNoWarning(t *testing.T) {
+	tomlContent := `
+[[rules]]
+    name = "new"
+    match = { domain = ["example.com"] }
+`
+	tmpDir := t.TempDir()
+	configPath := tmpDir + "/spoofdpi.toml"
+	require.NoError(t, os.WriteFile(configPath, []byte(tomlContent), 0o644))
+
+	cfg := DefaultConfig()
+	rules, err := extractRawRules(configPath, cfg)
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	assert.Empty(t, cfg.WarnMsgs)
+}
+
 func TestConfig_Validate_rejectsRuleWithoutMatch(t *testing.T) {
 	c := DefaultConfig()
-	c.Startup.Policy.Overrides = []Rule{
+	c.Startup.Rules = []Rule{
 		{
 			Name:  "no-match",
 			Match: nil, // missing match attribute
@@ -208,13 +241,13 @@ func TestConfig_Validate_rejectsRuleWithoutMatch(t *testing.T) {
 	}
 	err := c.Validate()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "policy.overrides[0]")
+	assert.Contains(t, err.Error(), "rules[0]")
 	assert.Contains(t, err.Error(), "match attribute")
 }
 
 func TestConfig_Validate_acceptsValidRule(t *testing.T) {
 	c := DefaultConfig()
-	c.Startup.Policy.Overrides = []Rule{
+	c.Startup.Rules = []Rule{
 		{
 			Name: "ok",
 			Match: &MatchAttrs{
@@ -250,15 +283,15 @@ func TestResolveRules_inheritsFromBase(t *testing.T) {
 	require.Len(t, rules, 1)
 	rule := rules[0]
 	assert.Equal(t, "rule1", rule.Name)
-	assert.Equal(t, uint8(2), rule.Runtime.HTTPS.FakeCount, "rule overrides fake-count")
+	assert.Equal(t, uint8(2), rule.Config.HTTPS.FakeCount, "rule overrides fake-count")
 	assert.Equal(
-		t, HTTPSSplitModeChunk, rule.Runtime.HTTPS.SplitMode,
+		t, HTTPSSplitModeChunk, rule.Config.HTTPS.SplitMode,
 		"rule inherits split-mode from base",
 	)
 	assert.Equal(
 		t,
 		uint8(99),
-		rule.Runtime.HTTPS.ChunkSize,
+		rule.Config.HTTPS.ChunkSize,
 		"rule inherits chunk-size from base",
 	)
 }
@@ -330,7 +363,7 @@ func TestResolveRules_skipNotInheritedFromBase(t *testing.T) {
 			rules, err := resolveRules([]map[string]any{item}, base)
 			require.NoError(t, err)
 			require.Len(t, rules, 1)
-			assert.Equal(t, tc.wantSkip, rules[0].Runtime.HTTPS.Skip)
+			assert.Equal(t, tc.wantSkip, rules[0].Config.HTTPS.Skip)
 		})
 	}
 }

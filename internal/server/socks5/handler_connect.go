@@ -49,7 +49,7 @@ func (h *ConnectHandler) Handle(
 ) error {
 	rt := h.rt
 	if rule != nil {
-		rt = &rule.Runtime
+		rt = &rule.Config
 	}
 
 	logger := logging.WithLocalScope(ctx, h.logger, "connect")

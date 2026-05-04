@@ -41,8 +41,8 @@ func TestCreateProxy_NoPcap(t *testing.T) {
 		Skip:       false,
 	}
 
-	// Policy Config
-	cfg.Startup.Policy = config.PolicyOptions{}
+	// Rules
+	cfg.Startup.Rules = nil
 
 	// DNS Config
 	cfg.Runtime.DNS = config.DNSOptions{
@@ -81,21 +81,19 @@ func TestCreateProxy_WithPolicy(t *testing.T) {
 		FakeCount: uint8(0),
 	}
 
-	// Policy Config with one override
-	cfg.Startup.Policy = config.PolicyOptions{
-		Overrides: []config.Rule{
-			{
-				Name: "test-rule",
-				Match: &config.MatchAttrs{
-					Domains: []string{"example.com"},
+	// One rule
+	cfg.Startup.Rules = []config.Rule{
+		{
+			Name: "test-rule",
+			Match: &config.MatchAttrs{
+				Domains: []string{"example.com"},
+			},
+			Config: config.RuntimeConfig{
+				DNS: config.DNSOptions{
+					Mode: config.DNSModeSystem,
 				},
-				Runtime: config.RuntimeConfig{
-					DNS: config.DNSOptions{
-						Mode: config.DNSModeSystem,
-					},
-					HTTPS: config.HTTPSOptions{
-						Skip: true,
-					},
+				HTTPS: config.HTTPSOptions{
+					Skip: true,
 				},
 			},
 		},

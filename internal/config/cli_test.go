@@ -206,33 +206,32 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
     chunk-size = 20
     skip = true
 
-[policy]
-    [[policy.overrides]]
-        name = "test-rule"
-        priority = 100
-        block = true
-        match = { 
-            domain = ["example.com"], 
-            addr = [
-                {cidr = "192.168.1.0/24", port = "80-443"}
-            ]
-        }
-        dns = { 
-            mode = "udp", 
-            addr = "8.8.4.4:53",
-            https-url = "https://8.8.8.8/dns-query", 
-            qtype = "ipv6", 
-            block = true, 
-            cache = false,
-        }
-        https = { 
-            disorder = false, 
-            fake-count = 2, 
-            fake-packet = [0xAA, 0xBB], 
-            split-mode = "sni",
-            chunk-size = 10, 
-            skip = true,
-        }
+[[rules]]
+    name = "test-rule"
+    priority = 100
+    block = true
+    match = {
+        domain = ["example.com"],
+        addr = [
+            {cidr = "192.168.1.0/24", port = "80-443"}
+        ]
+    }
+    dns = {
+        mode = "udp",
+        addr = "8.8.4.4:53",
+        https-url = "https://8.8.8.8/dns-query",
+        qtype = "ipv6",
+        block = true,
+        cache = false,
+    }
+    https = {
+        disorder = false,
+        fake-count = 2,
+        fake-packet = [0xAA, 0xBB],
+        split-mode = "sni",
+        chunk-size = 10,
+        skip = true,
+    }
 `
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "spoofdpi.toml")
@@ -311,15 +310,15 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
 	assert.Equal(t, []byte{0xcc, 0xdd}, capturedCfg.Runtime.UDP.FakePacket)
 
 	// Verify TOML-only fields are preserved
-	require.Len(t, capturedCfg.Startup.Policy.Overrides, 1)
-	override := capturedCfg.Startup.Policy.Overrides[0]
-	assert.Equal(t, "test-rule", override.Name)
-	assert.Equal(t, "example.com", override.Match.Domains[0])
+	require.Len(t, capturedCfg.Startup.Rules, 1)
+	rule := capturedCfg.Startup.Rules[0]
+	assert.Equal(t, "test-rule", rule.Name)
+	assert.Equal(t, "example.com", rule.Match.Domains[0])
 }
 
 // TestLoad_RuleInheritsFromCLIAndTOML pins the end-to-end precedence
-// for fields a policy override leaves unset:
-// override-set > CLI > TOML > package default. The two halves of the
+// for fields a rule leaves unset:
+// rule-set > CLI > TOML > package default. The two halves of the
 // pipeline (CLI-over-TOML at base, rule-over-base) are covered
 // individually by TestCreateCommand_OverrideTOML and
 // TestResolveRules_inheritsFromBase, but their composition wasn't —
@@ -330,7 +329,7 @@ func TestLoad_RuleInheritsFromCLIAndTOML(t *testing.T) {
     split-mode = "chunk"
     chunk-size = 20
 
-[[policy.overrides]]
+[[rules]]
     name = "partial-rule"
     match = { domain = ["example.com"] }
     https = { chunk-size = 50, skip = true }
@@ -356,23 +355,23 @@ func TestLoad_RuleInheritsFromCLIAndTOML(t *testing.T) {
 	}
 	require.NoError(t, cmd.Run(context.Background(), args))
 	require.NotNil(t, capturedCfg)
-	require.Len(t, capturedCfg.Startup.Policy.Overrides, 1)
+	require.Len(t, capturedCfg.Startup.Rules, 1)
 
-	rule := capturedCfg.Startup.Policy.Overrides[0]
+	rule := capturedCfg.Startup.Rules[0]
 
 	// Override-set wins
-	assert.Equal(t, uint8(50), rule.Runtime.HTTPS.ChunkSize, "rule overrides chunk-size")
-	assert.True(t, rule.Runtime.HTTPS.Skip, "rule sets skip explicitly")
+	assert.Equal(t, uint8(50), rule.Config.HTTPS.ChunkSize, "rule overrides chunk-size")
+	assert.True(t, rule.Config.HTTPS.Skip, "rule sets skip explicitly")
 
 	// TOML inherited (rule didn't set, CLI didn't touch)
-	assert.Equal(t, HTTPSSplitModeChunk, rule.Runtime.HTTPS.SplitMode,
+	assert.Equal(t, HTTPSSplitModeChunk, rule.Config.HTTPS.SplitMode,
 		"rule inherits split-mode from static TOML")
 
 	// CLI inherited (rule didn't set, TOML didn't set) — the key claim
-	assert.Equal(t, uint8(10), rule.Runtime.HTTPS.FakeCount,
+	assert.Equal(t, uint8(10), rule.Config.HTTPS.FakeCount,
 		"rule inherits fake-count from CLI override")
 
 	// Package default inherited (no one set it)
-	assert.False(t, rule.Runtime.HTTPS.Disorder,
+	assert.False(t, rule.Config.HTTPS.Disorder,
 		"rule inherits disorder=false from package default")
 }

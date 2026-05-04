@@ -30,35 +30,21 @@ If the default settings are not enough, you can try more aggressive settings. Th
 Route traffic differently based on the domain or IP address.
 
 ```toml
-[policy]
-    # Block ads
-    [[policy.overrides]]
-        name = "block ads"
-        match = { domain = ["ads.example.com"] }
-        block = true
+# Block ads
+[[rules]]
+    name = "block ads"
+    match = { domain = ["ads.example.com"] }
+    block = true
 
-    # Bypass DPI for specific blocked site
-    [[policy.overrides]]
-        name = "unblock site"
-        match = { domain = ["blocked-site.com"] }
-        https = { fake-count = 7, disorder = true }
+# Bypass DPI for specific blocked site
+[[rules]]
+    name = "unblock site"
+    match = { domain = ["blocked-site.com"] }
+    https = { fake-count = 7, disorder = true }
 
-    # Use local network directly (no processing)
-    [[policy.overrides]]
-        name = "local bypass"
-        match = { addr = [{ cidr = "192.168.0.0/16", port = "all" }] }
-        https = { skip = true }
-```
-
-## Automatic Detection
-
-Let spoofdpi automatically detect blocked sites and apply a specific template.
-
-```toml
-[policy]
-    auto = true
-
-    # Template applied to automatically detected blocked sites
-    [policy.template]
-        https = { fake-count = 7, disorder = true }
+# Use local network directly (no processing)
+[[rules]]
+    name = "local bypass"
+    match = { addr = [{ cidr = "192.168.0.0/16", port = "all" }] }
+    https = { skip = true }
 ```

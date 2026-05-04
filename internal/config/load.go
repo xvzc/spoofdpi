@@ -12,9 +12,9 @@ import (
 // Load assembles the effective Config from three sources, in precedence
 // order: defaults → TOML → CLI flags. After all layers are merged it
 // runs Finalize (cross-field defaults), resolveRules (eager-resolve
-// policy overrides on top of the finalized base RuntimeConfig), and
-// Validate (semantic checks). Returns the resolved Config and the
-// path of the TOML file that was used (or "" if none).
+// rules on top of the finalized base RuntimeConfig), and Validate
+// (semantic checks). Returns the resolved Config and the path of the
+// TOML file that was used (or "" if none).
 //
 // cliOverrides is the slice of closures appended by Flag.Action
 // callbacks during cmd.Run — one per flag the user actually set.
@@ -39,7 +39,7 @@ func Load(cmd *cli.Command, cliOverrides []func(*Config)) (*Config, string, erro
 	if err != nil {
 		return nil, "", err
 	}
-	cfg.Startup.Policy.Overrides = rules
+	cfg.Startup.Rules = rules
 
 	if err := cfg.Validate(); err != nil {
 		return nil, "", err
@@ -51,11 +51,11 @@ func Load(cmd *cli.Command, cliOverrides []func(*Config)) (*Config, string, erro
 // loadTOML resolves the TOML config path (custom --config flag, env var,
 // or one of the default locations), then decodes it onto cfg if found.
 // The decode-into-defaults trick preserves cfg's pre-populated values
-// for any TOML key that's absent. Also extracts the raw
-// [[policy.overrides]] entries separately so resolveRules can apply
-// them on top of the finalized base RuntimeConfig later. Returns the
-// path of the decoded file (or "" if none was loaded) and the captured
-// raw rules.
+// for any TOML key that's absent. Also extracts the raw [[rules]]
+// entries (and the deprecated [[policy.overrides]]) separately so
+// resolveRules can apply them on top of the finalized base
+// RuntimeConfig later. Returns the path of the decoded file (or "" if
+// none was loaded) and the captured raw rules.
 func loadTOML(cmd *cli.Command, cfg *Config) (string, []map[string]any, error) {
 	if cmd.Bool("clean") {
 		return "", nil, nil
@@ -80,10 +80,10 @@ func loadTOML(cmd *cli.Command, cfg *Config) (string, []map[string]any, error) {
 		return "", nil, fmt.Errorf("error parsing '%s': %w", configPath, err)
 	}
 
-	rawRules, err := extractRawOverrides(configPath)
+	rawRules, err := extractRawRules(configPath, cfg)
 	if err != nil {
 		return "", nil, fmt.Errorf(
-			"error reading policy overrides from '%s': %w",
+			"error reading rules from '%s': %w",
 			configPath,
 			err,
 		)
@@ -92,30 +92,41 @@ func loadTOML(cmd *cli.Command, cfg *Config) (string, []map[string]any, error) {
 	return configPath, rawRules, nil
 }
 
-// extractRawOverrides re-decodes the TOML file into a small helper struct
-// just to capture the raw [[policy.overrides]] entries as a slice of maps.
-// Doing it as a separate pass means the regular decode-into-Config
-// pipeline doesn't have to know anything about deferred rule resolution,
-// and PolicyOptions can stay free of load-time scratch state.
-func extractRawOverrides(path string) ([]map[string]any, error) {
+// extractRawRules re-decodes the TOML file into a small helper struct
+// to capture both [[rules]] (preferred) and [[policy.overrides]]
+// (deprecated alias) as slices of maps. Entries from both keys are
+// concatenated; using the deprecated key emits a warning. Doing this
+// as a separate pass means the regular decode-into-Config pipeline
+// doesn't have to know anything about deferred rule resolution.
+func extractRawRules(path string, cfg *Config) ([]map[string]any, error) {
 	var helper struct { //exhaustruct:enforce
-		Policy struct { //exhaustruct:enforce
+		Rules  []map[string]any `toml:"rules"`
+		Policy struct {         //exhaustruct:enforce
 			Overrides []map[string]any `toml:"overrides"`
 		} `toml:"policy"`
 	}
 	if _, err := toml.DecodeFile(path, &helper); err != nil {
 		return nil, err
 	}
-	return helper.Policy.Overrides, nil
+
+	rules := helper.Rules
+	if len(helper.Policy.Overrides) > 0 {
+		cfg.WarnMsgs = append(
+			cfg.WarnMsgs,
+			"'[[policy.overrides]]' is deprecated; rename to '[[rules]]'",
+		)
+		rules = append(rules, helper.Policy.Overrides...)
+	}
+	return rules, nil
 }
 
-// resolveRules expands raw [[policy.overrides]] tables into a slice of
-// fully-populated Rules. Each rule's Runtime is pre-filled from the
-// finalized base RuntimeConfig and then overlaid with whatever the
-// rule's own TOML supplies. Because each section's UnmarshalTOML
-// preserves existing values for absent keys, sparse rule overrides
-// inherit unset fields from base — that's the point of doing this
-// after Finalize rather than at decode time.
+// resolveRules expands raw rule tables into a slice of fully-populated
+// Rules. Each rule's Config is pre-filled from the finalized base
+// RuntimeConfig and then overlaid with whatever the rule's own TOML
+// supplies. Because each section's UnmarshalTOML preserves existing
+// values for absent keys, sparse rule overrides inherit unset fields
+// from base — that's the point of doing this after Finalize rather
+// than at decode time.
 func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 	rules := make([]Rule, 0, len(raw))
 	for i, item := range raw {
@@ -124,17 +135,17 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 			Priority: 0,
 			Block:    false,
 			Match:    nil,
-			Runtime:  base,
+			Config:   base,
 		}
 
 		// Override semantics: https.skip is intentionally NOT inherited
-		// from base. Policy overrides always start with skip=false; only
-		// the rule's own TOML can set it to true. This way a global
+		// from base. Rules always start with skip=false; only the
+		// rule's own TOML can set it to true. This way a global
 		// https.skip=true on the static config can leave non-matched
-		// traffic alone without silently turning override rules into
-		// no-ops. The rule's HTTPS UnmarshalTOML below will overwrite
-		// this only if the rule explicitly sets skip.
-		r.Runtime.HTTPS.Skip = false
+		// traffic alone without silently turning rules into no-ops.
+		// The rule's HTTPS UnmarshalTOML below will overwrite this
+		// only if the rule explicitly sets skip.
+		r.Config.HTTPS.Skip = false
 
 		if v, ok := item["name"].(string); ok {
 			r.Name = v
@@ -156,22 +167,22 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 			}
 		}
 		if v, ok := item["dns"]; ok {
-			if err := r.Runtime.DNS.UnmarshalTOML(v); err != nil {
+			if err := r.Config.DNS.UnmarshalTOML(v); err != nil {
 				return nil, fmt.Errorf("rule %d: dns: %w", i, err)
 			}
 		}
 		if v, ok := item["https"]; ok {
-			if err := r.Runtime.HTTPS.UnmarshalTOML(v); err != nil {
+			if err := r.Config.HTTPS.UnmarshalTOML(v); err != nil {
 				return nil, fmt.Errorf("rule %d: https: %w", i, err)
 			}
 		}
 		if v, ok := item["udp"]; ok {
-			if err := r.Runtime.UDP.UnmarshalTOML(v); err != nil {
+			if err := r.Config.UDP.UnmarshalTOML(v); err != nil {
 				return nil, fmt.Errorf("rule %d: udp: %w", i, err)
 			}
 		}
 		if v, ok := item["connection"]; ok {
-			if err := r.Runtime.Conn.UnmarshalTOML(v); err != nil {
+			if err := r.Config.Conn.UnmarshalTOML(v); err != nil {
 				return nil, fmt.Errorf("rule %d: connection: %w", i, err)
 			}
 		}

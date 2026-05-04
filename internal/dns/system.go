@@ -46,7 +46,7 @@ func (sr *SystemResolver) Resolve(
 ) (*RecordSet, error) {
 	rt := sr.rt
 	if rule != nil {
-		rt = &rule.Runtime
+		rt = &rule.Config
 	}
 
 	ips, err := sr.LookupIP(ctx, "ip", domain)

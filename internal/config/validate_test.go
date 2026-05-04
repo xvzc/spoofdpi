@@ -260,7 +260,7 @@ func TestCheckRule(t *testing.T) {
 				Match: &MatchAttrs{
 					Domains: []string{"example.com"},
 				},
-				Runtime: RuntimeConfig{
+				Config: RuntimeConfig{
 					DNS: DNSOptions{Mode: DNSModeUDP},
 				},
 			},
@@ -278,7 +278,7 @@ func TestCheckRule(t *testing.T) {
 						},
 					},
 				},
-				Runtime: RuntimeConfig{
+				Config: RuntimeConfig{
 					HTTPS: HTTPSOptions{Disorder: true},
 				},
 			},

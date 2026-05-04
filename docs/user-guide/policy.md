@@ -1,41 +1,15 @@
-# Policy Configuration
+# Rules
 
-By defining rules within the Policy section, you can granularly control how spoofdpi handles connections to specific domains or IP addresses. You can define per-domain bypass strategies, DNS settings, or simply block connections.
-
-## `template`
-
-The `[policy.template]` section defines a base rule configuration. This template can be cloned and customized when programmatically adding rules.
+By defining rules, you can granularly control how spoofdpi handles connections to specific domains or IP addresses. You can define per-domain bypass strategies, DNS settings, or simply block connections.
 
 !!! note
-    The template configuration is only available via the TOML config file.
+    Rules are only available via the TOML config file and cannot be set via command-line flags.
 
-### Structure
+## Structure
 
-The template uses the same `Rule` structure as overrides, but typically only the `https` and `dns` sections are relevant.
+The top-level `[[rules]]` array contains one table per rule. Each rule consists of matching criteria (`match`) and per-section overrides (`dns`, `https`, `udp`, `connection`).
 
-### Example
-
-```toml
-[policy]
-    [policy.template]
-        https = { fake-count = 7, disorder = true }
-        dns = { mode = "https" }
-```
-
----
-
-## `overrides`
-
-Detailed policy rules are defined in the `[policy]` section of the TOML configuration file.
-
-!!! note
-    These advanced rules are only available via the TOML config file and cannot be set via command-line flags.
-
-### Structure
-
-The `[policy]` section contains an array of `overrides` tables. Each override rule consists of matching criteria (`match`) and specific settings for DNS (`dns`) and HTTPS (`https`).
-
-### Rule Fields
+## Rule Fields
 
 | Field      | Type   | Description                                      |
 | :--------- | :----- | :----------------------------------------------- |
@@ -43,7 +17,7 @@ The `[policy]` section contains an array of `overrides` tables. Each override ru
 | `priority` | Int    | Order of precedence. Higher numbers take priority.|
 | `block`    | Bool   | If `true`, completely blocks connections matching this rule. |
 
-### Match Criteria (`match`)
+## Match Criteria (`match`)
 
 You can specify a `domain` list or an `addr` list (containing `cidr` and `port`).
 
@@ -52,14 +26,14 @@ You can specify a `domain` list or an `addr` list (containing `cidr` and `port`)
 | `domain` | Array  | List of domain patterns. Supports wildcards (`*`, `**`).                    |
 | `addr`   | Array  | List of address rules. Each rule requires `cidr` and `port`.                |
 
-#### Address Rule (`addr`)
+### Address Rule (`addr`)
 
 | Field  | Type   | Description                                                                 |
 | :----- | :----- | :-------------------------------------------------------------------------- |
 | `cidr` | String | IP range in CIDR notation (e.g., `192.168.0.0/24`).                         |
 | `port` | String | Port or port range (e.g., `80`, `80-443`, `all`).                          |
 
-### DNS Override (`dns`)
+## DNS Override (`dns`)
 
 Customize how domain names are resolved for matched traffic. The available fields mirror the global [DNS Configuration](dns.md).
 
@@ -71,7 +45,7 @@ Customize how domain names are resolved for matched traffic. The available field
 | `qtype`     | String | Query type: `"ipv4"`, `"ipv6"`, or `"all"`.      |
 | `cache`     | Bool   | If `true`, enables caching for this rule.        |
 
-### HTTPS Override (`https`)
+## HTTPS Override (`https`)
 
 Customize how HTTPS connections are established. The available fields mirror the global [HTTPS Configuration](https.md).
 
@@ -84,28 +58,39 @@ Customize how HTTPS connections are established. The available fields mirror the
 | `chunk-size`  | Int    | Size of chunks when `split-mode` is `"chunk"`.        |
 | `skip`        | Bool   | If `true`, bypasses DPI modifications (standard TLS). |
 
-### Example
+## Example
 
 ```toml
-[policy]
-    # Example A: Allow YouTube with specific DPI bypass settings
-    [[policy.overrides]]
-        name = "allow youtube"
-        priority = 50
-        match = { domain = ["*.youtube.com"] }
-        https = { disorder = true, fake-count = 7 }
+# Example A: Allow YouTube with specific DPI bypass settings
+[[rules]]
+    name = "allow youtube"
+    priority = 50
+    match = { domain = ["*.youtube.com"] }
+    https = { disorder = true, fake-count = 7 }
 
-    # Example B: Bypass DPI for local network traffic (Standard Connection)
-    [[policy.overrides]]
-        name = "skip local"
-        priority = 51
-        match = { addr = [{ cidr = "192.168.0.0/24", port = "all" }] }
-        https = { skip = true }
+# Example B: Bypass DPI for local network traffic (Standard Connection)
+[[rules]]
+    name = "skip local"
+    priority = 51
+    match = { addr = [{ cidr = "192.168.0.0/24", port = "all" }] }
+    https = { skip = true }
 
-    # Example C: Block a specific domain
-    [[policy.overrides]]
-        name = "block ads"
-        priority = 100
-        match = { domain = ["ads.example.com"] }
-        block = true
+# Example C: Block a specific domain
+[[rules]]
+    name = "block ads"
+    priority = 100
+    match = { domain = ["ads.example.com"] }
+    block = true
+```
+
+## Deprecated: `[[policy.overrides]]`
+
+Earlier versions used `[[policy.overrides]]` instead of `[[rules]]`. The old key is still accepted for backward compatibility but emits a deprecation warning at startup. Migrate to the top-level `[[rules]]` form — it removes the `[policy]` indirection that no longer carries any other configuration.
+
+```toml
+# Deprecated form — still works, prints a warning
+[[policy.overrides]]
+    name = "allow youtube"
+    match = { domain = ["*.youtube.com"] }
+    https = { fake-count = 7 }
 ```

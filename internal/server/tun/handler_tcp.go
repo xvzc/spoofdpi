@@ -157,7 +157,7 @@ func (h *TCPHandler) handleTLS(
 	// First, apply IP-based rule if matched in server.go
 	if addrRule != nil {
 		logger.Trace().RawJSON("summary", addrRule.JSON()).Msg("addr match")
-		rt = &addrRule.Runtime
+		rt = &addrRule.Config
 	}
 
 	// Then, try domain-based matching (TLS-specific)
@@ -171,7 +171,7 @@ func (h *TCPHandler) handleTLS(
 			// Domain rule takes priority if it has higher priority
 			finalRule := matcher.GetHigherPriorityRule(addrRule, domainRule)
 			if finalRule == domainRule {
-				rt = &domainRule.Runtime
+				rt = &domainRule.Config
 			}
 		}
 	}

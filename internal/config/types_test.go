@@ -214,68 +214,6 @@ func TestHTTPSOptions_UnmarshalTOML(t *testing.T) {
 	}
 }
 
-// ┌────────────────┐
-// │ POLICY OPTIONS │
-// └────────────────┘
-func TestPolicyOptions_UnmarshalTOML(t *testing.T) {
-	tcs := []struct {
-		name    string
-		input   any
-		wantErr bool
-		assert  func(t *testing.T, o PolicyOptions)
-	}{
-		{
-			name: "valid policy options",
-			input: map[string]any{
-				"overrides": []map[string]any{
-					{
-						"name": "rule1",
-					},
-				},
-			},
-			wantErr: false,
-			assert: func(t *testing.T, o PolicyOptions) {
-				// PolicyOptions.UnmarshalTOML deliberately ignores the
-				// overrides table — load.extractRawOverrides reads the
-				// raw entries separately so resolveRules can apply them
-				// after the base RuntimeConfig is finalized. The Overrides
-				// slice stays empty until resolveRules populates it.
-				assert.Empty(t, o.Overrides)
-			},
-		},
-		{
-			name: "ignores deprecated template (warning surfaced via Config.UnmarshalTOML)",
-			input: map[string]any{
-				"template": map[string]any{},
-			},
-			wantErr: false,
-			assert: func(t *testing.T, o PolicyOptions) {
-				assert.Empty(t, o.Overrides)
-			},
-		},
-		{
-			name:    "invalid type",
-			input:   "invalid",
-			wantErr: true,
-		},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			var o PolicyOptions
-			err := o.UnmarshalTOML(tc.input)
-			if tc.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-				if tc.assert != nil {
-					tc.assert(t, o)
-				}
-			}
-		})
-	}
-}
-
 // ┌─────────────┐
 // │ MATCH ATTRS │
 // └─────────────┘
@@ -399,10 +337,10 @@ func TestRule_UnmarshalTOML(t *testing.T) {
 			wantErr: false,
 			assert: func(t *testing.T, r Rule) {
 				assert.Equal(t, "rule2", r.Name)
-				// Rule.UnmarshalTOML deliberately ignores the runtime
+				// Rule.UnmarshalTOML deliberately ignores the config
 				// section keys (dns/https/udp/connection); resolveRules
 				// in load.go applies them on top of the base RuntimeConfig.
-				assert.Equal(t, time.Duration(0), r.Runtime.Conn.TCPTimeout)
+				assert.Equal(t, time.Duration(0), r.Config.Conn.TCPTimeout)
 			},
 		},
 		{
@@ -649,7 +587,7 @@ func TestUDPOptions_MarshalJSON_omitsFakePacketBytes(t *testing.T) {
 	assert.Contains(t, got, `"fake-packet-len":64`)
 }
 
-func TestRule_JSON_includesBlockAndRuntime(t *testing.T) {
+func TestRule_JSON_includesBlockAndConfig(t *testing.T) {
 	cfg := DefaultConfig()
 	rt := cfg.Runtime
 	rt.HTTPS.SplitMode = HTTPSSplitModeChunk
@@ -662,7 +600,7 @@ func TestRule_JSON_includesBlockAndRuntime(t *testing.T) {
 		Match: &MatchAttrs{
 			Domains: []string{"example.com"},
 		},
-		Runtime: rt,
+		Config: rt,
 	}
 
 	got := string(rule.JSON())
@@ -670,7 +608,7 @@ func TestRule_JSON_includesBlockAndRuntime(t *testing.T) {
 	assert.Contains(t, got, `"priority":50`)
 	assert.Contains(t, got, `"block":true`)
 	assert.Contains(t, got, `"match":{"domains":"1 items"}`)
-	assert.Contains(t, got, `"runtime":`)
+	assert.Contains(t, got, `"config":`)
 	assert.Contains(t, got, `"split-mode":"chunk"`)
 	assert.Contains(t, got, `"chunk-size":8`)
 	// The previously-broken short tags should be gone.
