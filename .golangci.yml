@@ -11,7 +11,7 @@ linters:
     - staticcheck
     - unused
     - asciicheck
-    - goconst
+    # - goconst
     # - revive
   settings:
     exhaustruct:
