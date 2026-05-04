@@ -63,7 +63,7 @@ func (h *UDPHandler) Handle(
 	}
 
 	// Dial remote connection
-	rawConn, err := netutil.DialFastest(ctx, "udp", dst, sysNet.BindDialer)
+	rawConn, err := netutil.DialFastest(ctx, "udp", dst, 0, sysNet.BindDialer)
 	if err != nil {
 		logger.Error().Msgf("error dialing to %s", dst.String())
 		return

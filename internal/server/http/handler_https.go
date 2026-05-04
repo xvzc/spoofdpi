@@ -78,8 +78,7 @@ func (h *HTTPSHandler) tunnel(
 
 	logger := logging.WithLocalScope(ctx, h.logger, "https")
 
-	dst.Timeout = rt.Conn.TCPTimeout
-	rConn, err := netutil.DialFastest(ctx, "tcp", dst, nil)
+	rConn, err := netutil.DialFastest(ctx, "tcp", dst, rt.Conn.TCPTimeout, nil)
 	if err != nil {
 		return err
 	}

@@ -286,10 +286,9 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 	switch req.Cmd {
 	case proto.SOCKS5CmdConnect:
 		dst := &netutil.Destination{
-			Domain:  req.FQDN,
-			Addrs:   addrs,
-			Port:    req.Port,
-			Timeout: p.rt.Conn.TCPTimeout,
+			Domain: req.FQDN,
+			Addrs:  addrs,
+			Port:   req.Port,
 		}
 		if err = p.connectHandler.Handle(ctx, conn, req, dst, bestMatch); err != nil {
 			return // Handler logs error

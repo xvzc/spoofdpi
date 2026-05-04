@@ -20,11 +20,13 @@ type BindFunc func(dialer *net.Dialer, network string, targetIP net.IP) error
 // DialFastest attempts robust connections to the server
 // and returns the first successful conn. All the other connections will be
 // automatically canceled by calling `cancel()`
+// timeout is applied per-dial as a deadline; pass 0 to disable.
 // If bindFunc is not nil, it is called to configure the dialer before each dial attempt.
 func DialFastest(
 	ctx context.Context,
 	network string,
 	dst *Destination,
+	timeout time.Duration,
 	bindFunc BindFunc,
 ) (net.Conn, error) {
 	if len(dst.Addrs) == 0 {
@@ -53,8 +55,8 @@ func DialFastest(
 
 				targetAddr := net.JoinHostPort(ip.String(), strconv.Itoa(dst.Port))
 				dialer := &net.Dialer{}
-				if dst.Timeout > 0 {
-					dialer.Deadline = time.Now().Add(dst.Timeout)
+				if timeout > 0 {
+					dialer.Deadline = time.Now().Add(timeout)
 				}
 
 				// Apply bind function if provided

@@ -71,9 +71,7 @@ func (h *ConnectHandler) Handle(
 		return netutil.ErrBlocked
 	}
 
-	dst.Timeout = rt.Conn.TCPTimeout
-
-	rConn, err := netutil.DialFastest(ctx, "tcp", dst, nil)
+	rConn, err := netutil.DialFastest(ctx, "tcp", dst, rt.Conn.TCPTimeout, nil)
 	if err != nil {
 		_ = proto.SOCKS5FailureResponse().Write(lConn)
 		return err

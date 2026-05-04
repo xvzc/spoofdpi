@@ -261,10 +261,9 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 	}
 
 	dst := &netutil.Destination{
-		Domain:  host, // Updated from Domain to Host
-		Addrs:   addrs,
-		Port:    dstPort,
-		Timeout: p.rt.Conn.TCPTimeout,
+		Domain: host, // Updated from Domain to Host
+		Addrs:  addrs,
+		Port:   dstPort,
 	}
 
 	// Avoid recursively querying self.

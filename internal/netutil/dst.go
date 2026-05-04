@@ -4,14 +4,16 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"time"
 )
 
+// Destination identifies *where* to dial — domain name, candidate
+// IPs, and port. Per-dial concerns (timeout, bind hook, etc.) are
+// passed to DialFastest separately so a Destination value can be
+// reused across rule lookups without carrying stale settings.
 type Destination struct {
-	Domain  string
-	Addrs   []net.IP
-	Port    int
-	Timeout time.Duration
+	Domain string
+	Addrs  []net.IP
+	Port   int
 }
 
 func (d *Destination) String() string {

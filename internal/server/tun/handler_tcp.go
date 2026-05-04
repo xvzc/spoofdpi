@@ -77,9 +77,6 @@ func (h *TCPHandler) Handle(
 		Port:   port,
 		Addrs:  []net.IP{},
 	}
-	if h.rt != nil && h.rt.Conn.TCPTimeout != 0 {
-		dst.Timeout = h.rt.Conn.TCPTimeout
-	}
 	if ip != nil {
 		dst.Addrs = append(dst.Addrs, ip)
 	}
@@ -93,8 +90,11 @@ func (h *TCPHandler) Handle(
 		return
 	}
 
-	// Handle as plain TCP
-	rConn, err := netutil.DialFastest(ctx, "tcp", dst, sysNet.BindDialer)
+	// Handle as plain TCP — use base TCPTimeout; rule-aware override
+	// happens for TLS via handleTLS where the rule context is resolved.
+	rConn, err := netutil.DialFastest(
+		ctx, "tcp", dst, h.rt.Conn.TCPTimeout, sysNet.BindDialer,
+	)
 	if err != nil {
 		logger.Error().Msgf("failed to dial %v", err)
 		return
@@ -176,13 +176,13 @@ func (h *TCPHandler) handleTLS(
 		}
 	}
 
-	dst.Timeout = rt.Conn.TCPTimeout
-
 	// Dial Remote
 	if h.sniffer != nil {
 		h.sniffer.RegisterUntracked(dst.Addrs)
 	}
-	rConn, err := netutil.DialFastest(ctx, "tcp", dst, sysNet.BindDialer)
+	rConn, err := netutil.DialFastest(
+		ctx, "tcp", dst, rt.Conn.TCPTimeout, sysNet.BindDialer,
+	)
 	if err != nil {
 		return err
 	}
