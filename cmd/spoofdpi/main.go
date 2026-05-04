@@ -362,6 +362,7 @@ func createServer(
 				udpWriter,
 				udpSniffer,
 			),
+			udpSniffer,
 			&cfg.Runtime,
 		)
 		bindHandler := socks5.NewBindHandler(logging.WithScope(logger, "hnd"))
@@ -409,6 +410,7 @@ func createServer(
 				udpWriter,
 				udpSniffer,
 			),
+			udpSniffer,
 			&cfg.Runtime,
 		)
 

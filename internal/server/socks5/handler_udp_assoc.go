@@ -12,6 +12,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
@@ -19,6 +20,7 @@ type UdpAssociateHandler struct {
 	logger   zerolog.Logger
 	pool     *netutil.ConnRegistry[netutil.NATKey]
 	desyncer *desync.UDPDesyncer
+	sniffer  packet.Sniffer
 	rt       *config.RuntimeConfig
 }
 
@@ -26,12 +28,14 @@ func NewUdpAssociateHandler(
 	logger zerolog.Logger,
 	pool *netutil.ConnRegistry[netutil.NATKey],
 	desyncer *desync.UDPDesyncer,
+	sniffer packet.Sniffer,
 	rt *config.RuntimeConfig,
 ) *UdpAssociateHandler {
 	return &UdpAssociateHandler{
 		logger:   logger,
 		pool:     pool,
 		desyncer: desyncer,
+		sniffer:  sniffer,
 		rt:       rt,
 	}
 }
@@ -168,7 +172,12 @@ func (h *UdpAssociateHandler) Handle(
 		// Apply UDP options from rule if matched
 		rt := h.rt
 		if rule != nil {
-			rt = &rule.Runtime
+			rt = &rule.Config
+		}
+
+		// Register destination for TTL learning when fakes will be sent.
+		if h.sniffer != nil && rt.UDP.FakeCount > 0 {
+			h.sniffer.RegisterUntracked(dst.Addrs)
 		}
 
 		// Send fake packets before real payload (UDP desync)
