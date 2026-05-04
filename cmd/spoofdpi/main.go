@@ -314,8 +314,6 @@ func createServer(
 		}
 	}
 
-	desyncer := desync.NewTLSDesyncer(tcpWriter, tcpSniffer)
-
 	defaultRoute, err := netutil.DefaultRoute()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find default route: %w", err)
@@ -326,7 +324,7 @@ func createServer(
 		httpHandler := http.NewHTTPHandler(logging.WithScope(logger, "hnd"))
 		httpsHandler := http.NewHTTPSHandler(
 			logging.WithScope(logger, "hnd"),
-			desyncer,
+			desync.NewTLSDesyncer(tcpWriter, tcpSniffer),
 			tcpSniffer,
 			&cfg.Runtime,
 		)
@@ -349,22 +347,21 @@ func createServer(
 	case config.AppModeSOCKS5:
 		connectHandler := socks5.NewConnectHandler(
 			logging.WithScope(logger, "hnd"),
-			desyncer,
+			desync.NewTLSDesyncer(tcpWriter, tcpSniffer),
 			tcpSniffer,
 			cfg.Startup.App.ListenAddr,
 			&cfg.Runtime,
-		)
-		udpDesyncer := desync.NewUDPDesyncer(
-			logging.WithScope(logger, "dsn"),
-			udpWriter,
-			udpSniffer,
 		)
 		udpPool := netutil.NewConnRegistry[netutil.NATKey](4096, 60*time.Second)
 		udpPool.RunCleanupLoop(appctx)
 		udpAssociateHandler := socks5.NewUdpAssociateHandler(
 			logging.WithScope(logger, "hnd"),
 			udpPool,
-			udpDesyncer,
+			desync.NewUDPDesyncer(
+				logging.WithScope(logger, "dsn"),
+				udpWriter,
+				udpSniffer,
+			),
 			&cfg.Runtime,
 		)
 		bindHandler := socks5.NewBindHandler(logging.WithScope(logger, "hnd"))
@@ -400,19 +397,17 @@ func createServer(
 			logging.WithScope(logger, "hnd"),
 			ruleMatcher, // For domain-based TLS matching
 			&cfg.Runtime,
-			desyncer,
+			desync.NewTLSDesyncer(tcpWriter, tcpSniffer),
 			tcpSniffer, // For TTL tracking
-		)
-
-		udpDesyncer := desync.NewUDPDesyncer(
-			logging.WithScope(logger, "hnd"),
-			udpWriter,
-			udpSniffer,
 		)
 
 		udpHandler := tun.NewUDPHandler(
 			logging.WithScope(logger, "hnd"),
-			udpDesyncer,
+			desync.NewUDPDesyncer(
+				logging.WithScope(logger, "hnd"),
+				udpWriter,
+				udpSniffer,
+			),
 			&cfg.Runtime,
 		)
 
