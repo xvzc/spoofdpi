@@ -11,8 +11,6 @@ linters:
     - staticcheck
     - unused
     - asciicheck
-    - goconst
-    # - revive
   settings:
     exhaustruct:
       allow-empty: true
@@ -22,7 +20,6 @@ linters:
 formatters:
   enable:
     - gci
-    # - gofmt
     - gofumpt
     - goimports
     - golines
