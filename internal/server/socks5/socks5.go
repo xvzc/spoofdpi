@@ -51,9 +51,9 @@ func NewSOCKS5Proxy(
 	connectHandler *ConnectHandler,
 	bindHandler *BindHandler,
 	udpAssociateHandler *UdpAssociateHandler,
-	sysNet SOCKS5SystemNetwork,
 	tcpSniffer packet.Sniffer,
 	udpSniffer packet.Sniffer,
+	sysNet SOCKS5SystemNetwork,
 	cfg *config.Config,
 ) server.Server {
 	return &SOCKS5Proxy{
@@ -63,9 +63,9 @@ func NewSOCKS5Proxy(
 		connectHandler:      connectHandler,
 		bindHandler:         bindHandler,
 		udpAssociateHandler: udpAssociateHandler,
-		sysNet:              sysNet,
 		tcpSniffer:          tcpSniffer,
 		udpSniffer:          udpSniffer,
+		sysNet:              sysNet,
 		cfg:                 cfg,
 	}
 }

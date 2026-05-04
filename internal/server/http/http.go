@@ -45,8 +45,8 @@ func NewHTTPProxy(
 	httpHandler *HTTPHandler,
 	httpsHandler *HTTPSHandler,
 	ruleMatcher matcher.RuleMatcher,
-	sysNet HTTPSystemNetwork,
 	tcpSniffer packet.Sniffer,
+	sysNet HTTPSystemNetwork,
 	cfg *config.Config,
 ) server.Server {
 	return &HTTPProxy{
@@ -55,8 +55,8 @@ func NewHTTPProxy(
 		httpHandler:  httpHandler,
 		httpsHandler: httpsHandler,
 		ruleMatcher:  ruleMatcher,
-		sysNet:       sysNet,
 		tcpSniffer:   tcpSniffer,
+		sysNet:       sysNet,
 		cfg:          cfg,
 	}
 }

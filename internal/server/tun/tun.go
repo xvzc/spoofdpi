@@ -63,18 +63,18 @@ func NewTUNServer(
 	matcher matcher.RuleMatcher,
 	tcpHandler *TCPHandler,
 	udpHandler *UDPHandler,
-	sysNet TUNSystemNetwork,
 	tcpSniffer packet.Sniffer,
 	udpSniffer packet.Sniffer,
+	sysNet TUNSystemNetwork,
 ) server.Server {
 	return &TunServer{
 		logger:     logger,
 		matcher:    matcher,
 		tcpHandler: tcpHandler,
 		udpHandler: udpHandler,
-		sysNet:     sysNet,
 		tcpSniffer: tcpSniffer,
 		udpSniffer: udpSniffer,
+		sysNet:     sysNet,
 	}
 }
 

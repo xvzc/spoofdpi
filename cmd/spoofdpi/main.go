@@ -340,8 +340,8 @@ func createServer(
 			httpHandler,
 			httpsHandler,
 			ruleMatcher,
-			sysNet,
 			tcpSniffer,
+			sysNet,
 			cfg,
 		), nil
 	case config.AppModeSOCKS5:
@@ -373,12 +373,12 @@ func createServer(
 			connectHandler,
 			bindHandler,
 			udpAssociateHandler,
+			tcpSniffer,
+			udpSniffer,
 			socks5.NewSOCKS5SystemNetwork(
 				logging.WithScope(logger, "sys"),
 				defaultRoute,
 			),
-			tcpSniffer,
-			udpSniffer,
 			cfg,
 		), nil
 	case config.AppModeTUN:
@@ -425,9 +425,9 @@ func createServer(
 			ruleMatcher, // For IP-based matching in server.go
 			tcpHandler,
 			udpHandler,
-			sysNet,
 			tcpSniffer,
 			udpSniffer,
+			sysNet,
 		), nil
 	default:
 		return nil, fmt.Errorf("unknown server mode: %s", cfg.Startup.App.Mode)
