@@ -66,7 +66,7 @@ func (ts *TCPSniffer) StartCapturing() {
 // Addresses that are already being tracked are ignored.
 func (ts *TCPSniffer) RegisterUntracked(addrs []net.IP) {
 	for _, v := range addrs {
-		ts.nhopCache.Store(
+		ts.nhopCache.Set(
 			netutil.NewIPKey(v),
 			ts.defaultTTL,
 			cache.Options().WithSkipExisting(true),
@@ -78,7 +78,7 @@ func (ts *TCPSniffer) RegisterUntracked(addrs []net.IP) {
 // It returns the hop count and true if found, or 0 and false if not found.
 func (ts *TCPSniffer) GetOptimalTTL(key netutil.IPKey) uint8 {
 	hopCount := uint8(255)
-	if oTTL, ok := ts.nhopCache.Fetch(key); ok {
+	if oTTL, ok := ts.nhopCache.Get(key); ok {
 		hopCount = oTTL.(uint8)
 	}
 
@@ -130,10 +130,10 @@ func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	// Calculate hop count from the TTL
 	nhops := estimateHops(ttlLeft)
 
-	stored, exists := ts.nhopCache.Fetch(key)
+	stored, exists := ts.nhopCache.Get(key)
 
-	if ts.nhopCache.Store(key, nhops, cache.Options().WithUpdateExistingOnly(true)) {
-		if !exists || stored != nhops {
+	if ts.nhopCache.Set(key, nhops, cache.Options().WithUpdateExistingOnly(true)) {
+		if exists && stored != nhops {
 			logger.Trace().
 				Str("from", key.String()).
 				Uint8("nhops", nhops).

@@ -105,9 +105,9 @@ func (c *TTLCache[K]) getShard(key K) *ttlCacheShard[K] {
 // ┌─────────────┐
 // │ PUBLIC APIs │
 // └─────────────┘
-// Store adds an item to the cache, replacing any existing item.
+// Set adds an item to the cache, replacing any existing item.
 // If ttl is 0 or negative, the item will never expire (passive-only).
-func (c *TTLCache[K]) Store(key K, value any, opts *options) bool {
+func (c *TTLCache[K]) Set(key K, value any, opts *options) bool {
 	shard := c.getShard(key)
 
 	shard.mu.Lock()
@@ -140,10 +140,10 @@ func (c *TTLCache[K]) Store(key K, value any, opts *options) bool {
 	return true
 }
 
-// Fetch retrieves an item from the cache.
+// Get retrieves an item from the cache.
 // It returns the item (of type T) and true if found and not expired.
 // Otherwise, it returns the zero value of T and false.
-func (c *TTLCache[K]) Fetch(key K) (any, bool) {
+func (c *TTLCache[K]) Get(key K) (any, bool) {
 	shard := c.getShard(key)
 	shard.mu.RLock()
 	i, ok := shard.items[key]
@@ -173,8 +173,8 @@ func (c *TTLCache[K]) Fetch(key K) (any, bool) {
 	return i.value, true
 }
 
-// Evict removes an item from the cache.
-func (c *TTLCache[K]) Evict(key K) {
+// Delete removes an item from the cache.
+func (c *TTLCache[K]) Delete(key K) {
 	shard := c.getShard(key)
 	shard.mu.Lock()
 	delete(shard.items, key)

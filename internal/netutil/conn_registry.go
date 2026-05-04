@@ -66,21 +66,21 @@ func (p *ConnRegistry[K]) Store(key K, rawConn net.Conn) *IdleTimeoutConn {
 	wrapper.Key = key
 
 	wrapper.onActivity = func() {
-		p.storage.Fetch(key)
+		p.storage.Get(key)
 	}
 
 	wrapper.onClose = func() {
 		p.Evict(key)
 	}
 
-	p.storage.Store(key, wrapper, nil)
+	p.storage.Set(key, wrapper, nil)
 
 	return wrapper
 }
 
 // Fetch retrieves a connection from the pool, refreshing its LRU status.
 func (p *ConnRegistry[K]) Fetch(key K) (*IdleTimeoutConn, bool) {
-	if val, ok := p.storage.Fetch(key); ok {
+	if val, ok := p.storage.Get(key); ok {
 		return val.(*IdleTimeoutConn), true
 	}
 	return nil, false
@@ -88,7 +88,7 @@ func (p *ConnRegistry[K]) Fetch(key K) (*IdleTimeoutConn, bool) {
 
 // Evict closes and removes the connection from the pool.
 func (p *ConnRegistry[K]) Evict(key K) {
-	p.storage.Evict(key)
+	p.storage.Delete(key)
 }
 
 // Has checks if the connection exists in the cache.

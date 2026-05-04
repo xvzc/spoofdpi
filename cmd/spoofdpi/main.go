@@ -224,7 +224,7 @@ func createServer(
 		dns.NewHTTPSResolver(logging.WithScope(logger, "dns"), &cfg.Runtime),
 		dns.NewUDPResolver(logging.WithScope(logger, "dns"), &cfg.Runtime),
 		dns.NewSystemResolver(logging.WithScope(logger, "dns"), &cfg.Runtime),
-		dns.NewCacheResolver(
+		dns.NewCachedResolver(
 			logging.WithScope(logger, "dns"),
 			cache.NewTTLCache[string](cache.TTLCacheAttrs{
 				NumOfShards:     64,

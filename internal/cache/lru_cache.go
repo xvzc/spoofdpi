@@ -66,9 +66,9 @@ func (c *LRUCache[K]) removeByElement(e *list.Element) {
 	}
 }
 
-// Fetch retrieves a value from the cache.
+// Get retrieves a value from the cache.
 // If found, the item is promoted to Most Recently Used (MRU).
-func (c *LRUCache[K]) Fetch(key K) (any, bool) {
+func (c *LRUCache[K]) Get(key K) (any, bool) {
 	// Use Lock since MoveToFront modifies the linked list
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -87,8 +87,8 @@ func (c *LRUCache[K]) Fetch(key K) (any, bool) {
 	return nil, false
 }
 
-// Store adds a value to the cache, applying any provided options.
-func (c *LRUCache[K]) Store(key K, value any, opts *options) bool {
+// Set adds a value to the cache, applying any provided options.
+func (c *LRUCache[K]) Set(key K, value any, opts *options) bool {
 	// Use Write Lock for modification operations
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -152,8 +152,8 @@ func (c *LRUCache[K]) ForEach(f func(key K, value any) error) error {
 	return nil
 }
 
-// Evict removes an item from the cache.
-func (c *LRUCache[K]) Evict(key K) {
+// Delete removes an item from the cache.
+func (c *LRUCache[K]) Delete(key K) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

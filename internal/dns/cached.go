@@ -11,25 +11,25 @@ import (
 	"github.com/xvzc/spoofdpi/internal/logging"
 )
 
-// CacheResolver is a decorator that adds caching functionality to another Resolver.
-type CacheResolver struct {
+// CachedResolver is a decorator that adds caching functionality to another Resolver.
+type CachedResolver struct {
 	logger zerolog.Logger
 
 	ttlCache cache.Cache[string] // Owns the cache
 }
 
-// NewCacheResolver wraps a "worker" resolver with a cache.
-func NewCacheResolver(
+// NewCachedResolver wraps a "worker" resolver with a cache.
+func NewCachedResolver(
 	logger zerolog.Logger,
 	cache cache.Cache[string],
-) *CacheResolver {
-	return &CacheResolver{
+) *CachedResolver {
+	return &CachedResolver{
 		logger:   logger,
 		ttlCache: cache,
 	}
 }
 
-func (cr *CacheResolver) Info() []ResolverInfo {
+func (cr *CachedResolver) Info() []ResolverInfo {
 	return []ResolverInfo{
 		{
 			Name: "cache",
@@ -40,7 +40,7 @@ func (cr *CacheResolver) Info() []ResolverInfo {
 
 // Resolve implements the Resolver interface.
 // This is where all the cache checking logic resides.
-func (cr *CacheResolver) Resolve(
+func (cr *CachedResolver) Resolve(
 	ctx context.Context,
 	domain string,
 	fallback Resolver,
@@ -53,7 +53,7 @@ func (cr *CacheResolver) Resolve(
 	// the cache might return the wrong one.
 	// For now, assuming simplistic cache key = domain, but awareness of potential issue.
 	// Ideally: key = domain + qtypes + spec-related-things
-	if item, ok := cr.ttlCache.Fetch(domain); ok {
+	if item, ok := cr.ttlCache.Get(domain); ok {
 		logger.Debug().Str("domain", domain).Msgf("hit")
 		return item.(*RecordSet).Clone(), nil
 	}
@@ -81,7 +81,7 @@ func (cr *CacheResolver) Resolve(
 		Uint32("ttl", rSet.TTL).
 		Msg("set")
 
-	_ = cr.ttlCache.Store(
+	_ = cr.ttlCache.Set(
 		domain,
 		rSet,
 		cache.Options().WithTTL(time.Duration(rSet.TTL)*time.Second),
