@@ -9,14 +9,21 @@ import (
 	"github.com/jackpal/gateway"
 )
 
-// Route represents a network route with interface and gateway
+// Route represents a network route with interface and gateway.
+// GatewayMAC is optional and only populated when raw L2 packet
+// emission is needed (e.g., TUN mode, fake-packet desync).
 type Route struct {
-	Iface   net.Interface
-	Gateway net.IP
+	Iface      net.Interface
+	Gateway    net.IP
+	GatewayMAC net.HardwareAddr
 }
 
-// DefaultRoute returns the default network route (interface and gateway)
-func DefaultRoute() (*Route, error) {
+// DiscoverDefaultRoute probes the local system for the default network
+// route (interface + gateway). If the matched interface has no MAC
+// address (e.g., a VPN/TUN is the default route), it falls back to a
+// physical interface so callers that need raw L2 emission still get a
+// usable NIC.
+func DiscoverDefaultRoute() (*Route, error) {
 	conn, err := net.Dial("udp", "8.8.8.8:53")
 	if err != nil {
 		return nil, err
@@ -54,12 +61,47 @@ func DefaultRoute() (*Route, error) {
 		return nil, fmt.Errorf("default interface not found")
 	}
 
+	if len(defaultIface.HardwareAddr) == 0 {
+		if physical := findPhysicalInterface(ifaces); physical != nil {
+			defaultIface = *physical
+		}
+	}
+
 	gatewayIp, err := gateway.DiscoverGateway()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get default gateway: %w", err)
 	}
 
 	return &Route{Iface: defaultIface, Gateway: gatewayIp}, nil
+}
+
+// findPhysicalInterface returns the first up, non-loopback interface
+// with a hardware address and a non-loopback IPv4 address. Returns nil
+// when no such interface exists.
+func findPhysicalInterface(ifaces []net.Interface) *net.Interface {
+	for i := range ifaces {
+		iface := ifaces[i]
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if len(iface.HardwareAddr) == 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			if ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
+				return &iface
+			}
+		}
+	}
+	return nil
 }
 
 func FindSafeCIDR() (string, error) {

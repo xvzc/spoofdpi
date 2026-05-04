@@ -241,6 +241,11 @@ func createServer(
 		logger.Info().Str("dst", ri.Dst).Msgf("  %s", ri.Name)
 	}
 
+	defaultRoute, err := netutil.DiscoverDefaultRoute()
+	if err != nil {
+		return nil, fmt.Errorf("failed to find default route: %w", err)
+	}
+
 	// --- Raw packet IO (sniffer + writer) per L4, only when needed ---
 	var tcpSniffer, udpSniffer packet.Sniffer
 	var tcpWriter, udpWriter packet.Writer
@@ -249,28 +254,27 @@ func createServer(
 	needUDP := cfg.NeedsRawUDP()
 
 	if needTCP || needUDP {
-		// Passive network discovery — interface + upstream gateway MAC.
-		networkDetector := packet.NewNetworkDetector(logging.WithScope(logger, "pkt"))
-		if err := networkDetector.Start(appctx); err != nil {
-			return nil, fmt.Errorf("network detector start: %w", err)
-		}
-
-		waitCtx, cancel := context.WithTimeout(appctx, 10*time.Second)
-		networkDetector.WaitForGatewayMAC(waitCtx)
+		// Resolve the upstream gateway MAC for raw L2 packet emission.
+		arpCtx, cancel := context.WithTimeout(appctx, 10*time.Second)
+		mac, err := packet.ResolveGatewayMAC(
+			arpCtx,
+			logging.WithScope(logger, "pkt"),
+			&defaultRoute.Iface,
+		)
 		cancel()
-
-		iface := networkDetector.GetInterface()
-		gatewayMAC := networkDetector.GetGatewayMAC()
-		if gatewayMAC == nil {
-			return nil, fmt.Errorf("failed to detect gateway MAC within 10s")
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve gateway MAC: %w", err)
 		}
+		defaultRoute.GatewayMAC = mac
+
+		iface := &defaultRoute.Iface
 
 		logger.Info().Msg("network info")
 		logger.Info().
 			Str("name", iface.Name).
 			Str("mac", iface.HardwareAddr.String()).
 			Msg(" interface")
-		logger.Info().Str("mac", gatewayMAC.String()).Msg(" gateway (passive detection)")
+		logger.Info().Str("mac", mac.String()).Msg(" gateway (passive detection)")
 
 		// Shared cache for both TCP and UDP raw-packet stacks.
 		hopCache := cache.NewLRUCache[netutil.IPKey](4096, nil)
@@ -290,7 +294,7 @@ func createServer(
 				logging.WithScope(logger, "pkt"),
 				handle,
 				iface,
-				gatewayMAC,
+				mac,
 			)
 		}
 
@@ -309,14 +313,9 @@ func createServer(
 				logging.WithScope(logger, "pkt"),
 				handle,
 				iface,
-				gatewayMAC,
+				mac,
 			)
 		}
-	}
-
-	defaultRoute, err := netutil.DefaultRoute()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find default route: %w", err)
 	}
 
 	switch cfg.Startup.App.Mode {
