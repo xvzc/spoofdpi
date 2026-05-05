@@ -18,7 +18,7 @@ import (
 // UI styling
 var (
 	logoStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#00ff00")).
+			Foreground(lipgloss.Color("2")).
 			Bold(true).
 			MarginBottom(0)
 
