@@ -63,8 +63,6 @@ archives:
       {{- .Os }}_
       {{- if eq .Arch "386" }}i386
       {{- else if eq .Arch "amd64" }}x86_64
-      {{- else if eq .Arch "mips64" }}mips64_hardfloat
-      {{- else if eq .Arch "mips64le" }}mips64le_hardfloat
       {{- else }}{{ .Arch }}{{ end -}}
     formats: ['tar.gz']
     # Explicitly list builds to include (optional but good for clarity)
