@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/xvzc/spoofdpi/compare/v1.5.0...v1.5.1) (2026-05-05)
+
+
+### Bug Fixes
+
+* **release:** drop bogus mips64 hardfloat suffix from archive names ([e6acdcf](https://github.com/xvzc/spoofdpi/commit/e6acdcf26aecdb5567104f0301267913d921a59d))
+
 ## [1.5.0](https://github.com/xvzc/spoofdpi/compare/v1.4.1...v1.5.0) (2026-05-04)
 
 
