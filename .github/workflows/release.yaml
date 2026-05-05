@@ -21,7 +21,7 @@ env:
 
 jobs:
   release-please:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && !github.event.repository.fork
     name: release-please
     runs-on: ubuntu-latest
     outputs:
@@ -37,7 +37,7 @@ jobs:
   build-and-publish:
     needs: release-please
     if: |
-      !cancelled() && (
+      !github.event.repository.fork && !cancelled() && (
         (github.event_name == 'push' && needs.release-please.outputs.release_created == 'true') ||
         github.event_name == 'workflow_dispatch'
       )
