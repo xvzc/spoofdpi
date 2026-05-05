@@ -19,8 +19,8 @@ import (
 var (
 	logoStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("2")).
-			Bold(true).
-			MarginBottom(0)
+		// Bold(false).
+		MarginBottom(0)
 
 	speedStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("255")).
@@ -86,7 +86,7 @@ func initialModel(readyChan chan struct{}) model {
 		FPS:    time.Second / 25,
 	}
 
-	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("119"))
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
 
 	return model{
 		spinner:      s,
