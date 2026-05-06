@@ -8,14 +8,21 @@ import (
 	"github.com/samber/lo"
 )
 
-// fromTomlFile decodes the TOML at `dir` into `cfg`. Pre-existing values in
-// `cfg` are preserved for any field absent from the TOML — this lets the
-// caller pre-populate `cfg` with defaults before calling.
-func fromTomlFile(dir string, cfg *Config) error {
+// fromTomlFile decodes the TOML at `dir` into a map, then feeds it to
+// cfg.UnmarshalTOML. Pre-existing values in cfg are preserved for any field
+// absent from the TOML. The decoded map is returned so callers can extract
+// additional data (e.g. raw rules) without a second file read.
+func fromTomlFile(dir string, cfg *Config) (map[string]any, error) {
 	_ = os.Setenv("BURNTSUSHI_TOML_110", "1") // allow new lines in toml file
 
-	_, err := toml.DecodeFile(dir, cfg)
-	return err
+	var m map[string]any
+	if _, err := toml.DecodeFile(dir, &m); err != nil {
+		return nil, err
+	}
+	if err := cfg.UnmarshalTOML(m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 func searchTomlFile(customDir string, lookupDirs []string) (string, error) {

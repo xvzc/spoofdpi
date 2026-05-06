@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 
-	"github.com/BurntSushi/toml"
 	"github.com/urfave/cli/v3"
 )
 
@@ -35,6 +35,15 @@ func Load(cmd *cli.Command, cliOverrides []func(*Config)) (*Config, string, erro
 		return nil, "", err
 	}
 
+	configDir := filepath.Dir(configPath)
+	for i, rule := range rawRules {
+		if v, ok := rule["match"]; ok {
+			if err := expandFileMatchList(v, i, configDir); err != nil {
+				return nil, "", err
+			}
+		}
+	}
+
 	rules, err := resolveRules(rawRules, cfg.Runtime)
 	if err != nil {
 		return nil, "", err
@@ -51,11 +60,10 @@ func Load(cmd *cli.Command, cliOverrides []func(*Config)) (*Config, string, erro
 // loadTOML resolves the TOML config path (custom --config flag, env var,
 // or one of the default locations), then decodes it onto cfg if found.
 // The decode-into-defaults trick preserves cfg's pre-populated values
-// for any TOML key that's absent. Also extracts the raw [[rules]]
-// entries (and the deprecated [[policy.overrides]]) separately so
-// resolveRules can apply them on top of the finalized base
-// RuntimeConfig later. Returns the path of the decoded file (or "" if
-// none was loaded) and the captured raw rules.
+// for any TOML key that's absent. Raw [[rules]] / [[policy.overrides]]
+// entries are extracted from the same decoded map so no second file read
+// is needed. Returns the path of the decoded file (or "" if none was
+// loaded) and the captured raw rules.
 func loadTOML(cmd *cli.Command, cfg *Config) (string, []map[string]any, error) {
 	if cmd.Bool("clean") {
 		return "", nil, nil
@@ -76,48 +84,29 @@ func loadTOML(cmd *cli.Command, cfg *Config) (string, []map[string]any, error) {
 		return "", nil, nil
 	}
 
-	if err := fromTomlFile(configPath, cfg); err != nil {
+	m, err := fromTomlFile(configPath, cfg)
+	if err != nil {
 		return "", nil, fmt.Errorf("error parsing '%s': %w", configPath, err)
 	}
 
-	rawRules, err := extractRawRules(configPath, cfg)
-	if err != nil {
-		return "", nil, fmt.Errorf(
-			"error reading rules from '%s': %w",
-			configPath,
-			err,
-		)
-	}
-
-	return configPath, rawRules, nil
+	return configPath, rulesFromMap(m), nil
 }
 
-// extractRawRules re-decodes the TOML file into a small helper struct
-// to capture both [[rules]] (preferred) and [[policy.overrides]]
-// (deprecated alias) as slices of maps. Entries from both keys are
-// concatenated; using the deprecated key emits a warning. Doing this
-// as a separate pass means the regular decode-into-Config pipeline
-// doesn't have to know anything about deferred rule resolution.
-func extractRawRules(path string, cfg *Config) ([]map[string]any, error) {
-	var helper struct { //exhaustruct:enforce
-		Rules  []map[string]any `toml:"rules"`
-		Policy struct {         //exhaustruct:enforce
-			Overrides []map[string]any `toml:"overrides"`
-		} `toml:"policy"`
+// rulesFromMap extracts raw [[rules]] and deprecated [[policy.overrides]]
+// entries from an already-decoded TOML map. Using the deprecated key emits
+// a warning.
+func rulesFromMap(m map[string]any) []map[string]any {
+	var rules []map[string]any
+	if r, ok := m["rules"].([]map[string]any); ok {
+		rules = append(rules, r...)
 	}
-	if _, err := toml.DecodeFile(path, &helper); err != nil {
-		return nil, err
+	if policy, ok := m["policy"].(map[string]any); ok {
+		if overrides, ok := policy["overrides"].([]map[string]any); ok {
+			AddWarnMsg("'[[policy.overrides]]' is deprecated; rename to '[[rules]]'")
+			rules = append(rules, overrides...)
+		}
 	}
-
-	rules := helper.Rules
-	if len(helper.Policy.Overrides) > 0 {
-		cfg.WarnMsgs = append(
-			cfg.WarnMsgs,
-			"'[[policy.overrides]]' is deprecated; rename to '[[rules]]'",
-		)
-		rules = append(rules, helper.Policy.Overrides...)
-	}
-	return rules, nil
+	return rules
 }
 
 // resolveRules expands raw rule tables into a slice of fully-populated
@@ -146,6 +135,7 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 		// The rule's HTTPS UnmarshalTOML below will overwrite this
 		// only if the rule explicitly sets skip.
 		r.Config.HTTPS.Skip = false
+		r.Config.UDP.Skip = false
 
 		if v, ok := item["name"].(string); ok {
 			r.Name = v
@@ -190,4 +180,36 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 		rules = append(rules, r)
 	}
 	return rules, nil
+}
+
+// expandFileMatchList expands any file: entries in the domain/cidrs
+// arrays of a raw match map in-place. Missing files emit a warning via
+// AddWarnMsg; other I/O failures return an error.
+func expandFileMatchList(v any, ruleIdx int, configDir string) error {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	for _, key := range []string{"domain", "cidrs"} {
+		arr, ok := m[key].([]any)
+		if !ok {
+			continue
+		}
+		entries := make([]string, 0, len(arr))
+		for _, e := range arr {
+			if s, ok := e.(string); ok {
+				entries = append(entries, s)
+			}
+		}
+		expanded, err := resolveEntries(entries, configDir)
+		if err != nil {
+			return fmt.Errorf("rule %d: match.%s: %w", ruleIdx, key, err)
+		}
+		result := make([]any, len(expanded))
+		for j, s := range expanded {
+			result[j] = s
+		}
+		m[key] = result
+	}
+	return nil
 }

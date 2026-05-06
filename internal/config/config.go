@@ -14,12 +14,6 @@ import (
 type Config struct {
 	Startup StartupConfig
 	Runtime RuntimeConfig
-
-	// WarnMsgs accumulates non-fatal advisories produced during Load
-	// (deprecations, transitional behaviors, etc.). main surfaces them
-	// through the configured logger after TUI/log setup, so they don't
-	// race the TUI taking over stdout/stderr.
-	WarnMsgs []string
 }
 
 // StartupConfig holds the sections consumed only during server bootstrap.
@@ -69,10 +63,7 @@ func (c *Config) UnmarshalTOML(data any) (err error) {
 	}
 	if policyMap, ok := m["policy"].(map[string]any); ok {
 		if _, hasTemplate := policyMap["template"]; hasTemplate {
-			c.WarnMsgs = append(
-				c.WarnMsgs,
-				"'policy.template' is deprecated and ignored; move template fields to top-level [app]/[connection]/[dns]/[https]/[udp] sections",
-			)
+			AddWarnMsg("'policy.template' is deprecated and ignored")
 		}
 	}
 
@@ -126,9 +117,9 @@ func (c *Config) Finalize() error {
 
 	switch c.Startup.App.Mode {
 	case AppModeSOCKS5:
-		c.WarnMsgs = append(c.WarnMsgs, "'socks5' mode is an experimental feature")
+		AddWarnMsg("'socks5' mode is an experimental feature")
 	case AppModeTUN:
-		c.WarnMsgs = append(c.WarnMsgs, "'tun' mode is an experimental feature")
+		AddWarnMsg("'tun' mode is an experimental feature")
 	}
 
 	return nil

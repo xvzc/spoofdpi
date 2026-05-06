@@ -447,9 +447,7 @@ func TestFromTomlFile(t *testing.T) {
 				block = true
 				match = {
 					domain = ["example.com"],
-					addr = [
-						{cidr = "192.168.1.0/24", port = "80-443"}
-					]
+					cidrs = ["192.168.1.0/24"]
 				}
 				dns = {
 					mode = "udp",
@@ -475,7 +473,7 @@ func TestFromTomlFile(t *testing.T) {
 		assert.NoError(t, err)
 
 		cfg := DefaultConfig()
-		err = fromTomlFile(configPath, cfg)
+		m, err := fromTomlFile(configPath, cfg)
 		assert.NoError(t, err)
 		assert.NotNil(t, cfg)
 
@@ -513,9 +511,7 @@ func TestFromTomlFile(t *testing.T) {
 		assert.True(t, cfg.Runtime.HTTPS.Skip)
 
 		// Resolve rules on top of the finalized base RuntimeConfig.
-		raw, err := extractRawRules(configPath, cfg)
-		assert.NoError(t, err)
-		rules, err := resolveRules(raw, cfg.Runtime)
+		rules, err := resolveRules(rulesFromMap(m), cfg.Runtime)
 		assert.NoError(t, err)
 		assert.Len(t, rules, 1)
 
@@ -525,9 +521,7 @@ func TestFromTomlFile(t *testing.T) {
 		assert.Equal(t, uint16(100), rule.Priority)
 
 		assert.Equal(t, "example.com", rule.Match.Domains[0])
-		assert.Equal(t, "192.168.1.0/24", rule.Match.Addrs[0].CIDR.String())
-		assert.Equal(t, uint16(80), rule.Match.Addrs[0].PortFrom)
-		assert.Equal(t, uint16(443), rule.Match.Addrs[0].PortTo)
+		assert.Equal(t, "192.168.1.0/24", rule.Match.CIDRs[0])
 
 		assert.Equal(t, DNSModeUDP, rule.Config.DNS.Mode)
 		assert.Equal(t, "8.8.4.4:53", rule.Config.DNS.Addr.String())

@@ -23,7 +23,6 @@ import (
 // via DefaultConfig().Runtime / .Startup.
 func DefaultConfig() *Config { //exhaustruct:enforce
 	return &Config{
-		WarnMsgs: nil,
 		Startup: StartupConfig{ //exhaustruct:enforce
 			App: AppOptions{ //exhaustruct:enforce
 				NoTUI:                false,
@@ -392,6 +391,23 @@ func CreateCommand(
 					pkt := MustParseBytes(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
 						cfg.Runtime.UDP.FakePacket = pkt
+					})
+					return nil
+				},
+			},
+
+			&cli.BoolFlag{
+				Name: "udp-skip",
+				Usage: fmt.Sprintf(`
+				If set, UDP traffic will be processed without any DPI bypass techniques.
+				(default: %v)`,
+					defaultCfg.Runtime.UDP.Skip,
+				),
+				OnlyOnce: true,
+				Action: func(ctx context.Context, cmd *cli.Command, v bool) error {
+					skip := v
+					cliOverrides = append(cliOverrides, func(cfg *Config) {
+						cfg.Runtime.UDP.Skip = skip
 					})
 					return nil
 				},

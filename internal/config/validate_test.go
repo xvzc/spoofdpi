@@ -62,35 +62,6 @@ func TestCheckHostPort(t *testing.T) {
 	}
 }
 
-func TestCheckPortRange(t *testing.T) {
-	tcs := []struct {
-		name    string
-		input   string
-		wantErr bool
-	}{
-		{"valid single", "8080", false},
-		{"valid range", "1000-2000", false},
-		{"valid all", "all", false},
-		{"valid all caps", "ALL", false},
-		{"invalid non-numeric", "abc", true},
-		{"invalid range format", "100-", true},
-		{"invalid range inverted", "2000-1000", true},
-		{"invalid port too high", "70000", true},
-		{"invalid range too high", "80-70000", true},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			err := checkPortRange(tc.input)
-			if tc.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 func TestCheckCIDR(t *testing.T) {
 	tcs := []struct {
 		name    string
@@ -176,13 +147,7 @@ func TestCheckMatchAttrs(t *testing.T) {
 			name: "valid match both",
 			input: MatchAttrs{
 				Domains: []string{"www.google.com"},
-				Addrs: []AddrMatch{
-					{
-						CIDR:     MustParseCIDR("192.168.0.1/24"),
-						PortFrom: uint16(80),
-						PortTo:   uint16(443),
-					},
-				},
+				CIDRs:   []string{"192.168.0.0/24"},
 			},
 			wantErr: false,
 		},
@@ -194,44 +159,15 @@ func TestCheckMatchAttrs(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "valid match addr",
+			name: "valid match cidr",
 			input: MatchAttrs{
-				Addrs: []AddrMatch{
-					{
-						CIDR:     MustParseCIDR("10.0.0.0/8"),
-						PortFrom: uint16(0),
-						PortTo:   uint16(65535),
-					},
-				},
+				CIDRs: []string{"10.0.0.0/8"},
 			},
 			wantErr: false,
 		},
 		{
 			name:    "empty match",
 			input:   MatchAttrs{},
-			wantErr: false,
-		},
-		{
-			name: "missig ports wiht cidr",
-			input: MatchAttrs{
-				Addrs: []AddrMatch{
-					{
-						CIDR: MustParseCIDR("10.0.0.0/8"),
-					},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "missig cidr with ports",
-			input: MatchAttrs{
-				Addrs: []AddrMatch{
-					{
-						PortFrom: uint16(80),
-						PortTo:   uint16(443),
-					},
-				},
-			},
 			wantErr: true,
 		},
 	}
@@ -270,13 +206,7 @@ func TestCheckRule(t *testing.T) {
 			name: "valid cidr rule",
 			rule: Rule{
 				Match: &MatchAttrs{
-					Addrs: []AddrMatch{
-						{
-							CIDR:     MustParseCIDR("192.168.1.0/24"),
-							PortFrom: uint16(80),
-							PortTo:   uint16(80),
-						},
-					},
+					CIDRs: []string{"192.168.1.0/24"},
 				},
 				Config: RuntimeConfig{
 					HTTPS: HTTPSOptions{Disorder: true},

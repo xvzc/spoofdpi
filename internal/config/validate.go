@@ -95,61 +95,6 @@ func checkHostPort(v string) error {
 	return checkUint16(int64(portInt))
 }
 
-// checkPortRange validates if the input is a single port, a range, or "all".
-func checkPortRange(v string) error {
-	// 1. Check for "all" keyword
-	if strings.ToLower(v) == "all" { //nolint:goconst
-		return nil
-	}
-
-	// 2. Regex for single port (e.g., "8080") or range (e.g., "0-8000")
-	// Allowing leading/trailing spaces for robustness if needed, but strict is better.
-	re := regexp.MustCompile(`^(\d+)(-(\d+))?$`)
-	matches := re.FindStringSubmatch(v)
-
-	if matches == nil {
-		return fmt.Errorf(
-			"invalid port format: '%s' (expected '8080', '0-8000', or 'all')",
-			v,
-		)
-	}
-
-	// Helper to validate numeric port range
-	checkPort := func(s string) (int, error) {
-		p, err := strconv.Atoi(s)
-		if err != nil || p < 0 || p > 65535 {
-			return 0, fmt.Errorf("port %s out of range [0-65535]", s)
-		}
-		return p, nil
-	}
-
-	// 3. Case: Single Port (matches[1] contains the number, matches[3] is empty)
-	if matches[3] == "" {
-		_, err := checkPort(matches[1])
-		return err
-	}
-
-	// 4. Case: Port Range (matches[1] is from, matches[3] is end)
-	from, err := checkPort(matches[1])
-	if err != nil {
-		return err
-	}
-	to, err := checkPort(matches[3])
-	if err != nil {
-		return err
-	}
-
-	if from > to {
-		return fmt.Errorf(
-			"invalid range: from-port %d is greater than to-port %d",
-			from,
-			to,
-		)
-	}
-
-	return nil
-}
-
 func checkCIDR(v string) error {
 	_, _, err := net.ParseCIDR(v)
 	if err != nil {
@@ -197,15 +142,9 @@ func checkRule(r Rule) error {
 }
 
 func checkMatchAttrs(m MatchAttrs) error {
-	for _, addr := range m.Addrs {
-		if len(addr.CIDR.IP) == 0 {
-			return fmt.Errorf("addr rule must have cidr attribute")
-		}
-		if addr.PortFrom == 0 && addr.PortTo == 0 {
-			return fmt.Errorf("addr rule must have port attribute")
-		}
+	if len(m.Domains) == 0 && len(m.CIDRs) == 0 {
+		return fmt.Errorf("match must have at least one 'domain' or 'cidrs' entry")
 	}
-
 	return nil
 }
 

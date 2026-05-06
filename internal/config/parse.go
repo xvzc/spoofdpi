@@ -67,38 +67,6 @@ func MustParseTCPAddr(s string) net.TCPAddr {
 	return addr
 }
 
-func MustParseCIDR(s string) net.IPNet {
-	_, cidr, err := net.ParseCIDR(s)
-	if err != nil {
-		panic(err)
-	}
-
-	return *cidr
-}
-
-func MustParsePortRange(s string) (uint16, uint16) {
-	if err := checkPortRange(s); err != nil {
-		panic(err)
-	}
-
-	if strings.ToLower(s) == "all" { //nolint:goconst
-		return 0, 65535
-	}
-
-	parts := strings.Split(s, "-")
-	switch len(parts) {
-	case 1:
-		p, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
-		return uint16(p), uint16(p)
-	case 2:
-		p1, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
-		p2, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
-		return uint16(p1), uint16(p2)
-	default:
-		return 0, 0
-	}
-}
-
 func MustParseLogLevel(s string) zerolog.Level {
 	level, err := zerolog.ParseLevel(s)
 	if err != nil {

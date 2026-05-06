@@ -1,7 +1,6 @@
 package config
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -181,54 +180,6 @@ func TestConfig_NeedsRawUDP(t *testing.T) {
 			assert.Equal(t, tc.expect, tc.config.NeedsRawUDP())
 		})
 	}
-}
-
-func TestConfig_UnmarshalTOML_warnsOnPolicyTemplate(t *testing.T) {
-	c := DefaultConfig()
-	err := c.UnmarshalTOML(map[string]any{
-		"policy": map[string]any{
-			"template": map[string]any{},
-		},
-	})
-	require.NoError(t, err)
-	require.Len(t, c.WarnMsgs, 1)
-	assert.Contains(t, c.WarnMsgs[0], "policy.template")
-}
-
-func TestExtractRawRules_deprecatedPolicyOverridesEmitsWarning(t *testing.T) {
-	tomlContent := `
-[[policy.overrides]]
-    name = "legacy"
-    match = { domain = ["example.com"] }
-`
-	tmpDir := t.TempDir()
-	configPath := tmpDir + "/spoofdpi.toml"
-	require.NoError(t, os.WriteFile(configPath, []byte(tomlContent), 0o644))
-
-	cfg := DefaultConfig()
-	rules, err := extractRawRules(configPath, cfg)
-	require.NoError(t, err)
-	require.Len(t, rules, 1)
-	require.Len(t, cfg.WarnMsgs, 1)
-	assert.Contains(t, cfg.WarnMsgs[0], "[[policy.overrides]]")
-	assert.Contains(t, cfg.WarnMsgs[0], "[[rules]]")
-}
-
-func TestExtractRawRules_newKeyEmitsNoWarning(t *testing.T) {
-	tomlContent := `
-[[rules]]
-    name = "new"
-    match = { domain = ["example.com"] }
-`
-	tmpDir := t.TempDir()
-	configPath := tmpDir + "/spoofdpi.toml"
-	require.NoError(t, os.WriteFile(configPath, []byte(tomlContent), 0o644))
-
-	cfg := DefaultConfig()
-	rules, err := extractRawRules(configPath, cfg)
-	require.NoError(t, err)
-	require.Len(t, rules, 1)
-	assert.Empty(t, cfg.WarnMsgs)
 }
 
 func TestConfig_Validate_rejectsRuleWithoutMatch(t *testing.T) {

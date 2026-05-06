@@ -529,6 +529,7 @@ func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
 // └─────────────┘
 
 type UDPOptions struct {
+	Skip       bool   `toml:"skip"`
 	FakeCount  int    `toml:"fake-count"`
 	FakePacket []byte `toml:"fake-packet"`
 }
@@ -538,9 +539,11 @@ type UDPOptions struct {
 // so the user can tell whether a packet is configured.
 func (o UDPOptions) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		FakeCount     int `json:"fake-count"`
-		FakePacketLen int `json:"fake-packet-len,omitempty"`
+		Skip          bool `json:"skip"`
+		FakeCount     int  `json:"fake-count"`
+		FakePacketLen int  `json:"fake-packet-len,omitempty"`
 	}{
+		Skip:          o.Skip,
 		FakeCount:     o.FakeCount,
 		FakePacketLen: len(o.FakePacket),
 	})
@@ -552,6 +555,9 @@ func (o *UDPOptions) UnmarshalTOML(data any) (err error) {
 		return fmt.Errorf("'udp' must be table type")
 	}
 
+	if p := findFrom(m, "skip", parseBoolFn(), &err); isOk(p, err) {
+		o.Skip = *p
+	}
 	if p := findFrom(
 		m,
 		"fake-count",
@@ -574,71 +580,25 @@ func (o *UDPOptions) UnmarshalTOML(data any) (err error) {
 // │ ADDR MATCH   │
 // └──────────────┘
 
-type AddrMatch struct {
-	CIDR     net.IPNet `toml:"cidr"`
-	PortFrom uint16    `toml:"port"`
-	PortTo   uint16    `toml:"port"`
-}
-
-// MarshalJSON renders an AddrMatch in human-friendly form for trace
-// logs: net.IPNet's default JSON dumps the mask as base64, and
-// PortFrom/PortTo as separate ints obscure that they're a range.
-func (a AddrMatch) MarshalJSON() ([]byte, error) {
-	out := struct {
-		CIDR  string `json:"cidr"`
-		Ports string `json:"ports,omitempty"`
-	}{CIDR: a.CIDR.String()}
-	switch {
-	case a.PortFrom == 0 && a.PortTo == 0:
-		// no port constraint — leave Ports empty
-	case a.PortFrom == a.PortTo:
-		out.Ports = fmt.Sprintf("%d", a.PortFrom)
-	default:
-		out.Ports = fmt.Sprintf("%d-%d", a.PortFrom, a.PortTo)
-	}
-	return json.Marshal(out)
-}
-
-func (a *AddrMatch) UnmarshalTOML(data any) (err error) {
-	v, ok := data.(map[string]any)
-	if !ok {
-		return fmt.Errorf("addr rule must be table type")
-	}
-
-	if p := findFrom(v, "cidr", parseStringFn(checkCIDR), &err); isOk(p, err) {
-		a.CIDR = MustParseCIDR(*p)
-	}
-
-	if p := findFrom(v, "port", parseStringFn(checkPortRange), &err); isOk(p, err) {
-		a.PortFrom, a.PortTo = MustParsePortRange(*p)
-	}
-
-	return err
-}
-
 // ┌──────────────┐
 // │ MATCH ATTRS  │
 // └──────────────┘
 
 type MatchAttrs struct {
-	Domains []string    `toml:"domain"`
-	Addrs   []AddrMatch `toml:"addr"`
+	Domains []string `toml:"domain"`
+	CIDRs   []string `toml:"cidrs"`
 }
 
-// MarshalJSON renders Match as compact "N items" counts instead of
-// dumping every domain/addr — match patterns are static config the
-// user already knows from their TOML, and full lists make rule-match
-// trace logs unreadable when a rule covers dozens of patterns.
 func (a MatchAttrs) MarshalJSON() ([]byte, error) {
 	out := struct {
 		Domains string `json:"domains,omitempty"`
-		Addrs   string `json:"addrs,omitempty"`
+		CIDRs   string `json:"cidrs,omitempty"`
 	}{}
 	if n := len(a.Domains); n > 0 {
 		out.Domains = fmt.Sprintf("%d items", n)
 	}
-	if n := len(a.Addrs); n > 0 {
-		out.Addrs = fmt.Sprintf("%d items", n)
+	if n := len(a.CIDRs); n > 0 {
+		out.CIDRs = fmt.Sprintf("%d items", n)
 	}
 	return json.Marshal(out)
 }
@@ -649,16 +609,22 @@ func (a *MatchAttrs) UnmarshalTOML(data any) (err error) {
 		return fmt.Errorf("'match' must be table type")
 	}
 
-	if domains := findSliceFrom(
-		v,
-		"domain",
-		parseStringFn(checkDomainPattern),
-		&err,
-	); domains != nil {
-		a.Domains = domains
+	if raw := findSliceFrom(v, "domain", parseStringFn(nil), &err); raw != nil {
+		for _, d := range raw {
+			if e := checkDomainPattern(d); e != nil {
+				return fmt.Errorf("invalid domain %q: %w", d, e)
+			}
+		}
+		a.Domains = raw
 	}
-	if addrs := findStructSliceFrom[AddrMatch](v, "addr", &err); addrs != nil {
-		a.Addrs = addrs
+
+	if raw := findSliceFrom(v, "cidrs", parseStringFn(nil), &err); raw != nil {
+		for _, c := range raw {
+			if e := checkCIDR(c); e != nil {
+				return fmt.Errorf("invalid cidr %q: %w", c, e)
+			}
+		}
+		a.CIDRs = raw
 	}
 
 	if err == nil {

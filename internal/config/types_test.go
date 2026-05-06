@@ -233,46 +233,25 @@ func TestMatchAttrs_UnmarshalTOML(t *testing.T) {
 			assert: func(t *testing.T, m MatchAttrs) {
 				assert.Len(t, m.Domains, 1)
 				assert.Equal(t, "example.com", m.Domains[0])
-				assert.Empty(t, m.Addrs)
+				assert.Empty(t, m.CIDRs)
 			},
 		},
 		{
-			name: "valid cidr with port",
+			name: "valid cidrs",
 			input: map[string]any{
-				"addr": []any{
-					map[string]any{
-						"cidr": "192.168.1.0/24",
-						"port": "80",
-					},
-				},
+				"cidrs": []any{"192.168.1.0/24", "10.0.0.0/8"},
 			},
 			wantErr: false,
 			assert: func(t *testing.T, m MatchAttrs) {
-				assert.Len(t, m.Addrs, 1)
-				assert.Equal(t, "192.168.1.0/24", m.Addrs[0].CIDR.String())
-				assert.Equal(t, uint16(80), m.Addrs[0].PortFrom)
-				assert.Equal(t, uint16(80), m.Addrs[0].PortTo)
+				assert.Len(t, m.CIDRs, 2)
+				assert.Equal(t, "192.168.1.0/24", m.CIDRs[0])
+				assert.Equal(t, "10.0.0.0/8", m.CIDRs[1])
 			},
 		},
 		{
-			name: "cidr requires port",
+			name: "invalid cidr",
 			input: map[string]any{
-				"addr": []any{
-					map[string]any{
-						"cidr": "192.168.1.0/24",
-					},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "port requires cidr",
-			input: map[string]any{
-				"addr": []any{
-					map[string]any{
-						"port": "all",
-					},
-				},
+				"cidrs": []any{"not-a-cidr"},
 			},
 			wantErr: true,
 		},
@@ -459,53 +438,6 @@ split-mode = "custom"
 // │ MARSHAL JSON     │
 // └──────────────────┘
 
-func TestAddrMatch_MarshalJSON(t *testing.T) {
-	tcs := []struct {
-		name string
-		in   AddrMatch
-		want string
-	}{
-		{
-			name: "cidr only",
-			in: AddrMatch{
-				CIDR: net.IPNet{IP: net.ParseIP("10.0.0.0").To4(), Mask: net.CIDRMask(8, 32)},
-			},
-			want: `{"cidr":"10.0.0.0/8"}`,
-		},
-		{
-			name: "cidr with single port",
-			in: AddrMatch{
-				CIDR: net.IPNet{
-					IP:   net.ParseIP("10.0.0.0").To4(),
-					Mask: net.CIDRMask(8, 32),
-				},
-				PortFrom: 8080,
-				PortTo:   8080,
-			},
-			want: `{"cidr":"10.0.0.0/8","ports":"8080"}`,
-		},
-		{
-			name: "cidr with port range",
-			in: AddrMatch{
-				CIDR: net.IPNet{
-					IP:   net.ParseIP("10.0.0.0").To4(),
-					Mask: net.CIDRMask(8, 32),
-				},
-				PortFrom: 80,
-				PortTo:   443,
-			},
-			want: `{"cidr":"10.0.0.0/8","ports":"80-443"}`,
-		},
-	}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			b, err := json.Marshal(tc.in)
-			assert.NoError(t, err)
-			assert.Equal(t, tc.want, string(b))
-		})
-	}
-}
-
 func TestEnums_MarshalText_StringForms(t *testing.T) {
 	tcs := []struct {
 		name string
@@ -575,6 +507,50 @@ func TestHTTPSOptions_MarshalJSON_omitsFakePacketBytes(t *testing.T) {
 	assert.Contains(t, got, `"split-mode":"chunk"`)
 }
 
+func TestUDPOptions_UnmarshalTOML(t *testing.T) {
+	tcs := []struct {
+		name    string
+		input   any
+		wantErr bool
+		assert  func(t *testing.T, o UDPOptions)
+	}{
+		{
+			name: "valid udp options",
+			input: map[string]any{
+				"skip":        true,
+				"fake-count":  int64(3),
+				"fake-packet": []any{int64(0xAA), int64(0xBB)},
+			},
+			wantErr: false,
+			assert: func(t *testing.T, o UDPOptions) {
+				assert.True(t, o.Skip)
+				assert.Equal(t, 3, o.FakeCount)
+				assert.Equal(t, []byte{0xAA, 0xBB}, o.FakePacket)
+			},
+		},
+		{
+			name:    "invalid type",
+			input:   "invalid",
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			var o UDPOptions
+			err := o.UnmarshalTOML(tc.input)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				if tc.assert != nil {
+					tc.assert(t, o)
+				}
+			}
+		})
+	}
+}
+
 func TestUDPOptions_MarshalJSON_omitsFakePacketBytes(t *testing.T) {
 	o := UDPOptions{
 		FakeCount:  0,
@@ -617,12 +593,6 @@ func TestRule_JSON_includesBlockAndConfig(t *testing.T) {
 }
 
 func TestMatchAttrs_MarshalJSON_countsOnly(t *testing.T) {
-	addr := AddrMatch{
-		CIDR: net.IPNet{
-			IP:   net.ParseIP("10.0.0.0").To4(),
-			Mask: net.CIDRMask(8, 32),
-		},
-	}
 	tcs := []struct {
 		name string
 		in   MatchAttrs
@@ -634,17 +604,17 @@ func TestMatchAttrs_MarshalJSON_countsOnly(t *testing.T) {
 			want: `{"domains":"3 items"}`,
 		},
 		{
-			name: "addrs only",
-			in:   MatchAttrs{Addrs: []AddrMatch{addr, addr}},
-			want: `{"addrs":"2 items"}`,
+			name: "cidrs only",
+			in:   MatchAttrs{CIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}},
+			want: `{"cidrs":"2 items"}`,
 		},
 		{
 			name: "both",
 			in: MatchAttrs{
 				Domains: []string{"a.com"},
-				Addrs:   []AddrMatch{addr},
+				CIDRs:   []string{"10.0.0.0/8"},
 			},
-			want: `{"domains":"1 items","addrs":"1 items"}`,
+			want: `{"domains":"1 items","cidrs":"1 items"}`,
 		},
 		{
 			name: "empty",

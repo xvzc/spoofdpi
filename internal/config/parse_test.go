@@ -106,68 +106,6 @@ func TestMustParseTCPAddr(t *testing.T) {
 	}
 }
 
-func TestMustParseCIDR(t *testing.T) {
-	tcs := []struct {
-		name      string
-		input     string
-		expected  string
-		wantPanic bool
-	}{
-		{"valid ipv4", "192.168.1.0/24", "192.168.1.0/24", false},
-		{"valid ipv6", "2001:db8::/32", "2001:db8::/32", false},
-		{"invalid", "192.168.1.0", "", true},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.wantPanic {
-				assert.Panics(t, func() {
-					MustParseCIDR(tc.input)
-				})
-			} else {
-				assert.NotPanics(t, func() {
-					cidr := MustParseCIDR(tc.input)
-					assert.Equal(t, tc.expected, cidr.String())
-				})
-			}
-		})
-	}
-}
-
-func TestMustParsePortRange(t *testing.T) {
-	tcs := []struct {
-		name      string
-		input     string
-		p1        uint16
-		p2        uint16
-		wantPanic bool
-	}{
-		{"single port", "8080", 8080, 8080, false},
-		{"range", "1000-2000", 1000, 2000, false},
-		{"all", "all", 0, 65535, false},
-		{"invalid format", "abc", 0, 0, true},
-		{"invalid range inverted", "2000-1000", 0, 0, true},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.wantPanic {
-				// assert.Error(t, err)
-				assert.Panics(t, func() {
-					_, _ = MustParsePortRange(tc.input)
-				})
-				return
-			}
-
-			assert.NotPanics(t, func() {
-				p1, p2 := MustParsePortRange(tc.input)
-				assert.Equal(t, tc.p1, p1)
-				assert.Equal(t, tc.p2, p2)
-			})
-		})
-	}
-}
-
 func TestMustParseLogLevel(t *testing.T) {
 	tcs := []struct {
 		name      string
