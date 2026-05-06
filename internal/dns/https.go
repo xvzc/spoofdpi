@@ -18,15 +18,15 @@ import (
 	"golang.org/x/net/http2"
 )
 
-var _ Resolver = (*HTTPSResolver)(nil)
+var _ Resolver = (*httpsResolver)(nil)
 
-type HTTPSResolver struct {
+type httpsResolver struct {
 	logger zerolog.Logger
 	client *http.Client
 	rt     *config.RuntimeConfig
 }
 
-func NewHTTPSResolver(logger zerolog.Logger, rt *config.RuntimeConfig) *HTTPSResolver {
+func newHTTPSResolver(logger zerolog.Logger, rt *config.RuntimeConfig) *httpsResolver {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			NextProtos: []string{"h2", "http/1.1"},
@@ -41,14 +41,13 @@ func NewHTTPSResolver(logger zerolog.Logger, rt *config.RuntimeConfig) *HTTPSRes
 		ForceAttemptHTTP2:   true,
 	}
 
-	// Configure HTTP/2 transport explicitly
 	if err := http2.ConfigureTransport(tr); err != nil {
 		logger.Warn().
 			Err(err).
 			Msg("failed to configure http2 expressly, falling back to default / http/1.1")
 	}
 
-	return &HTTPSResolver{
+	return &httpsResolver{
 		logger: logger,
 		client: &http.Client{
 			Transport: tr,
@@ -58,19 +57,9 @@ func NewHTTPSResolver(logger zerolog.Logger, rt *config.RuntimeConfig) *HTTPSRes
 	}
 }
 
-func (dr *HTTPSResolver) Info() []ResolverInfo {
-	return []ResolverInfo{
-		{
-			Name: "https",
-			Dst:  dr.rt.DNS.HTTPSURL,
-		},
-	}
-}
-
-func (dr *HTTPSResolver) Resolve(
+func (dr *httpsResolver) Resolve(
 	ctx context.Context,
 	domain string,
-	fallback Resolver,
 	rule *config.Rule,
 ) (*RecordSet, error) {
 	rt := dr.rt
@@ -93,7 +82,7 @@ func (dr *HTTPSResolver) Resolve(
 	return processMessages(ctx, resCh)
 }
 
-func (dr *HTTPSResolver) exchange(
+func (dr *httpsResolver) exchange(
 	ctx context.Context,
 	msg *dns.Msg,
 	upstream string,
@@ -109,7 +98,6 @@ func (dr *HTTPSResolver) exchange(
 	var resp *http.Response
 	var reqErr error
 
-	// Retry loop for transient network errors like unexpected EOF
 	for i := 0; i < maxRetries; i++ {
 		req, err := http.NewRequestWithContext(
 			ctx,
@@ -129,7 +117,6 @@ func (dr *HTTPSResolver) exchange(
 			break
 		}
 
-		// Check if error is retryable
 		if i < maxRetries-1 && isRetryableError(reqErr) {
 			continue
 		}
@@ -170,7 +157,6 @@ func (dr *HTTPSResolver) exchange(
 	return resultMsg, nil
 }
 
-// isRetryableError checks for common transient network errors
 func isRetryableError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "unexpected EOF") ||

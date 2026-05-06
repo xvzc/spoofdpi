@@ -209,28 +209,15 @@ func createServer(
 		}
 	}
 
-	// --- DNS resolver chain ---
-	resolver := dns.NewRouteResolver(
+	// --- DNS resolver ---
+	resolver := dns.NewMuxResolver(
 		logging.WithScope(logger, "dns"),
-		dns.NewHTTPSResolver(logging.WithScope(logger, "dns"), &cfg.Runtime),
-		dns.NewUDPResolver(logging.WithScope(logger, "dns"), &cfg.Runtime),
-		dns.NewSystemResolver(logging.WithScope(logger, "dns"), &cfg.Runtime),
-		dns.NewCachedResolver(
-			logging.WithScope(logger, "dns"),
-			cache.NewTTLCache[string](cache.TTLCacheAttrs{
-				NumOfShards:     64,
-				CleanupInterval: 3 * time.Minute,
-			}),
-		),
+		cache.NewTTLCache[string](cache.TTLCacheAttrs{
+			NumOfShards:     64,
+			CleanupInterval: 3 * time.Minute,
+		}),
 		&cfg.Runtime,
 	)
-
-	logger.Info().Msg("dns info")
-	logger.Info().Msgf(" query type '%s'", cfg.Runtime.DNS.QType.String())
-	logger.Info().Msgf(" resolvers")
-	for _, ri := range resolver.Info() {
-		logger.Info().Str("dst", ri.Dst).Msgf("  %s", ri.Name)
-	}
 
 	defaultRoute, err := netutil.DiscoverDefaultRoute()
 	if err != nil {

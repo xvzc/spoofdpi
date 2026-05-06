@@ -256,7 +256,7 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 		)
 
 		// Resolve Domain
-		rSet, err := p.resolver.Resolve(ctx, req.FQDN, nil, nameMatch)
+		rSet, err := p.resolver.Resolve(ctx, req.FQDN, nameMatch)
 		if err != nil {
 			logger.Error().Str("domain", req.FQDN).Err(err).Msgf("dns lookup failed")
 			return

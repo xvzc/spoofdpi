@@ -248,7 +248,7 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 			&matcher.Selector{Kind: matcher.MatchKindDomain, Domain: lo.ToPtr(host)},
 		)
 
-		rSet, err := p.resolver.Resolve(ctx, host, nil, nameMatch)
+		rSet, err := p.resolver.Resolve(ctx, host, nameMatch)
 		if err != nil {
 			_ = proto.HTTPBadGatewayResponse().Write(conn)
 			// logging.ErrorUnwrapped is not available, using standard error logging

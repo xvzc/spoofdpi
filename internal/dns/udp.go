@@ -9,20 +9,16 @@ import (
 	"github.com/xvzc/spoofdpi/internal/logging"
 )
 
-var _ Resolver = (*UDPResolver)(nil)
+var _ Resolver = (*udpResolver)(nil)
 
-type UDPResolver struct {
+type udpResolver struct {
 	logger zerolog.Logger
-
 	client *dns.Client
 	rt     *config.RuntimeConfig
 }
 
-func NewUDPResolver(
-	logger zerolog.Logger,
-	rt *config.RuntimeConfig,
-) *UDPResolver {
-	return &UDPResolver{
+func newUDPResolver(logger zerolog.Logger, rt *config.RuntimeConfig) *udpResolver {
+	return &udpResolver{
 		client: &dns.Client{
 			Timeout: rt.Conn.DNSTimeout,
 		},
@@ -31,19 +27,9 @@ func NewUDPResolver(
 	}
 }
 
-func (ur *UDPResolver) Info() []ResolverInfo {
-	return []ResolverInfo{
-		{
-			Name: "udp",
-			Dst:  ur.rt.DNS.Addr.String(),
-		},
-	}
-}
-
-func (ur *UDPResolver) Resolve(
+func (ur *udpResolver) Resolve(
 	ctx context.Context,
 	domain string,
-	fallback Resolver,
 	rule *config.Rule,
 ) (*RecordSet, error) {
 	rt := ur.rt
@@ -62,7 +48,7 @@ func (ur *UDPResolver) Resolve(
 	return processMessages(ctx, resCh)
 }
 
-func (ur *UDPResolver) exchange(
+func (ur *udpResolver) exchange(
 	ctx context.Context,
 	msg *dns.Msg,
 	upstream string,

@@ -14,31 +14,8 @@ import (
 	"github.com/xvzc/spoofdpi/internal/dns/addrselect"
 )
 
-type ResolverKind int
-
-const (
-	UDP ResolverKind = iota
-	HTTPS
-	System
-)
-
 type Resolver interface {
-	Info() []ResolverInfo
-	Resolve(
-		ctx context.Context,
-		domain string,
-		falback Resolver,
-		rule *config.Rule,
-	) (*RecordSet, error)
-}
-
-type ResolverInfo struct {
-	Name string `json:"name"`
-	Dst  string `json:"dst"`
-}
-
-func (i *ResolverInfo) String() string {
-	return fmt.Sprintf("name=%s; dst=%s;", i.Name, i.Dst)
+	Resolve(ctx context.Context, domain string, rule *config.Rule) (*RecordSet, error)
 }
 
 type exchangeFunc = func(
@@ -47,7 +24,7 @@ type exchangeFunc = func(
 	upstream string,
 ) (*dns.Msg, error)
 
-type MsgChan struct {
+type msgChan struct {
 	msg *dns.Msg
 	err error
 }
@@ -101,7 +78,7 @@ func lookupType(
 	upstream string,
 	queryType uint16,
 	exchange exchangeFunc,
-) *MsgChan {
+) *msgChan {
 	resMsg, err := exchange(ctx, newMsg(domain, queryType), upstream)
 	if err != nil {
 		queryName := recordTypeIDToName(queryType)
@@ -112,10 +89,10 @@ func lookupType(
 			err,
 		)
 
-		return &MsgChan{msg: nil, err: err}
+		return &msgChan{msg: nil, err: err}
 	}
 
-	return &MsgChan{msg: resMsg, err: nil}
+	return &msgChan{msg: resMsg, err: nil}
 }
 
 func lookupAllTypes(
@@ -124,9 +101,9 @@ func lookupAllTypes(
 	upstream string,
 	qTypes []uint16,
 	exchange exchangeFunc,
-) <-chan *MsgChan {
+) <-chan *msgChan {
 	var wg sync.WaitGroup
-	resCh := make(chan *MsgChan)
+	resCh := make(chan *msgChan)
 
 	for _, qType := range qTypes {
 		wg.Add(1)
@@ -173,7 +150,7 @@ func parseMsg(msg *dns.Msg) ([]net.IP, uint32, bool) {
 
 func processMessages(
 	ctx context.Context,
-	resCh <-chan *MsgChan,
+	resCh <-chan *msgChan,
 ) (*RecordSet, error) {
 	var errs []error
 	var addrs []net.IP

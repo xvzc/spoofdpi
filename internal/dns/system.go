@@ -9,39 +9,25 @@ import (
 	"github.com/xvzc/spoofdpi/internal/config"
 )
 
-var _ Resolver = (*SystemResolver)(nil)
+var _ Resolver = (*systemResolver)(nil)
 
-type SystemResolver struct {
+type systemResolver struct {
 	logger zerolog.Logger
-
 	*net.Resolver
 	rt *config.RuntimeConfig
 }
 
-func NewSystemResolver(
-	logger zerolog.Logger,
-	rt *config.RuntimeConfig,
-) *SystemResolver {
-	return &SystemResolver{
+func newSystemResolver(logger zerolog.Logger, rt *config.RuntimeConfig) *systemResolver {
+	return &systemResolver{
 		logger:   logger,
 		Resolver: &net.Resolver{PreferGo: true},
 		rt:       rt,
 	}
 }
 
-func (sr *SystemResolver) Info() []ResolverInfo {
-	return []ResolverInfo{
-		{
-			Name: "system",
-			Dst:  "builtin",
-		},
-	}
-}
-
-func (sr *SystemResolver) Resolve(
+func (sr *systemResolver) Resolve(
 	ctx context.Context,
 	domain string,
-	fallback Resolver,
 	rule *config.Rule,
 ) (*RecordSet, error) {
 	rt := sr.rt
