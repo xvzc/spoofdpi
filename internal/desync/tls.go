@@ -1,11 +1,13 @@
 package desync
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math/bits"
 	"math/rand/v2"
 	"net"
+	"slices"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -316,44 +318,42 @@ func applySegmentPlans(
 		return nil, err
 	}
 
-	var segments []Segment
-	prvAt := 0
+	type splitPoint struct {
+		at   int
+		lazy bool
+	}
 
+	points := make([]splitPoint, 0, len(plans))
 	for _, s := range plans {
 		base := 0
-		switch s.From {
-		case config.SegmentFromSNI:
+		if s.From == config.SegmentFromSNI {
 			base = sniStart
-		case config.SegmentFromHead:
-			base = 0
 		}
 
-		curAt := base + s.At
-
+		at := base + s.At
 		if s.Noise > 0 {
-			// Random integer in [-noise, noise]
-			noiseVal := rand.IntN(s.Noise*2+1) - s.Noise
-			curAt += noiseVal
+			at += rand.IntN(s.Noise*2+1) - s.Noise
 		}
+		at = max(0, min(at, len(raw)))
 
-		// Boundary checks
-		if curAt < 0 {
-			curAt = 0
-		}
-		if curAt > len(raw) {
-			curAt = len(raw)
-		}
+		points = append(points, splitPoint{at: at, lazy: s.Lazy})
+	}
 
-		// Handle overlap with previous split point
-		if curAt < prvAt {
-			curAt = prvAt
-		}
+	slices.SortFunc(points, func(a, b splitPoint) int {
+		return cmp.Compare(a.at, b.at)
+	})
 
+	var segments []Segment
+	prvAt := 0
+	for _, p := range points {
+		if p.at == prvAt {
+			continue
+		}
 		segments = append(segments, Segment{
-			Packet: raw[prvAt:curAt],
-			Lazy:   s.Lazy,
+			Packet: raw[prvAt:p.at],
+			Lazy:   p.lazy,
 		})
-		prvAt = curAt
+		prvAt = p.at
 	}
 
 	if prvAt < len(raw) {

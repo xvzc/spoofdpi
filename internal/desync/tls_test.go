@@ -141,8 +141,9 @@ func TestApplySegmentPlans(t *testing.T) {
 		assert.Equal(t, fakeRaw[sniStart:], chunks[2].Packet)
 	})
 
-	t.Run("overlap ignored", func(t *testing.T) {
-		// Split at 10, then try to split at 5 (should be ignored/empty for that segment)
+	t.Run("out of order plans sorted", func(t *testing.T) {
+		// Plans are out of order: split at 10 first, then 5.
+		// After sorting, split points become [5, 10], producing correct segments.
 		plans := []config.SegmentPlan{
 			{
 				From: config.SegmentFromHead,
@@ -156,12 +157,9 @@ func TestApplySegmentPlans(t *testing.T) {
 
 		chunks, err := applySegmentPlans(msg, plans)
 		assert.NoError(t, err)
-		// chunks[0]: 0-10
-		// chunks[1]: 10-10 (empty)
-		// chunks[2]: 10-end
 		assert.Len(t, chunks, 3)
-		assert.Equal(t, fakeRaw[:10], chunks[0].Packet)
-		assert.Empty(t, chunks[1].Packet)
+		assert.Equal(t, fakeRaw[:5], chunks[0].Packet)
+		assert.Equal(t, fakeRaw[5:10], chunks[1].Packet)
 		assert.Equal(t, fakeRaw[10:], chunks[2].Packet)
 	})
 
