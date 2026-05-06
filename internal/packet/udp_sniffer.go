@@ -124,16 +124,17 @@ func (us *UDPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	// Calculate hop count from the TTL
 	nhops := estimateHops(ttlLeft)
 
-	stored, exists := us.nhopCache.Get(key)
+	_, exists := us.nhopCache.Get(key)
+	if !exists {
+		return
+	}
 
 	if us.nhopCache.Set(key, nhops, nil) {
-		if exists && stored != nhops {
-			logger.Trace().
-				Str("from", key.String()).
-				Uint8("nhops", nhops).
-				Uint8("ttlLeft", ttlLeft).
-				Msgf("ttl(udp) update")
-		}
+		logger.Trace().
+			Str("from", key.String()).
+			Uint8("nhops", nhops).
+			Uint8("ttlLeft", ttlLeft).
+			Msgf("ttl(udp) update")
 	}
 }
 

@@ -130,16 +130,17 @@ func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	// Calculate hop count from the TTL
 	nhops := estimateHops(ttlLeft)
 
-	stored, exists := ts.nhopCache.Get(key)
+	_, exists := ts.nhopCache.Get(key)
+	if !exists {
+		return
+	}
 
-	if ts.nhopCache.Set(key, nhops, cache.Options().WithUpdateExistingOnly(true)) {
-		if exists && stored != nhops {
-			logger.Trace().
-				Str("from", key.String()).
-				Uint8("nhops", nhops).
-				Uint8("ttlLeft", ttlLeft).
-				Msgf("ttl(tcp) update")
-		}
+	if ts.nhopCache.Set(key, nhops, nil) {
+		logger.Trace().
+			Str("from", key.String()).
+			Uint8("nhops", nhops).
+			Uint8("ttlLeft", ttlLeft).
+			Msgf("ttl(tcp) update")
 	}
 }
 
