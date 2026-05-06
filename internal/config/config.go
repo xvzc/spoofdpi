@@ -52,20 +52,20 @@ func (c *Config) UnmarshalTOML(data any) (err error) {
 		return fmt.Errorf("non-table type config file")
 	}
 
-	if app := findStructFrom[AppOptions](m, "app", &err); app != nil {
-		c.Startup.App = *app
+	if v, ok := m["app"]; ok && err == nil {
+		err = c.Startup.App.UnmarshalTOML(v)
 	}
-	if conn := findStructFrom[ConnOptions](m, "connection", &err); conn != nil {
-		c.Runtime.Conn = *conn
+	if v, ok := m["connection"]; ok && err == nil {
+		err = c.Runtime.Conn.UnmarshalTOML(v)
 	}
-	if dns := findStructFrom[DNSOptions](m, "dns", &err); dns != nil {
-		c.Runtime.DNS = *dns
+	if v, ok := m["dns"]; ok && err == nil {
+		err = c.Runtime.DNS.UnmarshalTOML(v)
 	}
-	if https := findStructFrom[HTTPSOptions](m, "https", &err); https != nil {
-		c.Runtime.HTTPS = *https
+	if v, ok := m["https"]; ok && err == nil {
+		err = c.Runtime.HTTPS.UnmarshalTOML(v)
 	}
-	if udp := findStructFrom[UDPOptions](m, "udp", &err); udp != nil {
-		c.Runtime.UDP = *udp
+	if v, ok := m["udp"]; ok && err == nil {
+		err = c.Runtime.UDP.UnmarshalTOML(v)
 	}
 	if policyMap, ok := m["policy"].(map[string]any); ok {
 		if _, hasTemplate := policyMap["template"]; hasTemplate {
