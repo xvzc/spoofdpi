@@ -11,13 +11,13 @@ import (
 // passed to DialFastest separately so a Destination value can be
 // reused across rule lookups without carrying stale settings.
 type Destination struct {
-	Domain string
-	Addrs  []net.IP
-	Port   int
+	Host  string
+	Addrs []net.IP
+	Port  int
 }
 
 func (d *Destination) String() string {
-	return net.JoinHostPort(d.Domain, strconv.Itoa(d.Port))
+	return net.JoinHostPort(d.Host, strconv.Itoa(d.Port))
 }
 
 func (d *Destination) IsValid(listenAddr *net.TCPAddr) (bool, error) {

@@ -17,7 +17,10 @@ type systemResolver struct {
 	rt *config.RuntimeConfig
 }
 
-func newSystemResolver(logger zerolog.Logger, rt *config.RuntimeConfig) *systemResolver {
+func newSystemResolver(
+	logger zerolog.Logger,
+	rt *config.RuntimeConfig,
+) *systemResolver {
 	return &systemResolver{
 		logger:   logger,
 		Resolver: &net.Resolver{PreferGo: true},

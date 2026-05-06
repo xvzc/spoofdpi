@@ -3,7 +3,6 @@ package tun
 import (
 	"context"
 	"net"
-	"strconv"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -12,62 +11,56 @@ import (
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
+	"github.com/xvzc/spoofdpi/internal/rule"
 )
 
 type UDPHandler struct {
 	logger   zerolog.Logger
-	rt       *config.RuntimeConfig
 	desyncer *desync.UDPDesyncer
 	sniffer  packet.Sniffer
+	ruleSet  *rule.RuleSet
+	rt       *config.RuntimeConfig
 }
 
 func NewUDPHandler(
 	logger zerolog.Logger,
 	desyncer *desync.UDPDesyncer,
 	sniffer packet.Sniffer,
+	ruleSet *rule.RuleSet,
 	rt *config.RuntimeConfig,
 ) *UDPHandler {
 	return &UDPHandler{
 		logger:   logger,
 		desyncer: desyncer,
 		sniffer:  sniffer,
+		ruleSet:  ruleSet,
 		rt:       rt,
 	}
 }
 
 func (h *UDPHandler) Handle(
 	ctx context.Context,
-	sysNet TUNSystemNetwork,
 	lConn net.Conn,
-	rule *config.Rule,
+	dst *netutil.Destination,
+	sysNet TUNSystemNetwork,
 ) {
-	logger := logging.WithLocalScope(ctx, h.logger, "udp")
-
 	defer netutil.CloseConns(lConn)
 
-	host, portStr, err := net.SplitHostPort(lConn.LocalAddr().String())
-	if err != nil {
-		return
-	}
-	port, _ := strconv.Atoi(portStr)
+	logger := logging.WithLocalScope(ctx, h.logger, "udp")
 
-	dst := &netutil.Destination{
-		Domain: host,
-		Port:   port,
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		dst.Addrs = []net.IP{ip}
-	}
-
-	// Apply rule if matched in server.go
+	// Addr-based rule matching
 	rt := h.rt
-	if rule != nil {
-		logger.Trace().RawJSON("summary", rule.JSON()).Msg("match")
-		rt = &rule.Config
+	if h.ruleSet != nil {
+		if matched := h.ruleSet.Search(
+			[]rule.Query{{Type: rule.MatchTypeAddr, Value: dst.Addrs[0].String()}},
+		); matched != nil {
+			logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
+			rt = &matched.Config
+		}
 	}
 
 	// Register destination for TTL learning when fakes will be sent.
-	if h.sniffer != nil && rt.UDP.FakeCount > 0 {
+	if h.sniffer != nil && !rt.UDP.Skip && rt.UDP.FakeCount > 0 {
 		h.sniffer.RegisterUntracked(dst.Addrs)
 	}
 
@@ -80,14 +73,12 @@ func (h *UDPHandler) Handle(
 
 	timeout := rt.Conn.UDPIdleTimeout
 
-	// Wrap rConn with IdleTimeoutConn
 	rConnWrapped := netutil.NewIdleTimeoutConn(rawConn, timeout)
-
-	// Wrap lConn with IdleTimeoutConn as well
 	lConnWrapped := netutil.NewIdleTimeoutConn(lConn, timeout)
 
-	// Desync
-	_, _ = h.desyncer.Desync(ctx, lConnWrapped, rConnWrapped, &rt.UDP)
+	if !rt.UDP.Skip {
+		_, _ = h.desyncer.Desync(ctx, lConnWrapped, rConnWrapped, &rt.UDP)
+	}
 
 	logger.Debug().
 		Msgf("new remote conn (%s -> %s)", lConn.RemoteAddr(), rConnWrapped.RemoteAddr())

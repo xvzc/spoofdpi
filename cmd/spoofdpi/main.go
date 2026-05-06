@@ -16,9 +16,9 @@ import (
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/logging"
-	"github.com/xvzc/spoofdpi/internal/matcher"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
+	"github.com/xvzc/spoofdpi/internal/rule"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"github.com/xvzc/spoofdpi/internal/server/http"
 	"github.com/xvzc/spoofdpi/internal/server/socks5"
@@ -132,7 +132,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 			Msg(" please try 'sudo -E spoofdpi' if you expect a configuration to be loaded")
 	}
 
-	for _, m := range cfg.WarnMsgs {
+	for _, m := range config.WarnMsgs {
 		logger.Warn().Msg(m)
 	}
 
@@ -198,13 +198,10 @@ func createServer(
 	logger zerolog.Logger,
 	cfg *config.Config,
 ) (server.Server, error) {
-	// --- Rule matcher ---
-	ruleMatcher := matcher.NewRuleMatcher(
-		matcher.NewAddrMatcher(),
-		matcher.NewDomainMatcher(),
-	)
+	// --- Rule set ---
+	ruleSet := rule.NewRuleSet()
 	for _, r := range cfg.Startup.Rules {
-		if err := ruleMatcher.Add(&r); err != nil {
+		if err := ruleSet.Add(&r); err != nil {
 			return nil, err
 		}
 	}
@@ -316,7 +313,7 @@ func createServer(
 			resolver,
 			httpHandler,
 			httpsHandler,
-			ruleMatcher,
+			ruleSet,
 			tcpSniffer,
 			sysNet,
 			cfg.Startup.App.ListenAddr,
@@ -348,7 +345,7 @@ func createServer(
 		return socks5.NewSOCKS5Proxy(
 			logging.WithScope(logger, "srv"),
 			resolver,
-			ruleMatcher,
+			ruleSet,
 			connectHandler,
 			bindHandler,
 			udpAssociateHandler,
@@ -375,10 +372,10 @@ func createServer(
 
 		tcpHandler := tun.NewTCPHandler(
 			logging.WithScope(logger, "hnd"),
-			ruleMatcher, // For domain-based TLS matching
-			&cfg.Runtime,
 			desync.NewTLSDesyncer(tcpWriter, tcpSniffer),
-			tcpSniffer, // For TTL tracking
+			tcpSniffer,
+			ruleSet,
+			&cfg.Runtime,
 		)
 
 		udpHandler := tun.NewUDPHandler(
@@ -389,6 +386,7 @@ func createServer(
 				udpSniffer,
 			),
 			udpSniffer,
+			ruleSet,
 			&cfg.Runtime,
 		)
 
@@ -403,7 +401,6 @@ func createServer(
 
 		return tun.NewTUNServer(
 			logging.WithScope(logger, "srv"),
-			ruleMatcher, // For IP-based matching in server.go
 			tcpHandler,
 			udpHandler,
 			tcpSniffer,

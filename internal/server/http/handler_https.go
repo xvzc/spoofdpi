@@ -50,7 +50,11 @@ func (h *HTTPSHandler) HandleRequest(
 		rt = &rule.Config
 	}
 
-	logger := logging.WithLocalScope(ctx, h.logger, "handshake")
+	if h.sniffer != nil && !rt.HTTPS.Skip && rt.HTTPS.FakeCount > 0 {
+		h.sniffer.RegisterUntracked(dst.Addrs)
+	}
+
+	logger := logging.WithLocalScope(ctx, h.logger, "https")
 
 	// 1. Send 200 Connection Established
 	if err := proto.HTTPConnectionEstablishedResponse().Write(lConn); err != nil {
@@ -62,22 +66,7 @@ func (h *HTTPSHandler) HandleRequest(
 	}
 	logger.Trace().Msgf("sent 200 connection established -> %s", lConn.RemoteAddr())
 
-	// 2. Tunnel
-	return h.tunnel(ctx, lConn, dst, rt)
-}
-
-func (h *HTTPSHandler) tunnel(
-	ctx context.Context,
-	lConn net.Conn,
-	dst *netutil.Destination,
-	rt *config.RuntimeConfig,
-) error {
-	if h.sniffer != nil && rt.HTTPS.FakeCount > 0 {
-		h.sniffer.RegisterUntracked(dst.Addrs)
-	}
-
-	logger := logging.WithLocalScope(ctx, h.logger, "https")
-
+	// 2. Dial remote
 	rConn, err := netutil.DialFastest(ctx, dst, "tcp", rt.Conn.TCPTimeout, nil)
 	if err != nil {
 		return err
@@ -86,7 +75,7 @@ func (h *HTTPSHandler) tunnel(
 
 	logger.Debug().Msgf("new remote conn -> %s", rConn.RemoteAddr())
 
-	// Read the first message from the client (expected to be ClientHello)
+	// 3. Read ClientHello
 	tlsMsg, err := proto.ReadTLSMessage(lConn)
 	if err != nil {
 		if err == io.EOF || err.Error() == "unexpected EOF" {
@@ -105,17 +94,15 @@ func (h *HTTPSHandler) tunnel(
 		return nil
 	}
 
-	// Send ClientHello to the remote server (with desync if configured)
-	n, err := h.sendClientHello(ctx, rConn, tlsMsg, &rt.HTTPS)
+	// 4. Send ClientHello with desync
+	n, err := h.desyncer.Desync(ctx, h.logger, rConn, tlsMsg, &rt.HTTPS)
 	if err != nil {
 		return fmt.Errorf("failed to send client hello: %w", err)
 	}
 
-	logger.Debug().
-		Int("len", n).
-		Msgf("sent client hello -> %s", rConn.RemoteAddr())
+	logger.Debug().Int("len", n).Msgf("sent client hello -> %s", rConn.RemoteAddr())
 
-	// Start bi-directional tunneling
+	// 5. Tunnel
 	resCh := make(chan netutil.TransferResult, 2)
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -129,11 +116,9 @@ func (h *HTTPSHandler) tunnel(
 		if len(errs) == 0 {
 			return nil
 		}
-
 		if slices.ContainsFunc(errs, netutil.IsConnectionResetByPeer) {
 			return netutil.ErrBlocked
 		}
-
 		return errs[0]
 	}
 
@@ -145,13 +130,4 @@ func (h *HTTPSHandler) tunnel(
 		netutil.DescribeRoute(lConn, rConn),
 		handleErrs,
 	)
-}
-
-func (h *HTTPSHandler) sendClientHello(
-	ctx context.Context,
-	rConn net.Conn,
-	msg *proto.TLSMessage,
-	opts *config.HTTPSOptions,
-) (int, error) {
-	return h.desyncer.Desync(ctx, h.logger, rConn, msg, opts)
 }

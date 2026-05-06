@@ -9,14 +9,13 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/samber/lo"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/logging"
-	"github.com/xvzc/spoofdpi/internal/matcher"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
+	"github.com/xvzc/spoofdpi/internal/rule"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"github.com/xvzc/spoofdpi/internal/session"
 )
@@ -32,7 +31,7 @@ type HTTPProxy struct {
 	resolver     dns.Resolver
 	httpHandler  *HTTPHandler
 	httpsHandler *HTTPSHandler
-	ruleMatcher  matcher.RuleMatcher
+	ruleSet      *rule.RuleSet
 
 	tcpSniffer packet.Sniffer
 	sysNet     HTTPSystemNetwork
@@ -45,7 +44,7 @@ func NewHTTPProxy(
 	resolver dns.Resolver,
 	httpHandler *HTTPHandler,
 	httpsHandler *HTTPSHandler,
-	ruleMatcher matcher.RuleMatcher,
+	ruleSet *rule.RuleSet,
 	tcpSniffer packet.Sniffer,
 	sysNet HTTPSystemNetwork,
 	listenAddr net.TCPAddr,
@@ -56,7 +55,7 @@ func NewHTTPProxy(
 		resolver:     resolver,
 		httpHandler:  httpHandler,
 		httpsHandler: httpsHandler,
-		ruleMatcher:  ruleMatcher,
+		ruleSet:      ruleSet,
 		tcpSniffer:   tcpSniffer,
 		sysNet:       sysNet,
 		listenAddr:   listenAddr,
@@ -244,9 +243,9 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 		addrs = []net.IP{net.ParseIP(host)}
 		logger.Trace().Msgf("skipping dns lookup for non-domain host %q", host)
 	} else {
-		nameMatch = p.ruleMatcher.Search(
-			&matcher.Selector{Kind: matcher.MatchKindDomain, Domain: lo.ToPtr(host)},
-		)
+		nameMatch = p.ruleSet.Search([]rule.Query{
+			{Type: rule.MatchTypeDomain, Value: host},
+		})
 
 		rSet, err := p.resolver.Resolve(ctx, host, nameMatch)
 		if err != nil {
@@ -261,9 +260,9 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 	}
 
 	dst := &netutil.Destination{
-		Domain: host, // Updated from Domain to Host
-		Addrs:  addrs,
-		Port:   dstPort,
+		Host:  host,
+		Addrs: addrs,
+		Port:  dstPort,
 	}
 
 	// Avoid recursively querying self.
@@ -275,18 +274,17 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 		}
 	}
 
-	var selectors []*matcher.Selector
+	var addrQueries []rule.Query
 	for _, v := range addrs {
-		selectors = append(selectors, &matcher.Selector{
-			Kind: matcher.MatchKindAddr,
-			IP:   lo.ToPtr(v),
-			Port: lo.ToPtr(uint16(dst.Port)),
-		})
+		addrQueries = append(
+			addrQueries,
+			rule.Query{Type: rule.MatchTypeAddr, Value: v.String()},
+		)
 	}
 
-	addrMatch := p.ruleMatcher.SearchAll(selectors)
+	addrMatch := p.ruleSet.Search(addrQueries)
 
-	bestMatch := matcher.GetHigherPriorityRule(addrMatch, nameMatch)
+	bestMatch := rule.HigherPriority(addrMatch, nameMatch)
 	if bestMatch != nil && logger.GetLevel() == zerolog.TraceLevel {
 		logger.Trace().RawJSON("summary", bestMatch.JSON()).Msg("match")
 	}

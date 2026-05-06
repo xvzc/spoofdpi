@@ -44,10 +44,10 @@ func (h *UdpAssociateHandler) Handle(
 	ctx context.Context,
 	lConn net.Conn,
 	req *proto.SOCKS5Request,
-	dst *netutil.Destination,
-	rule *config.Rule,
 ) error {
 	logger := logging.WithLocalScope(ctx, h.logger, "udp_associate")
+
+	rt := h.rt
 
 	// 1. Listen on a random UDP port
 	lTCPAddr := lConn.LocalAddr().(*net.TCPAddr) // SOCKS5 listens on TCP
@@ -154,12 +154,17 @@ func (h *UdpAssociateHandler) Handle(
 				Msg("session cache miss")
 		}
 
-		dst := &netutil.Destination{
+		pktDst := &netutil.Destination{
 			Addrs: []net.IP{dstAddr.IP},
 			Port:  dstAddr.Port,
 		}
 
-		rRawConn, err := netutil.DialFastest(ctx, dst, "udp", 0, nil)
+		// Register destination for TTL learning when fakes will be sent.
+		if h.sniffer != nil && !rt.UDP.Skip && rt.UDP.FakeCount > 0 {
+			h.sniffer.RegisterUntracked(pktDst.Addrs)
+		}
+
+		rRawConn, err := netutil.DialFastest(ctx, pktDst, "udp", 0, nil)
 		if err != nil {
 			logger.Warn().Err(err).Str("addr", dstAddrStr).Msg("failed to dial udp target")
 			continue
@@ -169,19 +174,8 @@ func (h *UdpAssociateHandler) Handle(
 		// returns IdleTimeoutConn with the actual net.Conn inside
 		rConn := h.pool.Store(key, rRawConn)
 
-		// Apply UDP options from rule if matched
-		rt := h.rt
-		if rule != nil {
-			rt = &rule.Config
-		}
-
-		// Register destination for TTL learning when fakes will be sent.
-		if h.sniffer != nil && rt.UDP.FakeCount > 0 {
-			h.sniffer.RegisterUntracked(dst.Addrs)
-		}
-
 		// Send fake packets before real payload (UDP desync)
-		if h.desyncer != nil {
+		if h.desyncer != nil && !rt.UDP.Skip {
 			_, _ = h.desyncer.Desync(ctx, lUDPConn, rConn.Conn, &rt.UDP)
 		}
 

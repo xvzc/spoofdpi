@@ -13,10 +13,7 @@ import (
 	"sync"
 
 	"github.com/rs/zerolog"
-	"github.com/samber/lo"
-	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/logging"
-	"github.com/xvzc/spoofdpi/internal/matcher"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/server"
@@ -46,8 +43,7 @@ type TUNSystemNetwork interface {
 }
 
 type TunServer struct {
-	logger  zerolog.Logger
-	matcher matcher.RuleMatcher // For IP-based rule matching
+	logger zerolog.Logger
 
 	tcpHandler *TCPHandler
 	udpHandler *UDPHandler
@@ -60,7 +56,6 @@ type TunServer struct {
 
 func NewTUNServer(
 	logger zerolog.Logger,
-	matcher matcher.RuleMatcher,
 	tcpHandler *TCPHandler,
 	udpHandler *UDPHandler,
 	tcpSniffer packet.Sniffer,
@@ -69,7 +64,6 @@ func NewTUNServer(
 ) server.Server {
 	return &TunServer{
 		logger:     logger,
-		matcher:    matcher,
 		tcpHandler: tcpHandler,
 		udpHandler: udpHandler,
 		tcpSniffer: tcpSniffer,
@@ -161,13 +155,17 @@ func (s *TunServer) ListenAndServe(
 
 		conn := gonet.NewTCPConn(&wq, ep)
 
-		// Match rule by IP before passing to handler
-		rule := s.matchRuleByAddr(conn.LocalAddr())
+		dst, dstErr := connToDst(conn)
+		if dstErr != nil {
+			logger.Error().Err(dstErr).Msg("failed to resolve tcp destination")
+			_ = conn.Close()
+			return
+		}
 		go s.tcpHandler.Handle(
 			session.WithNewTraceID(context.Background()),
-			s.sysNet,
 			conn,
-			rule,
+			dst,
+			s.sysNet,
 		)
 	})
 	stk.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpFwd.HandlePacket)
@@ -185,13 +183,17 @@ func (s *TunServer) ListenAndServe(
 
 		conn := gonet.NewUDPConn(&wq, ep)
 
-		// Match rule by IP before passing to handler
-		rule := s.matchRuleByAddr(conn.LocalAddr())
+		dst, dstErr := connToDst(conn)
+		if dstErr != nil {
+			logger.Error().Err(dstErr).Msg("failed to resolve udp destination")
+			_ = conn.Close()
+			return true
+		}
 		go s.udpHandler.Handle(
 			session.WithNewTraceID(context.Background()),
-			s.sysNet,
 			conn,
-			rule,
+			dst,
+			s.sysNet,
 		)
 		return true
 	})
@@ -206,6 +208,25 @@ func (s *TunServer) ListenAndServe(
 	return nil
 }
 
+// connToDst builds a Destination from the connection's local address.
+// In TUN mode, LocalAddr is always the original packet destination IP.
+func connToDst(conn net.Conn) (*netutil.Destination, error) {
+	host, portStr, err := net.SplitHostPort(conn.LocalAddr().String())
+	if err != nil {
+		return nil, fmt.Errorf("invalid local addr %q: %w", conn.LocalAddr(), err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil, fmt.Errorf("non-ip destination %q", host)
+	}
+	port, _ := strconv.Atoi(portStr)
+	return &netutil.Destination{
+		Host:  host,
+		Port:  port,
+		Addrs: []net.IP{ip},
+	}, nil
+}
+
 func (s *TunServer) Addr() string {
 	if dev := s.sysNet.TunDevice(); dev != nil {
 		if name, err := dev.Name(); err == nil {
@@ -213,33 +234,6 @@ func (s *TunServer) Addr() string {
 		}
 	}
 	return "tun"
-}
-
-// matchRuleByAddr extracts IP and port from net.Addr and performs rule matching
-func (s *TunServer) matchRuleByAddr(addr net.Addr) *config.Rule {
-	if s.matcher == nil {
-		return nil
-	}
-
-	host, portStr, err := net.SplitHostPort(addr.String())
-	if err != nil {
-		return nil
-	}
-
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return nil
-	}
-
-	port, _ := strconv.Atoi(portStr)
-
-	selector := &matcher.Selector{
-		Kind: matcher.MatchKindAddr,
-		IP:   lo.ToPtr(ip),
-		Port: lo.ToPtr(uint16(port)),
-	}
-
-	return s.matcher.Search(selector)
 }
 
 func (s *TunServer) tunToStack(

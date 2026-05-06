@@ -74,9 +74,6 @@ func (mr *muxResolver) Resolve(
 	defer cancel()
 
 	resolver := mr.pick(rt.DNS.Mode)
-	if resolver == nil {
-		return nil, fmt.Errorf("no resolver available for mode %s", rt.DNS.Mode)
-	}
 
 	useCache := rt.DNS.Cache && rt.DNS.Mode != config.DNSModeSystem
 	if useCache {
@@ -100,7 +97,11 @@ func (mr *muxResolver) Resolve(
 		Msg("dns lookup ok")
 
 	if useCache {
-		_ = mr.cache.Set(domain, rSet, cache.Options().WithTTL(time.Duration(rSet.TTL)*time.Second))
+		_ = mr.cache.Set(
+			domain,
+			rSet,
+			cache.Options().WithTTL(time.Duration(rSet.TTL)*time.Second),
+		)
 	}
 
 	return rSet, nil

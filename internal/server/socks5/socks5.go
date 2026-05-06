@@ -12,14 +12,13 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/samber/lo"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/logging"
-	"github.com/xvzc/spoofdpi/internal/matcher"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
+	"github.com/xvzc/spoofdpi/internal/rule"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"github.com/xvzc/spoofdpi/internal/session"
 )
@@ -33,7 +32,7 @@ type SOCKS5Proxy struct {
 	logger zerolog.Logger
 
 	resolver            dns.Resolver
-	ruleMatcher         matcher.RuleMatcher
+	ruleSet             *rule.RuleSet
 	connectHandler      *ConnectHandler
 	bindHandler         *BindHandler
 	udpAssociateHandler *UdpAssociateHandler
@@ -48,7 +47,7 @@ type SOCKS5Proxy struct {
 func NewSOCKS5Proxy(
 	logger zerolog.Logger,
 	resolver dns.Resolver,
-	ruleMatcher matcher.RuleMatcher,
+	ruleSet *rule.RuleSet,
 	connectHandler *ConnectHandler,
 	bindHandler *BindHandler,
 	udpAssociateHandler *UdpAssociateHandler,
@@ -61,7 +60,7 @@ func NewSOCKS5Proxy(
 	return &SOCKS5Proxy{
 		logger:              logger,
 		resolver:            resolver,
-		ruleMatcher:         ruleMatcher,
+		ruleSet:             ruleSet,
 		connectHandler:      connectHandler,
 		bindHandler:         bindHandler,
 		udpAssociateHandler: udpAssociateHandler,
@@ -235,7 +234,7 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 	// ctx = session.WithHostInfo(ctx, req.Host())
 	// logger = logger.With().Ctx(ctx).Logger()
 
-	logger.Trace().
+	logger.Debug().
 		Uint8("cmd", req.Cmd).
 		Int("port", req.Port).
 		Str("fqdn", req.FQDN).
@@ -248,12 +247,9 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 	if req.IP != nil {
 		addrs = []net.IP{req.IP}
 	} else if req.ATYP == proto.SOCKS5AddrTypeFQDN && len(req.FQDN) > 1 {
-		nameMatch = p.ruleMatcher.Search(
-			&matcher.Selector{
-				Kind:   matcher.MatchKindDomain,
-				Domain: lo.ToPtr(req.FQDN), // req.Domain -> req.FQDN
-			},
-		)
+		nameMatch = p.ruleSet.Search([]rule.Query{
+			{Type: rule.MatchTypeDomain, Value: req.FQDN},
+		})
 
 		// Resolve Domain
 		rSet, err := p.resolver.Resolve(ctx, req.FQDN, nameMatch)
@@ -265,20 +261,20 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 		addrs = rSet.Addrs
 	} else {
 		logger.Trace().Msg("no addrs specified for this request. skipping")
+		return
 	}
 
-	var selectors []*matcher.Selector
+	var addrQueries []rule.Query
 	for _, v := range addrs {
-		selectors = append(selectors, &matcher.Selector{
-			Kind: matcher.MatchKindAddr,
-			IP:   lo.ToPtr(v),
-			Port: lo.ToPtr(uint16(req.Port)),
-		})
+		addrQueries = append(
+			addrQueries,
+			rule.Query{Type: rule.MatchTypeAddr, Value: v.String()},
+		)
 	}
 
-	addrMatch := p.ruleMatcher.SearchAll(selectors)
+	addrMatch := p.ruleSet.Search(addrQueries)
 
-	bestMatch := matcher.GetHigherPriorityRule(addrMatch, nameMatch)
+	bestMatch := rule.HigherPriority(addrMatch, nameMatch)
 	if bestMatch != nil && logger.GetLevel() == zerolog.TraceLevel {
 		logger.Trace().RawJSON("summary", bestMatch.JSON()).Msg("match")
 	}
@@ -286,9 +282,9 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 	switch req.Cmd {
 	case proto.SOCKS5CmdConnect:
 		dst := &netutil.Destination{
-			Domain: req.FQDN,
-			Addrs:  addrs,
-			Port:   req.Port,
+			Host:  req.FQDN,
+			Addrs: addrs,
+			Port:  req.Port,
 		}
 		if err = p.connectHandler.Handle(ctx, conn, req, dst, bestMatch); err != nil {
 			return // Handler logs error
@@ -306,7 +302,7 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 
 	case proto.SOCKS5CmdUDPAssociate:
 		// UDP Associate usually doesn't have destination info in the request
-		if err = p.udpAssociateHandler.Handle(ctx, conn, req, nil, nil); err != nil {
+		if err = p.udpAssociateHandler.Handle(ctx, conn, req); err != nil {
 			logger.Error().Err(err).Msg("failed to handle udp_associate")
 			return
 		}
