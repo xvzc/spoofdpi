@@ -33,6 +33,40 @@ You can specify a `domain` list or an `addr` list (containing `cidr` and `port`)
 | `cidr` | String | IP range in CIDR notation (e.g., `192.168.0.0/24`).                         |
 | `port` | String | Port or port range (e.g., `80`, `80-443`, `all`).                          |
 
+### File-based match lists
+
+Both `domain` and `cidrs` accept items with a `file:` prefix. The path after the prefix is read line by line, and each non-empty, non-comment line is treated as an additional item.
+
+```toml
+[[rules]]
+    name = "streaming"
+    match = { domain = ["file:assets/streaming-domains.txt", "*.youtube.com"] }
+    https = { fake-count = 5 }
+```
+
+**Path resolution**
+
+| Prefix / form         | Resolved against            |
+| :-------------------- | :-------------------------- |
+| Relative path         | Directory of the config file |
+| Absolute path (`/…`)  | Used as-is                  |
+| `~/…`                 | User home directory          |
+| `$VAR/…`              | Environment variable         |
+
+**File format rules**
+
+- Lines beginning with `#` are treated as comments and ignored.
+- Blank lines are ignored.
+- If the file does not exist, a warning is emitted at startup and the entry is skipped (the server still starts).
+- Any other I/O error (e.g. permission denied) is fatal.
+
+```
+# assets/streaming-domains.txt
+*.netflix.com
+*.nflxvideo.net
+# add more below
+```
+
 ## DNS Override (`dns`)
 
 Customize how domain names are resolved for matched traffic. The available fields mirror the global [DNS Configuration](dns.md).

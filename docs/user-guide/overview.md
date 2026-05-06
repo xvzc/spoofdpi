@@ -34,7 +34,7 @@ The configuration is organized into six main categories. Click on each category 
 | **[DNS](dns.md)** | DNS resolution options. |
 | **[HTTPS](https.md)** | HTTPS/TLS packet manipulation options. |
 | **[UDP](udp.md)** | UDP packet manipulation options. |
-| **[Policy](policy.md)** | Rule-based routing and automatic bypass policies. |
+| **[Rules](rules.md)** | Rule-based routing and automatic bypass policies. |
 
 ## Example
 

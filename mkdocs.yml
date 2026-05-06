@@ -62,7 +62,7 @@ nav:
       - 'DNS': user-guide/dns.md
       - 'HTTPS': user-guide/https.md
       - 'UDP': user-guide/udp.md
-      - 'Policy': user-guide/policy.md
+      - 'Rules': user-guide/rules.md
     - 'Configuration Examples': user-guide/examples.md
     # - 'Geographical Recipes': 
     #   - 'South Korea': user-guide/configuration-recipes/south-korea.md

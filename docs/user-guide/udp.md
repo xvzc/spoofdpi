@@ -2,6 +2,29 @@
 
 Settings for UDP packet manipulation and bypass techniques.
 
+## `skip`
+
+`type: boolean`
+
+### Description
+
+If set to `true`, UDP traffic will be processed without any DPI bypass techniques (fake packets, etc.). It effectively treats the connection as a standard UDP proxy connection. `(default: false)`
+
+### Usage
+
+**Command-Line Flag**
+```console
+$ spoofdpi --udp-skip
+```
+
+**TOML Config**
+```toml
+[udp]
+skip = true
+```
+
+---
+
 ## `fake-count`
 
 `type: int`

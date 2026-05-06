@@ -1,4 +1,12 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(go *)",
+      "Bash(task *)",
+      "Bash(gofmt *)",
+      "Bash(golangci-lint *)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
