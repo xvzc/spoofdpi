@@ -12,26 +12,25 @@ import (
 
 // Minimal RFC 6724 address selection.
 
-func SortByRFC6724(ips []net.IP) {
-	if len(ips) < 2 {
+func SortByRFC6724(addrs []netip.Addr) {
+	if len(addrs) < 2 {
 		return
 	}
-	sortByRFC6724withSrcs(ips, srcAddrs(ips))
+	sortByRFC6724withSrcs(addrs, srcAddrs(addrs))
 }
 
-func sortByRFC6724withSrcs(ips []net.IP, srcs []netip.Addr) {
-	if len(ips) != len(srcs) {
+func sortByRFC6724withSrcs(addrs []netip.Addr, srcs []netip.Addr) {
+	if len(addrs) != len(srcs) {
 		panic("internal error")
 	}
-	addrAttr := make([]ipAttr, len(ips))
+	addrAttr := make([]ipAttr, len(addrs))
 	srcAttr := make([]ipAttr, len(srcs))
-	for i, v := range ips {
-		addrAttrIP, _ := netip.AddrFromSlice(v)
-		addrAttr[i] = ipAttrOf(addrAttrIP)
+	for i, v := range addrs {
+		addrAttr[i] = ipAttrOf(v)
 		srcAttr[i] = ipAttrOf(srcs[i])
 	}
 	sort.Stable(&byRFC6724{
-		addrs:    ips,
+		addrs:    addrs,
 		addrAttr: addrAttr,
 		srcs:     srcs,
 		srcAttr:  srcAttr,
@@ -41,19 +40,16 @@ func sortByRFC6724withSrcs(ips []net.IP, srcs []netip.Addr) {
 // srcAddrs tries to UDP-connect to each address to see if it has a
 // route. This does not send any packets. The destination port number
 // is irrelevant.
-func srcAddrs(ips []net.IP) []netip.Addr {
-	srcs := make([]netip.Addr, len(ips))
+func srcAddrs(addrs []netip.Addr) []netip.Addr {
+	srcs := make([]netip.Addr, len(addrs))
 	dst := net.UDPAddr{Port: 9}
-	for i := range ips {
-		dst.IP = ips[i]
-		// dst.Zone = ips[i].Zone // Zone is not easily available in net.IP, skipping for now
+	for i, addr := range addrs {
+		dst.IP = addr.AsSlice()
 		c, err := net.DialUDP("udp", nil, &dst)
 		if err == nil {
 			if src, ok := c.LocalAddr().(*net.UDPAddr); ok {
 				srcs[i], _ = netip.AddrFromSlice(src.IP)
 			}
-
-			// Ignore the error from Close, as the connection was only used to get the local address.
 			_ = c.Close()
 		}
 	}
@@ -79,9 +75,9 @@ func ipAttrOf(ip netip.Addr) ipAttr {
 }
 
 type byRFC6724 struct {
-	addrs    []net.IP // Addresses to sort.
+	addrs    []netip.Addr
 	addrAttr []ipAttr
-	srcs     []netip.Addr // Or not a valid addr if unreachable.
+	srcs     []netip.Addr
 	srcAttr  []ipAttr
 }
 
@@ -112,11 +108,8 @@ func (s *byRFC6724) Less(i, j int) bool {
 	const preferDB = false
 
 	// Rule 1: Avoid unusable destinations.
-	// If DB is known to be unreachable or if Source(DB) is undefined, then
-	// prefer DA. Similarly, if DA is known to be unreachable or if
-	// Source(DA) is undefined, then prefer DB.
 	if !SourceDA.IsValid() && !SourceDB.IsValid() {
-		return false // "equal"
+		return false
 	}
 	if !SourceDB.IsValid() {
 		return preferDA
@@ -126,9 +119,6 @@ func (s *byRFC6724) Less(i, j int) bool {
 	}
 
 	// Rule 2: Prefer matching scope.
-	// If Scope(DA) = Scope(Source(DA)) and Scope(DB) <> Scope(Source(DB)),
-	// then prefer DA. Similarly, if Scope(DA) <> Scope(Source(DA)) and
-	// Scope(DB) = Scope(Source(DB)), then prefer DB.
 	if attrDA.Scope == attrSourceDA.Scope && attrDB.Scope != attrSourceDB.Scope {
 		return preferDA
 	}
@@ -137,24 +127,12 @@ func (s *byRFC6724) Less(i, j int) bool {
 	}
 
 	// Rule 3: Avoid deprecated addresses.
-	// If Source(DA) is deprecated and Source(DB) is not, then prefer DB.
-	// Similarly, if Source(DA) is not deprecated and Source(DB) is
-	// deprecated, then prefer DA.
-
 	// TODO(bradfitz): Implement this. Low priority for now.
 
 	// Rule 4: Prefer home addresses.
-	// If Source(DA) is simultaneously a home address and care-of address
-	// and Source(DB) is not, then prefer DA. Similarly, if Source(DB) is
-	// simultaneously a home address and care-of address and Source(DA) is
-	// not, then prefer DB.
-
 	// TODO(bradfitz): Implement this. Low priority for now.
 
 	// Rule 5: Prefer matching label.
-	// If Label(Source(DA)) = Label(DA) and Label(Source(DB)) <> Label(DB),
-	// then prefer DA. Similarly, if Label(Source(DA)) <> Label(DA) and
-	// Label(Source(DB)) = Label(DB), then prefer DB.
 	if attrSourceDA.Label == attrDA.Label &&
 		attrSourceDB.Label != attrDB.Label {
 		return preferDA
@@ -165,8 +143,6 @@ func (s *byRFC6724) Less(i, j int) bool {
 	}
 
 	// Rule 6: Prefer higher precedence.
-	// If Precedence(DA) > Precedence(DB), then prefer DA. Similarly, if
-	// Precedence(DA) < Precedence(DB), then prefer DB.
 	if attrDA.Precedence > attrDB.Precedence {
 		return preferDA
 	}
@@ -175,15 +151,9 @@ func (s *byRFC6724) Less(i, j int) bool {
 	}
 
 	// Rule 7: Prefer native transport.
-	// If DA is reached via an encapsulating transition mechanism (e.g.,
-	// IPv6 in IPv4) and DB is not, then prefer DB. Similarly, if DB is
-	// reached via encapsulation and DA is not, then prefer DA.
-
 	// TODO(bradfitz): Implement this. Low priority for now.
 
 	// Rule 8: Prefer smaller scope.
-	// If Scope(DA) < Scope(DB), then prefer DA. Similarly, if Scope(DA) >
-	// Scope(DB), then prefer DB.
 	if attrDA.Scope < attrDB.Scope {
 		return preferDA
 	}
@@ -192,15 +162,8 @@ func (s *byRFC6724) Less(i, j int) bool {
 	}
 
 	// Rule 9: Use the longest matching prefix.
-	// When DA and DB belong to the same address family (both are IPv6 or
-	// both are IPv4 [but see below]): If CommonPrefixLen(Source(DA), DA) >
-	// CommonPrefixLen(Source(DB), DB), then prefer DA. Similarly, if
-	// CommonPrefixLen(Source(DA), DA) < CommonPrefixLen(Source(DB), DB),
-	// then prefer DB.
-	//
-	// However, applying this rule to IPv4 addresses causes
-	// problems (see issues 13283 and 18518), so it is limited to IPv6.
-	if DA.To4() == nil && DB.To4() == nil {
+	// Restricted to IPv6 to avoid issues with IPv4 (see issues 13283 and 18518).
+	if !DA.Is4() && !DA.Is4In6() && !DB.Is4() && !DB.Is4In6() {
 		commonA := commonPrefixLen(SourceDA, DA)
 		commonB := commonPrefixLen(SourceDB, DB)
 
@@ -213,9 +176,7 @@ func (s *byRFC6724) Less(i, j int) bool {
 	}
 
 	// Rule 10: Otherwise, leave the order unchanged.
-	// If DA preceded DB in the original list, prefer DA.
-	// Otherwise, prefer DB.
-	return false // "equal"
+	return false
 }
 
 type policyTableEntry struct {
@@ -298,7 +259,6 @@ var rfc6724policyTable = policyTable{
 // matching prefix that contains ip.
 // The table t must be sorted from largest mask size to smallest.
 func (t policyTable) Classify(ip netip.Addr) policyTableEntry {
-	// Prefix.Contains() will not match an IPv6 prefix for an IPv4 address.
 	if ip.Is4() {
 		ip = netip.AddrFrom16(ip.As16())
 	}
@@ -331,55 +291,54 @@ func classifyScope(ip netip.Addr) scope {
 	if ipv6 && ip.IsMulticast() {
 		return scope(ipv6AsBytes[1] & 0xf)
 	}
-	// Site-local addresses are defined in RFC 3513 section 2.5.6
-	// (and deprecated in RFC 3879).
 	if ipv6 && ipv6AsBytes[0] == 0xfe && ipv6AsBytes[1]&0xc0 == 0xc0 {
 		return scopeSiteLocal
 	}
 	return scopeGlobal
 }
 
-// commonPrefixLen reports the length of the longest prefix (looking
-// at the most significant, or leftmost, bits) that the
-// two addresses have in common, up to the length of a's prefix (i.e.,
-// the portion of the address not including the interface ID).
-//
-// If a or b is an IPv4 address as an IPv6 address, the IPv4 addresses
-// are compared (with a max common prefix length of 32).
-// If a and b are different IP versions, 0 is returned.
-//
-// See https://tools.ietf.org/html/rfc6724#section-2.2
-func commonPrefixLen(a netip.Addr, b net.IP) (cpl int) {
-	if b4 := b.To4(); b4 != nil {
-		b = b4
+// commonPrefixLen reports the length of the longest common prefix (in bits)
+// between a and b, up to 64 bits for IPv6.
+// Returns 0 if the addresses are different families.
+func commonPrefixLen(a, b netip.Addr) (cpl int) {
+	// Normalize 4-in-6 to plain IPv4 for consistent comparison.
+	a = a.Unmap()
+	b = b.Unmap()
+
+	var aBytes, bBytes []byte
+	if a.Is4() {
+		if !b.Is4() {
+			return 0
+		}
+		a4, b4 := a.As4(), b.As4()
+		aBytes = a4[:]
+		bBytes = b4[:]
+	} else {
+		if b.Is4() {
+			return 0
+		}
+		a16, b16 := a.As16(), b.As16()
+		// For IPv6, only up to the prefix (first 64 bits).
+		aBytes = a16[:8]
+		bBytes = b16[:8]
 	}
-	aAsSlice := a.AsSlice()
-	if len(aAsSlice) != len(b) {
-		return 0
-	}
-	// If IPv6, only up to the prefix (first 64 bits).
-	if len(aAsSlice) > 8 {
-		aAsSlice = aAsSlice[:8]
-		b = b[:8]
-	}
-	for len(aAsSlice) > 0 {
-		if aAsSlice[0] == b[0] {
+
+	for i := range aBytes {
+		if aBytes[i] == bBytes[i] {
 			cpl += 8
-			aAsSlice = aAsSlice[1:]
-			b = b[1:]
 			continue
 		}
+		ab, bb := aBytes[i], bBytes[i]
 		bits := 8
-		ab, bb := aAsSlice[0], b[0]
 		for {
 			ab >>= 1
 			bb >>= 1
 			bits--
 			if ab == bb {
 				cpl += bits
-				return cpl
+				return
 			}
 		}
 	}
-	return cpl
+	return
 }

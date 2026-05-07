@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
+	"net/netip"
 	"strconv"
 	"sync"
 
@@ -13,10 +13,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/dns/addrselect"
 )
-
-type Resolver interface {
-	Resolve(ctx context.Context, domain string, rule *config.Rule) (*RecordSet, error)
-}
 
 type exchangeFunc = func(
 	ctx context.Context,
@@ -27,18 +23,6 @@ type exchangeFunc = func(
 type msgChan struct {
 	msg *dns.Msg
 	err error
-}
-
-type RecordSet struct {
-	Addrs []net.IP
-	TTL   uint32
-}
-
-func (rs *RecordSet) Clone() *RecordSet {
-	return &RecordSet{
-		Addrs: append([]net.IP(nil), rs.Addrs...),
-		TTL:   rs.TTL,
-	}
 }
 
 func parseQueryTypes(qtype config.DNSQueryType) []uint16 {
@@ -127,21 +111,25 @@ func lookupAllTypes(
 	return resCh
 }
 
-func parseMsg(msg *dns.Msg) ([]net.IP, uint32, bool) {
-	var addrs []net.IP
+func parseMsg(msg *dns.Msg) ([]netip.Addr, uint32, bool) {
+	var addrs []netip.Addr
 	minTTL := uint32(math.MaxUint32)
 	ok := false
 
 	for _, record := range msg.Answer {
 		switch ipRecord := record.(type) {
 		case *dns.A:
-			ok = true
-			addrs = append(addrs, ipRecord.A)
-			minTTL = min(minTTL, record.Header().Ttl)
+			if a, valid := netip.AddrFromSlice(ipRecord.A); valid {
+				ok = true
+				addrs = append(addrs, a)
+				minTTL = min(minTTL, record.Header().Ttl)
+			}
 		case *dns.AAAA:
-			ok = true
-			addrs = append(addrs, ipRecord.AAAA)
-			minTTL = min(minTTL, record.Header().Ttl)
+			if a, valid := netip.AddrFromSlice(ipRecord.AAAA); valid {
+				ok = true
+				addrs = append(addrs, a)
+				minTTL = min(minTTL, record.Header().Ttl)
+			}
 		}
 	}
 
@@ -151,22 +139,19 @@ func parseMsg(msg *dns.Msg) ([]net.IP, uint32, bool) {
 func processMessages(
 	ctx context.Context,
 	resCh <-chan *msgChan,
-) (*RecordSet, error) {
+) ([]netip.Addr, uint32, error) {
 	var errs []error
-	var addrs []net.IP
+	var addrs []netip.Addr
 
 	minTTL := uint32(math.MaxUint32)
-	found := false
 
-loop: // Loop until the channel is closed or context is canceled
+loop:
 	for {
 		select {
-		// Detect context cancellation immediately to prevent blocking
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, 0, ctx.Err()
 
 		case result, ok := <-resCh:
-			// If the channel is closed, break the loop
 			if !ok {
 				break loop
 			}
@@ -176,7 +161,6 @@ loop: // Loop until the channel is closed or context is canceled
 				continue
 			}
 
-			// Defensive check for nil msg
 			if result.msg == nil {
 				continue
 			}
@@ -185,25 +169,18 @@ loop: // Loop until the channel is closed or context is canceled
 			if ok {
 				addrs = append(addrs, resultAddrs...)
 				minTTL = min(minTTL, ttl)
-				found = true
 			}
 		}
 	}
 
-	// If we found any valid addresses,
-	// return them even if some errors occurred (Partial Success)
 	if len(addrs) > 0 {
-		if !found {
-			minTTL = 0
-		}
 		addrselect.SortByRFC6724(addrs)
-		return &RecordSet{Addrs: addrs, TTL: minTTL}, nil
+		return addrs, minTTL, nil
 	}
 
-	// Only return errors if no addresses were found at all
 	if len(errs) > 0 {
-		return nil, errors.Join(errs...)
+		return nil, 0, errors.Join(errs...)
 	}
 
-	return nil, fmt.Errorf("record not found")
+	return nil, 0, fmt.Errorf("record not found")
 }

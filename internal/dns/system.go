@@ -3,53 +3,43 @@ package dns
 import (
 	"context"
 	"net"
+	"net/netip"
 
 	"github.com/miekg/dns"
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
 )
 
-var _ Resolver = (*systemResolver)(nil)
-
 type systemResolver struct {
 	logger zerolog.Logger
 	*net.Resolver
-	rt *config.RuntimeConfig
 }
 
 func newSystemResolver(
 	logger zerolog.Logger,
-	rt *config.RuntimeConfig,
+	_ *config.RuntimeConfig,
 ) *systemResolver {
 	return &systemResolver{
 		logger:   logger,
 		Resolver: &net.Resolver{PreferGo: true},
-		rt:       rt,
 	}
 }
 
-func (sr *systemResolver) Resolve(
+func (sr *systemResolver) resolve(
 	ctx context.Context,
+	_ string,
 	domain string,
-	rule *config.Rule,
-) (*RecordSet, error) {
-	rt := sr.rt
-	if rule != nil {
-		rt = &rule.Config
-	}
-
+	qTypes []uint16,
+) ([]netip.Addr, uint32, error) {
 	ips, err := sr.LookupIP(ctx, "ip", domain)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	return &RecordSet{
-		Addrs: filtterAddrs(ips, parseQueryTypes(rt.DNS.QType)),
-		TTL:   0,
-	}, nil
+	return filtterAddrs(ips, qTypes), 0, nil
 }
 
-func filtterAddrs(ips []net.IP, qTypes []uint16) []net.IP {
+func filtterAddrs(ips []net.IP, qTypes []uint16) []netip.Addr {
 	wantsA, wantsAAAA := false, false
 	for _, qType := range qTypes {
 		switch qType {
@@ -65,31 +55,31 @@ func filtterAddrs(ips []net.IP, qTypes []uint16) []net.IP {
 	}
 
 	if !wantsA && !wantsAAAA {
-		return []net.IP{}
+		return []netip.Addr{}
 	}
 
-	filteredMap := make(map[string]net.IP)
+	seen := make(map[string]struct{})
+	filtered := make([]netip.Addr, 0, len(ips))
 
 	for _, ip := range ips {
 		addrStr := ip.String()
-		if _, exists := filteredMap[addrStr]; exists {
+		if _, exists := seen[addrStr]; exists {
 			continue
 		}
 
 		isIPv4 := ip.To4() != nil
 
 		if wantsA && isIPv4 {
-			filteredMap[addrStr] = ip
+			if a, ok := netip.AddrFromSlice(ip.To4()); ok {
+				seen[addrStr] = struct{}{}
+				filtered = append(filtered, a)
+			}
+		} else if wantsAAAA && !isIPv4 {
+			if a, ok := netip.AddrFromSlice(ip); ok {
+				seen[addrStr] = struct{}{}
+				filtered = append(filtered, a)
+			}
 		}
-
-		if wantsAAAA && !isIPv4 {
-			filteredMap[addrStr] = ip
-		}
-	}
-
-	filtered := make([]net.IP, 0, len(filteredMap))
-	for _, ip := range filteredMap {
-		filtered = append(filtered, ip)
 	}
 
 	return filtered

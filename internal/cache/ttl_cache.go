@@ -2,31 +2,28 @@ package cache
 
 import (
 	"fmt"
-	"hash/fnv" // FNV-1a: A fast, non-cryptographic hash function
+	"hash/fnv"
 	"sync"
 	"time"
 )
 
-var _ Cache[string] = (*TTLCache[string])(nil)
+var _ Cache[string, any] = (*TTLCache[string, any])(nil)
 
-// ttlCacheItem represents a single cached item using generics.
-type ttlCacheItem[K comparable] struct {
-	value     any       // The cached data of type T.
-	expiresAt time.Time // The time when the item expires.
+// ttlCacheItem represents a single cached item.
+// expiresAt is stored as UnixNano (int64) to avoid the *time.Location pointer
+// that time.Time carries, which would make every map entry GC-scannable.
+// Zero means no expiration.
+type ttlCacheItem[V any] struct {
+	value     V
+	expiresAt int64
 }
 
-// isExpired checks if the item has expired.
-func (i ttlCacheItem[K]) isExpired() bool {
-	if i.expiresAt.IsZero() {
-		// zero time means no expiration.
-		return false
-	}
-	return time.Now().After(i.expiresAt)
+func (i ttlCacheItem[V]) isExpired() bool {
+	return i.expiresAt != 0 && time.Now().UnixNano() > i.expiresAt
 }
 
-// ttlCacheShard represents a single, thread-safe shard of the cache.
-type ttlCacheShard[K comparable] struct {
-	items map[K]ttlCacheItem[K] // items holds the cache data for this shard.
+type ttlCacheShard[K comparable, V any] struct {
+	items map[K]ttlCacheItem[V]
 	mu    sync.RWMutex
 }
 
@@ -36,44 +33,37 @@ type TTLCacheAttrs struct {
 	HashFunc        func(key any) uint64
 }
 
-// TTLCache is a high-performance, sharded, generic TTL cache.
-type TTLCache[K comparable] struct {
-	shards   []*ttlCacheShard[K] // A slice of cache shards.
+type TTLCache[K comparable, V any] struct {
+	shards   []*ttlCacheShard[K, V]
 	hashFunc func(key any) uint64
 }
 
-// NewTTLCache creates a new sharded TTL cache with a background janitor goroutine.
-// numShards specifies the number of shards to create and must be greater than 0.
-// cleanupInterval specifies how often the janitor should run.
-func NewTTLCache[K comparable](
+func NewTTLCache[K comparable, V any](
 	attrs TTLCacheAttrs,
-) *TTLCache[K] {
+) *TTLCache[K, V] {
 	if attrs.NumOfShards == 0 {
 		panic(
 			fmt.Errorf("number of shards must be greater than 0, got %d", attrs.NumOfShards),
 		)
 	}
 
-	c := &TTLCache[K]{
-		shards:   make([]*ttlCacheShard[K], attrs.NumOfShards),
+	c := &TTLCache[K, V]{
+		shards:   make([]*ttlCacheShard[K, V], attrs.NumOfShards),
 		hashFunc: attrs.HashFunc,
 	}
 
 	for i := range attrs.NumOfShards {
-		c.shards[i] = &ttlCacheShard[K]{
-			items: make(map[K]ttlCacheItem[K]),
+		c.shards[i] = &ttlCacheShard[K, V]{
+			items: make(map[K]ttlCacheItem[V]),
 		}
 	}
 
-	// Start the background janitor goroutine.
-	// This goroutine is self-managing and terminates when the program exits.
 	go c.janitor(attrs.CleanupInterval)
 
 	return c
 }
 
-// janitor runs the cleanup goroutine, calling ForceCleanup at the specified interval.
-func (c *TTLCache[K]) janitor(interval time.Duration) {
+func (c *TTLCache[K, V]) janitor(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for range ticker.C {
@@ -81,33 +71,56 @@ func (c *TTLCache[K]) janitor(interval time.Duration) {
 	}
 }
 
-// getShard maps a key to its corresponding cache shard using a hash function.
-func (c *TTLCache[K]) getShard(key K) *ttlCacheShard[K] {
+// getShard maps a key to its shard using an inline FNV-1a hash for string/[]byte
+// keys, avoiding heap allocation from fnv.New64a() on the hot path.
+func (c *TTLCache[K, V]) getShard(key K) *ttlCacheShard[K, V] {
 	if c.hashFunc != nil {
 		hash := c.hashFunc(key)
 		return c.shards[hash%uint64(len(c.shards))]
 	}
 
-	hasher := fnv.New64a()
-	// Optimally hash the memory without string allocation
+	var hash uint64
 	switch v := any(key).(type) {
 	case string:
-		hasher.Write([]byte(v))
+		hash = fnv1aString(v)
 	case []byte:
-		hasher.Write(v)
+		hash = fnv1aBytes(v)
 	default:
-		_, _ = fmt.Fprint(hasher, key)
+		h := fnv.New64a()
+		_, _ = fmt.Fprint(h, key)
+		hash = h.Sum64()
 	}
-	hash := hasher.Sum64()
 	return c.shards[hash%uint64(len(c.shards))]
+}
+
+const (
+	fnvOffset64 = uint64(14695981039346656037)
+	fnvPrime64  = uint64(1099511628211)
+)
+
+func fnv1aString(s string) uint64 {
+	h := fnvOffset64
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
+		h *= fnvPrime64
+	}
+	return h
+}
+
+func fnv1aBytes(b []byte) uint64 {
+	h := fnvOffset64
+	for _, c := range b {
+		h ^= uint64(c)
+		h *= fnvPrime64
+	}
+	return h
 }
 
 // ┌─────────────┐
 // │ PUBLIC APIs │
 // └─────────────┘
-// Set adds an item to the cache, replacing any existing item.
-// If ttl is 0 or negative, the item will never expire (passive-only).
-func (c *TTLCache[K]) Set(key K, value any, opts *options) bool {
+
+func (c *TTLCache[K, V]) Set(key K, value V, opts *options) bool {
 	shard := c.getShard(key)
 
 	shard.mu.Lock()
@@ -130,79 +143,60 @@ func (c *TTLCache[K]) Set(key K, value any, opts *options) bool {
 		return false
 	}
 
-	expiresAt := time.Now().Add(opts.ttl)
-	newItem := ttlCacheItem[K]{
+	shard.items[key] = ttlCacheItem[V]{
 		value:     value,
-		expiresAt: expiresAt,
+		expiresAt: time.Now().Add(opts.ttl).UnixNano(),
 	}
-	shard.items[key] = newItem
 
 	return true
 }
 
-// Get retrieves an item from the cache.
-// It returns the item (of type T) and true if found and not expired.
-// Otherwise, it returns the zero value of T and false.
-func (c *TTLCache[K]) Get(key K) (any, bool) {
+func (c *TTLCache[K, V]) Get(key K) (V, bool) {
 	shard := c.getShard(key)
 	shard.mu.RLock()
 	i, ok := shard.items[key]
 	shard.mu.RUnlock()
 
 	if !ok {
-		return nil, false
+		var zero V
+		return zero, false
 	}
 
-	// Passive expiration: item found but is expired.
 	if i.isExpired() {
-		// Item is expired, so acquire a write lock to delete it.
 		shard.mu.Lock()
-		// Double-check: ensure the item hasn't been replaced
-		// by another goroutine while we were waiting for the write lock.
-		if currentItem, ok := shard.items[key]; ok {
-			if time.Time.Equal(currentItem.expiresAt, i.expiresAt) {
-				delete(shard.items, key)
-			}
+		if current, ok := shard.items[key]; ok && current.expiresAt == i.expiresAt {
+			delete(shard.items, key)
 		}
-
 		shard.mu.Unlock()
-		return nil, false // Return as expired.
+		var zero V
+		return zero, false
 	}
 
-	// Cache hit.
 	return i.value, true
 }
 
-// Delete removes an item from the cache.
-func (c *TTLCache[K]) Delete(key K) {
+func (c *TTLCache[K, V]) Delete(key K) {
 	shard := c.getShard(key)
 	shard.mu.Lock()
 	delete(shard.items, key)
 	shard.mu.Unlock()
 }
 
-// Has checks if an item exists in the cache and is not expired.
-func (c *TTLCache[K]) Has(key K) bool {
+func (c *TTLCache[K, V]) Has(key K) bool {
 	shard := c.getShard(key)
 	shard.mu.RLock()
 	i, ok := shard.items[key]
 	shard.mu.RUnlock()
 
-	if !ok {
-		return false
-	}
-
-	return !i.isExpired()
+	return ok && !i.isExpired()
 }
 
-// ForceCleanup actively scans all shards and deletes expired items.
-// This is called periodically by the janitor but can also be called manually.
-func (c *TTLCache[K]) ForceCleanup() {
-	now := time.Now()
+func (c *TTLCache[K, V]) ForceCleanup() {
+	now := time.Now().UnixNano()
 	for _, shard := range c.shards {
 		shard.mu.Lock()
 		for key, i := range shard.items {
-			if !i.expiresAt.IsZero() && now.After(i.expiresAt) {
+			if i.expiresAt != 0 && now > i.expiresAt {
 				delete(shard.items, key)
 			}
 		}
@@ -210,11 +204,10 @@ func (c *TTLCache[K]) ForceCleanup() {
 	}
 }
 
-// ForEach iterates over the cache items.
-func (c *TTLCache[K]) ForEach(f func(key K, value any) error) error {
+func (c *TTLCache[K, V]) ForEach(f func(key K, value V) error) error {
 	for _, shard := range c.shards {
 		shard.mu.RLock()
-		for key, i := range shard.items { // Pre-allocate values to avoid holding RLock unnecessarily? For now, keep simple.
+		for key, i := range shard.items {
 			if err := f(key, i.value); err != nil {
 				shard.mu.RUnlock()
 				return err
@@ -225,8 +218,7 @@ func (c *TTLCache[K]) ForEach(f func(key K, value any) error) error {
 	return nil
 }
 
-// Size returns the total number of items across all shards.
-func (c *TTLCache[K]) Size() int {
+func (c *TTLCache[K, V]) Size() int {
 	total := 0
 	for _, shard := range c.shards {
 		shard.mu.RLock()

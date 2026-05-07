@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
@@ -207,9 +208,9 @@ func createServer(
 	}
 
 	// --- DNS resolver ---
-	resolver := dns.NewMuxResolver(
+	resolver := dns.NewClient(
 		logging.WithScope(logger, "dns"),
-		cache.NewTTLCache[string](cache.TTLCacheAttrs{
+		cache.NewTTLCache[string, []netip.Addr](cache.TTLCacheAttrs{
 			NumOfShards:     64,
 			CleanupInterval: 3 * time.Minute,
 		}),
@@ -252,7 +253,7 @@ func createServer(
 		logger.Info().Str("mac", mac.String()).Msg(" gateway (passive detection)")
 
 		// Shared cache for both TCP and UDP raw-packet stacks.
-		hopCache := cache.NewLRUCache[netutil.IPKey](4096, nil)
+		hopCache := cache.NewLRUCache[netutil.IPKey, uint8](4096, nil)
 
 		if needTCP {
 			handle, err := packet.NewHandle(iface)

@@ -11,7 +11,7 @@ type Sniffer interface {
 	StartCapturing()
 	RegisterUntracked(addrs []net.IP)
 	GetOptimalTTL(key netutil.IPKey) uint8
-	Cache() cache.Cache[netutil.IPKey]
+	Cache() cache.Cache[netutil.IPKey, uint8]
 }
 
 // estimateHops estimates the number of hops based on TTL.

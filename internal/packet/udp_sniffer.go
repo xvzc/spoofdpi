@@ -18,7 +18,7 @@ var _ Sniffer = (*UDPSniffer)(nil)
 type UDPSniffer struct {
 	logger zerolog.Logger
 
-	nhopCache  cache.Cache[netutil.IPKey]
+	nhopCache  cache.Cache[netutil.IPKey, uint8]
 	defaultTTL uint8
 
 	handle Handle
@@ -26,7 +26,7 @@ type UDPSniffer struct {
 
 func NewUDPSniffer(
 	logger zerolog.Logger,
-	cache cache.Cache[netutil.IPKey],
+	cache cache.Cache[netutil.IPKey, uint8],
 	handle Handle,
 	defaultTTL uint8,
 ) *UDPSniffer {
@@ -38,22 +38,18 @@ func NewUDPSniffer(
 	}
 }
 
-// --- HopTracker Methods ---
-
-func (us *UDPSniffer) Cache() cache.Cache[netutil.IPKey] {
+func (us *UDPSniffer) Cache() cache.Cache[netutil.IPKey, uint8] {
 	return us.nhopCache
 }
 
 // StartCapturing begins monitoring for UDP packets in a background goroutine.
 func (us *UDPSniffer) StartCapturing() {
-	// Create a new packet source from the handle.
 	packetSource := gopacket.NewPacketSource(us.handle, us.handle.LinkType())
 	packets := packetSource.Packets()
 
 	_ = us.handle.ClearBPF()
 	_ = us.handle.SetBPFRawInstructionFilter(generateUdpFilter(us.handle.LinkType()))
 
-	// Start a dedicated goroutine to process incoming packets.
 	go func() {
 		for packet := range packets {
 			us.processPacket(session.WithNewTraceID(context.Background()), packet)
@@ -74,11 +70,10 @@ func (us *UDPSniffer) RegisterUntracked(addrs []net.IP) {
 }
 
 // GetOptimalTTL retrieves the estimated hop count for a given key from the cache.
-// It returns the hop count and true if found, or 0 and false if not found.
 func (us *UDPSniffer) GetOptimalTTL(key netutil.IPKey) uint8 {
 	hopCount := uint8(255)
 	if oTTL, ok := us.nhopCache.Get(key); ok {
-		hopCount = oTTL.(uint8)
+		hopCount = oTTL
 	}
 
 	return max(hopCount, 2) - 1
@@ -96,15 +91,12 @@ func (us *UDPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	var srcIP []byte
 	var ttlLeft uint8
 
-	// Handle IPv4
 	if ipLayer := p.Layer(layers.LayerTypeIPv4); ipLayer != nil {
 		ip, _ := ipLayer.(*layers.IPv4)
 
-		// Skip packets from local/private IPs (outgoing packets)
 		if isLocalIP(ip.SrcIP) {
 			return
 		}
-		// Skip packets where dst is not local (outgoing packets including our fake packets)
 		if !isLocalIP(ip.DstIP) {
 			return
 		}
@@ -112,16 +104,14 @@ func (us *UDPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 		srcIP = ip.SrcIP
 		ttlLeft = ip.TTL
 	} else if ipLayer := p.Layer(layers.LayerTypeIPv6); ipLayer != nil {
-		// Handle IPv6
 		ip, _ := ipLayer.(*layers.IPv6)
 		srcIP = ip.SrcIP
 		ttlLeft = ip.HopLimit
 	} else {
-		return // No IP layer found
+		return
 	}
 
 	key := netutil.NewIPKey(srcIP)
-	// Calculate hop count from the TTL
 	nhops := estimateHops(ttlLeft)
 
 	_, exists := us.nhopCache.Get(key)
@@ -138,21 +128,19 @@ func (us *UDPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	}
 }
 
-// GenerateUdpFilter creates a BPF program for "ip and udp".
+// generateUdpFilter creates a BPF program for "ip and udp".
 // It supports Ethernet, Null (Loopback/VPN), and Raw IP link types.
 func generateUdpFilter(linkType layers.LinkType) []BPFInstruction {
 	var baseOffset uint32
 
-	// Determine the offset where the IP header begins
 	switch linkType {
 	case layers.LinkTypeEthernet:
 		baseOffset = 14
-	case layers.LinkTypeNull, layers.LinkTypeLoop: // BSD Loopback / macOS utun
+	case layers.LinkTypeNull, layers.LinkTypeLoop:
 		baseOffset = 4
-	case layers.LinkTypeRaw: // Linux TUN
+	case layers.LinkTypeRaw:
 		baseOffset = 0
 	default:
-		// Fallback to Ethernet or handle error if necessary
 		baseOffset = 14
 	}
 
@@ -160,23 +148,12 @@ func generateUdpFilter(linkType layers.LinkType) []BPFInstruction {
 
 	// 1. Protocol Verification (IPv4)
 	if linkType == layers.LinkTypeEthernet {
-		// Check EtherType == IPv4 (0x0800) at offset 12
 		instructions = append(
 			instructions,
-			BPFInstruction{Op: 0x28, Jt: 0, Jf: 0, K: 12}, // Ldh [12]
-			BPFInstruction{
-				Op: 0x15,
-				Jt: 0,
-				Jf: 3,
-				K:  0x0800,
-			}, // Jeq 0x800, True, False(Skip to End)
+			BPFInstruction{Op: 0x28, Jt: 0, Jf: 0, K: 12},
+			BPFInstruction{Op: 0x15, Jt: 0, Jf: 3, K: 0x0800},
 		)
 	} else {
-		// Check IP Version == 4 at the base offset
-		// Load byte at baseOffset, mask 0xF0, check if 0x40
-		// Ldb [baseOffset]
-		// And 0xf0
-		// Jeq 0x40, True, False(Skip to End)
 		instructions = append(
 			instructions,
 			BPFInstruction{Op: 0x30, Jt: 0, Jf: 0, K: baseOffset},
@@ -186,16 +163,15 @@ func generateUdpFilter(linkType layers.LinkType) []BPFInstruction {
 	}
 
 	// 2. Check Protocol == UDP (17)
-	// Protocol field is at IP header + 9 bytes
 	instructions = append(instructions,
-		BPFInstruction{Op: 0x30, Jt: 0, Jf: 0, K: baseOffset + 9}, // Ldb [baseOffset + 9]
-		BPFInstruction{Op: 0x15, Jt: 0, Jf: 1, K: 17},             // Jeq 17, True, False
+		BPFInstruction{Op: 0x30, Jt: 0, Jf: 0, K: baseOffset + 9},
+		BPFInstruction{Op: 0x15, Jt: 0, Jf: 1, K: 17},
 	)
 
 	// 3. Capture
 	instructions = append(instructions,
-		BPFInstruction{Op: 0x6, Jt: 0, Jf: 0, K: 0x00040000}, // Ret capture_len
-		BPFInstruction{Op: 0x6, Jt: 0, Jf: 0, K: 0x00000000}, // Ret 0
+		BPFInstruction{Op: 0x6, Jt: 0, Jf: 0, K: 0x00040000},
+		BPFInstruction{Op: 0x6, Jt: 0, Jf: 0, K: 0x00000000},
 	)
 
 	return instructions

@@ -28,7 +28,7 @@ type HTTPSystemNetwork interface {
 type HTTPProxy struct {
 	logger zerolog.Logger
 
-	resolver     dns.Resolver
+	dns          *dns.Client
 	httpHandler  *HTTPHandler
 	httpsHandler *HTTPSHandler
 	ruleSet      *rule.RuleSet
@@ -36,30 +36,30 @@ type HTTPProxy struct {
 	tcpSniffer packet.Sniffer
 	sysNet     HTTPSystemNetwork
 	listenAddr net.TCPAddr
-	rt         *config.RuntimeConfig
+	cfg        *config.RuntimeConfig
 }
 
 func NewHTTPProxy(
 	logger zerolog.Logger,
-	resolver dns.Resolver,
+	dnsClient *dns.Client,
 	httpHandler *HTTPHandler,
 	httpsHandler *HTTPSHandler,
 	ruleSet *rule.RuleSet,
 	tcpSniffer packet.Sniffer,
 	sysNet HTTPSystemNetwork,
 	listenAddr net.TCPAddr,
-	rt *config.RuntimeConfig,
+	cfg *config.RuntimeConfig,
 ) server.Server {
 	return &HTTPProxy{
 		logger:       logger,
-		resolver:     resolver,
+		dns:          dnsClient,
 		httpHandler:  httpHandler,
 		httpsHandler: httpsHandler,
 		ruleSet:      ruleSet,
 		tcpSniffer:   tcpSniffer,
 		sysNet:       sysNet,
 		listenAddr:   listenAddr,
-		rt:           rt,
+		cfg:          cfg,
 	}
 }
 
@@ -247,16 +247,18 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 			{Type: rule.MatchTypeDomain, Value: host},
 		})
 
-		rSet, err := p.resolver.Resolve(ctx, host, nameMatch)
+		netAddrs, err := p.dns.Resolve(ctx, nameMatch, host)
 		if err != nil {
 			_ = proto.HTTPBadGatewayResponse().Write(conn)
-			// logging.ErrorUnwrapped is not available, using standard error logging
 			logger.Error().Err(err).Msgf("dns lookup failed for %s", host)
 
 			return
 		}
 
-		addrs = rSet.Addrs
+		addrs = make([]net.IP, len(netAddrs))
+		for i, a := range netAddrs {
+			addrs[i] = a.AsSlice()
+		}
 	}
 
 	dst := &netutil.Destination{

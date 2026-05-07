@@ -3,7 +3,8 @@ package dns
 import (
 	"context"
 	"fmt"
-	"net"
+	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -12,108 +13,134 @@ import (
 	"github.com/xvzc/spoofdpi/internal/logging"
 )
 
-var _ Resolver = (*muxResolver)(nil)
+// internalResolver is the interface implemented by the three DNS backends.
+type internalResolver interface {
+	resolve(
+		ctx context.Context,
+		server, domain string,
+		qTypes []uint16,
+	) ([]netip.Addr, uint32, error)
+}
 
-type muxResolver struct {
+// Client is the top-level DNS resolver. It holds the three backends, a shared
+// cache, and the runtime config. Callers hold *Client directly — it does not
+// implement an interface.
+type Client struct {
 	logger zerolog.Logger
 	https  *httpsResolver
 	udp    *udpResolver
 	system *systemResolver
-	cache  cache.Cache[string]
-	rt     *config.RuntimeConfig
+	cache  cache.Cache[string, []netip.Addr]
+	cfg    *config.RuntimeConfig
 }
 
-func NewMuxResolver(
+func NewClient(
 	logger zerolog.Logger,
-	c cache.Cache[string],
-	rt *config.RuntimeConfig,
-) Resolver {
-	https := newHTTPSResolver(logger, rt)
-	udp := newUDPResolver(logger, rt)
-	system := newSystemResolver(logger, rt)
+	c cache.Cache[string, []netip.Addr],
+	cfg *config.RuntimeConfig,
+) *Client {
+	https := newHTTPSResolver(logger, cfg)
+	udp := newUDPResolver(logger, cfg)
+	system := newSystemResolver(logger, cfg)
 
 	logger.Info().Msg("dns info")
-	logger.Info().Msgf(" query type '%s'", rt.DNS.QType.String())
+	logger.Info().Msgf(" query type '%s'", cfg.DNS.QType.String())
 	logger.Info().Msgf(" resolvers")
 	for _, info := range []struct{ name, dst string }{
-		{"udp", rt.DNS.Addr.String()},
-		{"https", rt.DNS.HTTPSURL},
+		{"udp", cfg.DNS.Addr.String()},
+		{"https", cfg.DNS.HTTPSURL},
 		{"system", "builtin"},
 		{"cache", "dynamic"},
 	} {
 		logger.Info().Str("dst", info.dst).Msgf("  %s", info.name)
 	}
 
-	return &muxResolver{
+	return &Client{
 		logger: logger,
 		https:  https,
 		udp:    udp,
 		system: system,
 		cache:  c,
-		rt:     rt,
+		cfg:    cfg,
 	}
 }
 
-func (mr *muxResolver) Resolve(
+func (c *Client) Resolve(
 	ctx context.Context,
-	domain string,
 	rule *config.Rule,
-) (*RecordSet, error) {
-	rt := mr.rt
+	domain string,
+) ([]netip.Addr, error) {
+	cfg := c.cfg
 	if rule != nil {
-		rt = &rule.Config
+		cfg = &rule.Config
 	}
 
-	logger := logging.WithLocalScope(ctx, mr.logger, "mux")
+	logger := logging.WithLocalScope(ctx, c.logger, "mux")
 
-	if ip := net.ParseIP(domain); ip != nil {
-		return &RecordSet{Addrs: []net.IP{ip}, TTL: 0}, nil
+	if ip, err := netip.ParseAddr(domain); err == nil {
+		return []netip.Addr{ip}, nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	resolver := mr.pick(rt.DNS.Mode)
+	resolver := c.pick(cfg.DNS.Mode)
+	qTypes := parseQueryTypes(cfg.DNS.QType)
 
-	useCache := rt.DNS.Cache && rt.DNS.Mode != config.DNSModeSystem
+	useCache := cfg.DNS.Cache && cfg.DNS.Mode != config.DNSModeSystem
 	if useCache {
-		if item, ok := mr.cache.Get(domain); ok {
+		if addrs, ok := c.cache.Get(domain); ok {
 			logger.Debug().Str("domain", domain).Msg("cache hit")
-			return item.(*RecordSet).Clone(), nil
+			return addrs, nil
 		}
 		logger.Debug().Str("domain", domain).Msg("cache miss")
 	}
 
 	t1 := time.Now()
-	rSet, err := resolver.Resolve(ctx, domain, rule)
+	addrs, ttl, err := resolver.resolve(ctx, c.serverFor(cfg), domain, qTypes)
 	if err != nil {
 		return nil, err
 	}
 
 	logger.Debug().
 		Str("domain", domain).
-		Int("len", len(rSet.Addrs)).
+		Int("len", len(addrs)).
 		Str("took", fmt.Sprintf("%.3fms", float64(time.Since(t1).Microseconds())/1000.0)).
 		Msg("dns lookup ok")
 
 	if useCache {
-		_ = mr.cache.Set(
+		_ = c.cache.Set(
 			domain,
-			rSet,
-			cache.Options().WithTTL(time.Duration(rSet.TTL)*time.Second),
+			addrs,
+			cache.Options().WithTTL(time.Duration(ttl)*time.Second),
 		)
 	}
 
-	return rSet, nil
+	return addrs, nil
 }
 
-func (mr *muxResolver) pick(mode config.DNSModeType) Resolver {
+func (c *Client) pick(mode config.DNSModeType) internalResolver {
 	switch mode {
 	case config.DNSModeHTTPS:
-		return mr.https
+		return c.https
 	case config.DNSModeUDP:
-		return mr.udp
+		return c.udp
 	default:
-		return mr.system
+		return c.system
+	}
+}
+
+func (c *Client) serverFor(cfg *config.RuntimeConfig) string {
+	switch cfg.DNS.Mode {
+	case config.DNSModeHTTPS:
+		upstream := cfg.DNS.HTTPSURL
+		if !strings.HasPrefix(upstream, "https://") {
+			upstream = "https://" + upstream + "/dns-query"
+		}
+		return upstream
+	case config.DNSModeUDP:
+		return cfg.DNS.Addr.String()
+	default:
+		return ""
 	}
 }

@@ -2,6 +2,7 @@ package dns
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/miekg/dns"
 	"github.com/rs/zerolog"
@@ -9,42 +10,27 @@ import (
 	"github.com/xvzc/spoofdpi/internal/logging"
 )
 
-var _ Resolver = (*udpResolver)(nil)
-
 type udpResolver struct {
 	logger zerolog.Logger
 	client *dns.Client
-	rt     *config.RuntimeConfig
 }
 
-func newUDPResolver(logger zerolog.Logger, rt *config.RuntimeConfig) *udpResolver {
+func newUDPResolver(logger zerolog.Logger, cfg *config.RuntimeConfig) *udpResolver {
 	return &udpResolver{
 		client: &dns.Client{
-			Timeout: rt.Conn.DNSTimeout,
+			Timeout: cfg.Conn.DNSTimeout,
 		},
-		rt:     rt,
 		logger: logger,
 	}
 }
 
-func (ur *udpResolver) Resolve(
+func (ur *udpResolver) resolve(
 	ctx context.Context,
+	server string,
 	domain string,
-	rule *config.Rule,
-) (*RecordSet, error) {
-	rt := ur.rt
-	if rule != nil {
-		rt = &rule.Config
-	}
-
-	resCh := lookupAllTypes(
-		ctx,
-		domain,
-		rt.DNS.Addr.String(),
-		parseQueryTypes(rt.DNS.QType),
-		ur.exchange,
-	)
-
+	qTypes []uint16,
+) ([]netip.Addr, uint32, error) {
+	resCh := lookupAllTypes(ctx, domain, server, qTypes, ur.exchange)
 	return processMessages(ctx, resCh)
 }
 

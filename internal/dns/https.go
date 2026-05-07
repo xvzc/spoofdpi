@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -18,21 +19,18 @@ import (
 	"golang.org/x/net/http2"
 )
 
-var _ Resolver = (*httpsResolver)(nil)
-
 type httpsResolver struct {
 	logger zerolog.Logger
 	client *http.Client
-	rt     *config.RuntimeConfig
 }
 
-func newHTTPSResolver(logger zerolog.Logger, rt *config.RuntimeConfig) *httpsResolver {
+func newHTTPSResolver(logger zerolog.Logger, cfg *config.RuntimeConfig) *httpsResolver {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			NextProtos: []string{"h2", "http/1.1"},
 		},
 		DialContext: (&net.Dialer{
-			Timeout:   rt.Conn.DNSTimeout,
+			Timeout:   cfg.Conn.DNSTimeout,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
 		TLSHandshakeTimeout: 9 * time.Second,
@@ -51,43 +49,27 @@ func newHTTPSResolver(logger zerolog.Logger, rt *config.RuntimeConfig) *httpsRes
 		logger: logger,
 		client: &http.Client{
 			Transport: tr,
-			Timeout:   rt.Conn.DNSTimeout,
+			Timeout:   cfg.Conn.DNSTimeout,
 		},
-		rt: rt,
 	}
 }
 
-func (dr *httpsResolver) Resolve(
+func (hr *httpsResolver) resolve(
 	ctx context.Context,
+	server string,
 	domain string,
-	rule *config.Rule,
-) (*RecordSet, error) {
-	rt := dr.rt
-	if rule != nil {
-		rt = &rule.Config
-	}
-
-	upstream := rt.DNS.HTTPSURL
-	if !strings.HasPrefix(upstream, "https://") {
-		upstream = "https://" + upstream + "/dns-query"
-	}
-
-	resCh := lookupAllTypes(
-		ctx,
-		domain,
-		upstream,
-		parseQueryTypes(rt.DNS.QType),
-		dr.exchange,
-	)
+	qTypes []uint16,
+) ([]netip.Addr, uint32, error) {
+	resCh := lookupAllTypes(ctx, domain, server, qTypes, hr.exchange)
 	return processMessages(ctx, resCh)
 }
 
-func (dr *httpsResolver) exchange(
+func (hr *httpsResolver) exchange(
 	ctx context.Context,
 	msg *dns.Msg,
 	upstream string,
 ) (*dns.Msg, error) {
-	logger := logging.WithLocalScope(ctx, dr.logger, "doh_exchange")
+	logger := logging.WithLocalScope(ctx, hr.logger, "doh_exchange")
 
 	pack, err := msg.Pack()
 	if err != nil {
@@ -112,7 +94,7 @@ func (dr *httpsResolver) exchange(
 		req.Header.Set("Content-Type", "application/dns-message")
 		req.Header.Set("Accept", "application/dns-message")
 
-		resp, reqErr = dr.client.Do(req)
+		resp, reqErr = hr.client.Do(req)
 		if reqErr == nil {
 			break
 		}

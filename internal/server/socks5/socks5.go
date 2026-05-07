@@ -31,7 +31,7 @@ type SOCKS5SystemNetwork interface {
 type SOCKS5Proxy struct {
 	logger zerolog.Logger
 
-	resolver            dns.Resolver
+	dns                 *dns.Client
 	ruleSet             *rule.RuleSet
 	connectHandler      *ConnectHandler
 	bindHandler         *BindHandler
@@ -41,12 +41,12 @@ type SOCKS5Proxy struct {
 	udpSniffer packet.Sniffer
 	sysNet     SOCKS5SystemNetwork
 	listenAddr net.TCPAddr
-	rt         *config.RuntimeConfig
+	cfg        *config.RuntimeConfig
 }
 
 func NewSOCKS5Proxy(
 	logger zerolog.Logger,
-	resolver dns.Resolver,
+	dnsClient *dns.Client,
 	ruleSet *rule.RuleSet,
 	connectHandler *ConnectHandler,
 	bindHandler *BindHandler,
@@ -55,11 +55,11 @@ func NewSOCKS5Proxy(
 	udpSniffer packet.Sniffer,
 	sysNet SOCKS5SystemNetwork,
 	listenAddr net.TCPAddr,
-	rt *config.RuntimeConfig,
+	cfg *config.RuntimeConfig,
 ) server.Server {
 	return &SOCKS5Proxy{
 		logger:              logger,
-		resolver:            resolver,
+		dns:                 dnsClient,
 		ruleSet:             ruleSet,
 		connectHandler:      connectHandler,
 		bindHandler:         bindHandler,
@@ -68,7 +68,7 @@ func NewSOCKS5Proxy(
 		udpSniffer:          udpSniffer,
 		sysNet:              sysNet,
 		listenAddr:          listenAddr,
-		rt:                  rt,
+		cfg:                 cfg,
 	}
 }
 
@@ -252,13 +252,16 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 		})
 
 		// Resolve Domain
-		rSet, err := p.resolver.Resolve(ctx, req.FQDN, nameMatch)
+		netAddrs, err := p.dns.Resolve(ctx, nameMatch, req.FQDN)
 		if err != nil {
 			logger.Error().Str("domain", req.FQDN).Err(err).Msgf("dns lookup failed")
 			return
 		}
 
-		addrs = rSet.Addrs
+		addrs = make([]net.IP, len(netAddrs))
+		for i, a := range netAddrs {
+			addrs[i] = a.AsSlice()
+		}
 	} else {
 		logger.Trace().Msg("no addrs specified for this request. skipping")
 		return

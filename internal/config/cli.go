@@ -59,6 +59,7 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 				Skip:               false,
 			},
 			UDP: UDPOptions{ //exhaustruct:enforce
+				Skip:       false,
 				FakeCount:  0,
 				FakePacket: make([]byte, 64),
 			},
