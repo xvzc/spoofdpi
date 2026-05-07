@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
@@ -210,10 +209,6 @@ func createServer(
 	// --- DNS resolver ---
 	resolver := dns.NewClient(
 		logging.WithScope(logger, "dns"),
-		cache.NewTTLCache[string, []netip.Addr](cache.TTLCacheAttrs{
-			NumOfShards:     64,
-			CleanupInterval: 3 * time.Minute,
-		}),
 		&cfg.Runtime,
 	)
 

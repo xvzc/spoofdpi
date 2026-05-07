@@ -36,7 +36,6 @@ type Client struct {
 
 func NewClient(
 	logger zerolog.Logger,
-	c cache.Cache[string, []netip.Addr],
 	cfg *config.RuntimeConfig,
 ) *Client {
 	https := newHTTPSResolver(logger, cfg)
@@ -60,8 +59,11 @@ func NewClient(
 		https:  https,
 		udp:    udp,
 		system: system,
-		cache:  c,
-		cfg:    cfg,
+		cache: cache.NewTTLCache[string, []netip.Addr](cache.TTLCacheAttrs{
+			NumOfShards:     64,
+			CleanupInterval: 3 * time.Minute,
+		}),
+		cfg: cfg,
 	}
 }
 
