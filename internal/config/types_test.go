@@ -565,9 +565,9 @@ func TestUDPOptions_MarshalJSON_omitsFakePacketBytes(t *testing.T) {
 
 func TestRule_JSON_includesBlockAndConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	rt := cfg.Runtime
-	rt.HTTPS.SplitMode = HTTPSSplitModeChunk
-	rt.HTTPS.ChunkSize = 8
+	rCfg := cfg.Runtime
+	rCfg.HTTPS.SplitMode = HTTPSSplitModeChunk
+	rCfg.HTTPS.ChunkSize = 8
 
 	rule := &Rule{
 		Name:     "blk",
@@ -576,7 +576,7 @@ func TestRule_JSON_includesBlockAndConfig(t *testing.T) {
 		Match: &MatchAttrs{
 			Domains: []string{"example.com"},
 		},
-		Config: rt,
+		Config: rCfg,
 	}
 
 	got := string(rule.JSON())

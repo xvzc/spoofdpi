@@ -22,20 +22,20 @@ type HTTPSHandler struct {
 	logger   zerolog.Logger
 	desyncer *desync.TLSDesyncer
 	sniffer  packet.Sniffer
-	rt       *config.RuntimeConfig
+	cfg      *config.RuntimeConfig
 }
 
 func NewHTTPSHandler(
 	logger zerolog.Logger,
 	desyncer *desync.TLSDesyncer,
 	sniffer packet.Sniffer,
-	rt *config.RuntimeConfig,
+	cfg *config.RuntimeConfig,
 ) *HTTPSHandler {
 	return &HTTPSHandler{
 		logger:   logger,
 		desyncer: desyncer,
 		sniffer:  sniffer,
-		rt:       rt,
+		cfg:      cfg,
 	}
 }
 
@@ -45,12 +45,12 @@ func (h *HTTPSHandler) HandleRequest(
 	dst *netutil.Destination,
 	rule *config.Rule,
 ) error {
-	rt := h.rt
+	cfg := h.cfg
 	if rule != nil {
-		rt = &rule.Config
+		cfg = &rule.Config
 	}
 
-	if h.sniffer != nil && !rt.HTTPS.Skip && rt.HTTPS.FakeCount > 0 {
+	if h.sniffer != nil && !cfg.HTTPS.Skip && cfg.HTTPS.FakeCount > 0 {
 		h.sniffer.RegisterUntracked(dst.Addrs)
 	}
 
@@ -67,7 +67,7 @@ func (h *HTTPSHandler) HandleRequest(
 	logger.Trace().Msgf("sent 200 connection established -> %s", lConn.RemoteAddr())
 
 	// 2. Dial remote
-	rConn, err := netutil.DialFastest(ctx, dst, "tcp", rt.Conn.TCPTimeout, nil)
+	rConn, err := netutil.DialFastest(ctx, dst, "tcp", cfg.Conn.TCPTimeout, nil)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (h *HTTPSHandler) HandleRequest(
 	}
 
 	// 4. Send ClientHello with desync
-	n, err := h.desyncer.Desync(ctx, h.logger, rConn, tlsMsg, &rt.HTTPS)
+	n, err := h.desyncer.Desync(ctx, h.logger, rConn, tlsMsg, &cfg.HTTPS)
 	if err != nil {
 		return fmt.Errorf("failed to send client hello: %w", err)
 	}

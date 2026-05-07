@@ -19,7 +19,7 @@ import (
 type TCPHandler struct {
 	logger   zerolog.Logger
 	ruleSet  *rule.RuleSet
-	rt       *config.RuntimeConfig
+	cfg      *config.RuntimeConfig
 	desyncer *desync.TLSDesyncer
 	sniffer  packet.Sniffer // For TTL tracking
 }
@@ -29,12 +29,12 @@ func NewTCPHandler(
 	desyncer *desync.TLSDesyncer,
 	sniffer packet.Sniffer,
 	ruleSet *rule.RuleSet,
-	rt *config.RuntimeConfig,
+	cfg *config.RuntimeConfig,
 ) *TCPHandler {
 	return &TCPHandler{
 		logger:   logger,
 		ruleSet:  ruleSet,
-		rt:       rt,
+		cfg:      cfg,
 		desyncer: desyncer,
 		sniffer:  sniffer,
 	}
@@ -51,12 +51,12 @@ func (h *TCPHandler) Handle(
 	logger := logging.WithLocalScope(ctx, h.logger, "tcp")
 
 	// Addr-based rule matching using the destination IP
-	rt := h.rt
+	cfg := h.cfg
 	if h.ruleSet != nil {
 		q := []rule.Query{{Type: rule.MatchTypeAddr, Value: dst.Addrs[0].String()}}
 		if addrRule := h.ruleSet.Search(q); addrRule != nil {
 			logger.Trace().RawJSON("summary", addrRule.JSON()).Msg("addr match")
-			rt = &addrRule.Config
+			cfg = &addrRule.Config
 		}
 	}
 
@@ -75,14 +75,14 @@ func (h *TCPHandler) Handle(
 	// Check if it's a TLS Handshake (Content Type 0x16)
 	if buf[0] == 0x16 {
 		logger.Debug().Msg("detected tls handshake")
-		if err := h.handleTLS(ctx, logger, lBufferedConn, dst, rt, sysNet); err != nil {
+		if err := h.handleTLS(ctx, logger, lBufferedConn, dst, cfg, sysNet); err != nil {
 			logger.Debug().Err(err).Msg("tls handler failed")
 		}
 		return
 	}
 
 	rConn, err := netutil.DialFastest(
-		ctx, dst, "tcp", rt.Conn.TCPTimeout, sysNet.BindDialer,
+		ctx, dst, "tcp", cfg.Conn.TCPTimeout, sysNet.BindDialer,
 	)
 	if err != nil {
 		logger.Error().Msgf("failed to dial %v", err)
@@ -118,7 +118,7 @@ func (h *TCPHandler) handleTLS(
 	logger zerolog.Logger,
 	lConn net.Conn,
 	dst *netutil.Destination,
-	rt *config.RuntimeConfig,
+	cfg *config.RuntimeConfig,
 	sysNet TUNSystemNetwork,
 ) error {
 	// Read ClientHello
@@ -140,22 +140,22 @@ func (h *TCPHandler) handleTLS(
 
 	logger.Trace().Str("value", dst.Host).Msg("extracted sni field")
 
-	// Domain-based matching overrides addr-based rt when SNI is available
+	// Domain-based matching overrides addr-based cfg when SNI is available
 	if h.ruleSet != nil && dst.Host != "" {
 		q := []rule.Query{{Type: rule.MatchTypeDomain, Value: dst.Host}}
 		if domainRule := h.ruleSet.Search(q); domainRule != nil {
 			logger.Trace().RawJSON("summary", domainRule.JSON()).Msg("domain match")
-			rt = &domainRule.Config
+			cfg = &domainRule.Config
 		}
 	}
 
 	// Dial Remote
-	if h.sniffer != nil && !rt.HTTPS.Skip && rt.HTTPS.FakeCount > 0 {
+	if h.sniffer != nil && !cfg.HTTPS.Skip && cfg.HTTPS.FakeCount > 0 {
 		h.sniffer.RegisterUntracked(dst.Addrs)
 	}
 
 	rConn, err := netutil.DialFastest(
-		ctx, dst, "tcp", rt.Conn.TCPTimeout, sysNet.BindDialer,
+		ctx, dst, "tcp", cfg.Conn.TCPTimeout, sysNet.BindDialer,
 	)
 	if err != nil {
 		return err
@@ -166,7 +166,7 @@ func (h *TCPHandler) handleTLS(
 		Msgf("new remote conn (%s -> %s)", lConn.RemoteAddr(), rConn.RemoteAddr())
 
 	// Send ClientHello with Desync
-	if _, err := h.desyncer.Desync(ctx, logger, rConn, tlsMsg, &rt.HTTPS); err != nil {
+	if _, err := h.desyncer.Desync(ctx, logger, rConn, tlsMsg, &cfg.HTTPS); err != nil {
 		return err
 	}
 

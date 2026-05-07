@@ -19,7 +19,7 @@ type UDPHandler struct {
 	desyncer *desync.UDPDesyncer
 	sniffer  packet.Sniffer
 	ruleSet  *rule.RuleSet
-	rt       *config.RuntimeConfig
+	cfg      *config.RuntimeConfig
 }
 
 func NewUDPHandler(
@@ -27,14 +27,14 @@ func NewUDPHandler(
 	desyncer *desync.UDPDesyncer,
 	sniffer packet.Sniffer,
 	ruleSet *rule.RuleSet,
-	rt *config.RuntimeConfig,
+	cfg *config.RuntimeConfig,
 ) *UDPHandler {
 	return &UDPHandler{
 		logger:   logger,
 		desyncer: desyncer,
 		sniffer:  sniffer,
 		ruleSet:  ruleSet,
-		rt:       rt,
+		cfg:      cfg,
 	}
 }
 
@@ -49,18 +49,18 @@ func (h *UDPHandler) Handle(
 	logger := logging.WithLocalScope(ctx, h.logger, "udp")
 
 	// Addr-based rule matching
-	rt := h.rt
+	cfg := h.cfg
 	if h.ruleSet != nil {
 		if matched := h.ruleSet.Search(
 			[]rule.Query{{Type: rule.MatchTypeAddr, Value: dst.Addrs[0].String()}},
 		); matched != nil {
 			logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
-			rt = &matched.Config
+			cfg = &matched.Config
 		}
 	}
 
 	// Register destination for TTL learning when fakes will be sent.
-	if h.sniffer != nil && !rt.UDP.Skip && rt.UDP.FakeCount > 0 {
+	if h.sniffer != nil && !cfg.UDP.Skip && cfg.UDP.FakeCount > 0 {
 		h.sniffer.RegisterUntracked(dst.Addrs)
 	}
 
@@ -71,13 +71,13 @@ func (h *UDPHandler) Handle(
 		return
 	}
 
-	timeout := rt.Conn.UDPIdleTimeout
+	timeout := cfg.Conn.UDPIdleTimeout
 
 	rConnWrapped := netutil.NewIdleTimeoutConn(rawConn, timeout)
 	lConnWrapped := netutil.NewIdleTimeoutConn(lConn, timeout)
 
-	if !rt.UDP.Skip {
-		_, _ = h.desyncer.Desync(ctx, lConnWrapped, rConnWrapped, &rt.UDP)
+	if !cfg.UDP.Skip {
+		_, _ = h.desyncer.Desync(ctx, lConnWrapped, rConnWrapped, &cfg.UDP)
 	}
 
 	logger.Debug().

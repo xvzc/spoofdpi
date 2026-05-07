@@ -21,7 +21,7 @@ type UdpAssociateHandler struct {
 	pool     *netutil.ConnRegistry[netutil.NATKey]
 	desyncer *desync.UDPDesyncer
 	sniffer  packet.Sniffer
-	rt       *config.RuntimeConfig
+	cfg      *config.RuntimeConfig
 }
 
 func NewUdpAssociateHandler(
@@ -29,14 +29,14 @@ func NewUdpAssociateHandler(
 	pool *netutil.ConnRegistry[netutil.NATKey],
 	desyncer *desync.UDPDesyncer,
 	sniffer packet.Sniffer,
-	rt *config.RuntimeConfig,
+	cfg *config.RuntimeConfig,
 ) *UdpAssociateHandler {
 	return &UdpAssociateHandler{
 		logger:   logger,
 		pool:     pool,
 		desyncer: desyncer,
 		sniffer:  sniffer,
-		rt:       rt,
+		cfg:      cfg,
 	}
 }
 
@@ -47,7 +47,7 @@ func (h *UdpAssociateHandler) Handle(
 ) error {
 	logger := logging.WithLocalScope(ctx, h.logger, "udp_associate")
 
-	rt := h.rt
+	cfg := h.cfg
 
 	// 1. Listen on a random UDP port
 	lTCPAddr := lConn.LocalAddr().(*net.TCPAddr) // SOCKS5 listens on TCP
@@ -160,7 +160,7 @@ func (h *UdpAssociateHandler) Handle(
 		}
 
 		// Register destination for TTL learning when fakes will be sent.
-		if h.sniffer != nil && !rt.UDP.Skip && rt.UDP.FakeCount > 0 {
+		if h.sniffer != nil && !cfg.UDP.Skip && cfg.UDP.FakeCount > 0 {
 			h.sniffer.RegisterUntracked(pktDst.Addrs)
 		}
 
@@ -175,8 +175,8 @@ func (h *UdpAssociateHandler) Handle(
 		rConn := h.pool.Store(key, rRawConn)
 
 		// Send fake packets before real payload (UDP desync)
-		if h.desyncer != nil && !rt.UDP.Skip {
-			_, _ = h.desyncer.Desync(ctx, lUDPConn, rConn.Conn, &rt.UDP)
+		if h.desyncer != nil && !cfg.UDP.Skip {
+			_, _ = h.desyncer.Desync(ctx, lUDPConn, rConn.Conn, &cfg.UDP)
 		}
 
 		// Start a goroutine to read from the target and forward to the client.

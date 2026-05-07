@@ -21,7 +21,7 @@ type ConnectHandler struct {
 	desyncer   *desync.TLSDesyncer
 	sniffer    packet.Sniffer
 	listenAddr net.TCPAddr
-	rt         *config.RuntimeConfig
+	cfg        *config.RuntimeConfig
 }
 
 func NewConnectHandler(
@@ -29,14 +29,14 @@ func NewConnectHandler(
 	desyncer *desync.TLSDesyncer,
 	sniffer packet.Sniffer,
 	listenAddr net.TCPAddr,
-	rt *config.RuntimeConfig,
+	cfg *config.RuntimeConfig,
 ) *ConnectHandler {
 	return &ConnectHandler{
 		logger:     logger,
 		desyncer:   desyncer,
 		sniffer:    sniffer,
 		listenAddr: listenAddr,
-		rt:         rt,
+		cfg:        cfg,
 	}
 }
 
@@ -47,9 +47,9 @@ func (h *ConnectHandler) Handle(
 	dst *netutil.Destination,
 	rule *config.Rule,
 ) error {
-	rt := h.rt
+	cfg := h.cfg
 	if rule != nil {
-		rt = &rule.Config
+		cfg = &rule.Config
 	}
 
 	logger := logging.WithLocalScope(ctx, h.logger, "connect")
@@ -72,11 +72,11 @@ func (h *ConnectHandler) Handle(
 	}
 
 	// 3. Dial remote
-	if h.sniffer != nil && !rt.HTTPS.Skip && rt.HTTPS.FakeCount > 0 {
+	if h.sniffer != nil && !cfg.HTTPS.Skip && cfg.HTTPS.FakeCount > 0 {
 		h.sniffer.RegisterUntracked(dst.Addrs)
 	}
 
-	rConn, err := netutil.DialFastest(ctx, dst, "tcp", rt.Conn.TCPTimeout, nil)
+	rConn, err := netutil.DialFastest(ctx, dst, "tcp", cfg.Conn.TCPTimeout, nil)
 	if err != nil {
 		_ = proto.SOCKS5FailureResponse().Write(lConn)
 		return err
@@ -115,10 +115,10 @@ func (h *ConnectHandler) Handle(
 				Int("len", tlsMsg.Len()).
 				Msgf("client hello received <- %s", lConn.RemoteAddr())
 			var n int
-			if rt.HTTPS.Skip {
+			if cfg.HTTPS.Skip {
 				n, err = rConn.Write(tlsMsg.Raw())
 			} else {
-				n, err = h.desyncer.Desync(ctx, h.logger, rConn, tlsMsg, &rt.HTTPS)
+				n, err = h.desyncer.Desync(ctx, h.logger, rConn, tlsMsg, &cfg.HTTPS)
 			}
 			if err != nil {
 				return fmt.Errorf("failed to send client hello: %w", err)
