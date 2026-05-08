@@ -67,10 +67,11 @@ nav:
     # - 'Geographical Recipes': 
     #   - 'South Korea': user-guide/configuration-recipes/south-korea.md
   - 'Developer Guide':
-    - 'Commit Messages': developer-guide/commit-messages.md
-    - 'Code Quality': developer-guide/code-quality.md
+    - 'Agent Setup': developer-guide/agent-setup.md
     - 'Build and Run': developer-guide/build-and-run.md
     - 'Testing': developer-guide/testing.md
+    - 'Code Quality': developer-guide/code-quality.md
+    - 'Commit Messages': developer-guide/commit-messages.md
     - 'Documentation': developer-guide/documentation.md
 
 # Extensions

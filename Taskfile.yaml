@@ -23,12 +23,12 @@ tasks:
     cmd: golangci-lint run
 
   fmt:
-    desc: Format code with gofmt
-    cmd: gofmt -w .
+    desc: Format code with golangci-lint
+    cmd: golangci-lint fmt
 
   fmt-check:
-    desc: Verify formatting matches gofmt
-    cmd: test -z "$(gofmt -l .)"
+    desc: Verify formatting matches golangci-lint
+    cmd: golangci-lint fmt --diff
 
   pre-commit:
     desc: Pre-commit checks (test + fmt-check + lint)
