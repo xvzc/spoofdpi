@@ -14,27 +14,23 @@ import (
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
 type HTTPSHandler struct {
 	logger   zerolog.Logger
 	desyncer *desync.TLSDesyncer
-	sniffer  packet.Sniffer
 	cfg      *config.RuntimeConfig
 }
 
 func NewHTTPSHandler(
 	logger zerolog.Logger,
 	desyncer *desync.TLSDesyncer,
-	sniffer packet.Sniffer,
 	cfg *config.RuntimeConfig,
 ) *HTTPSHandler {
 	return &HTTPSHandler{
 		logger:   logger,
 		desyncer: desyncer,
-		sniffer:  sniffer,
 		cfg:      cfg,
 	}
 }
@@ -50,9 +46,7 @@ func (h *HTTPSHandler) HandleRequest(
 		cfg = &rule.Config
 	}
 
-	if h.sniffer != nil && !cfg.HTTPS.Skip && cfg.HTTPS.FakeCount > 0 {
-		h.sniffer.RegisterUntracked(dst.Addrs)
-	}
+	h.desyncer.PrepareHopTrack(dst.Addrs, &cfg.HTTPS)
 
 	logger := logging.WithLocalScope(ctx, h.logger, "https")
 

@@ -56,9 +56,9 @@ func (ts *TCPSniffer) StartCapturing() {
 	}()
 }
 
-// RegisterUntracked registers new IP addresses for tracking.
+// Track registers new IP addresses for hop-count learning.
 // Addresses that are already being tracked are ignored.
-func (ts *TCPSniffer) RegisterUntracked(addrs []net.IP) {
+func (ts *TCPSniffer) Track(addrs []net.IP) {
 	for _, v := range addrs {
 		ts.nhopCache.Set(
 			netutil.NewIPKey(v),

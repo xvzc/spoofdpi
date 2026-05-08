@@ -38,6 +38,14 @@ func NewTLSDesyncer(
 	}
 }
 
+// PrepareHopTrack registers addrs with the sniffer for hop-count learning,
+// guarded by the config so the LRU isn't touched when fakes won't be sent.
+func (d *TLSDesyncer) PrepareHopTrack(addrs []net.IP, cfg *config.HTTPSOptions) {
+	if d.sniffer != nil && !cfg.Skip && cfg.FakeCount > 0 {
+		d.sniffer.Track(addrs)
+	}
+}
+
 func (d *TLSDesyncer) Desync(
 	ctx context.Context,
 	logger zerolog.Logger,

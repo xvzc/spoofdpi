@@ -10,14 +10,12 @@ import (
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/rule"
 )
 
 type UDPHandler struct {
 	logger   zerolog.Logger
 	desyncer *desync.UDPDesyncer
-	sniffer  packet.Sniffer
 	ruleSet  *rule.RuleSet
 	cfg      *config.RuntimeConfig
 }
@@ -25,14 +23,12 @@ type UDPHandler struct {
 func NewUDPHandler(
 	logger zerolog.Logger,
 	desyncer *desync.UDPDesyncer,
-	sniffer packet.Sniffer,
 	ruleSet *rule.RuleSet,
 	cfg *config.RuntimeConfig,
 ) *UDPHandler {
 	return &UDPHandler{
 		logger:   logger,
 		desyncer: desyncer,
-		sniffer:  sniffer,
 		ruleSet:  ruleSet,
 		cfg:      cfg,
 	}
@@ -60,9 +56,7 @@ func (h *UDPHandler) Handle(
 	}
 
 	// Register destination for TTL learning when fakes will be sent.
-	if h.sniffer != nil && !cfg.UDP.Skip && cfg.UDP.FakeCount > 0 {
-		h.sniffer.RegisterUntracked(dst.Addrs)
-	}
+	h.desyncer.PrepareHopTrack(dst.Addrs, &cfg.UDP)
 
 	// Dial remote connection
 	rawConn, err := netutil.DialFastest(ctx, dst, "udp", 0, sysNet.BindDialer)

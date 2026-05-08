@@ -11,7 +11,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/rule"
 )
@@ -21,13 +20,11 @@ type TCPHandler struct {
 	ruleSet  *rule.RuleSet
 	cfg      *config.RuntimeConfig
 	desyncer *desync.TLSDesyncer
-	sniffer  packet.Sniffer // For TTL tracking
 }
 
 func NewTCPHandler(
 	logger zerolog.Logger,
 	desyncer *desync.TLSDesyncer,
-	sniffer packet.Sniffer,
 	ruleSet *rule.RuleSet,
 	cfg *config.RuntimeConfig,
 ) *TCPHandler {
@@ -36,7 +33,6 @@ func NewTCPHandler(
 		ruleSet:  ruleSet,
 		cfg:      cfg,
 		desyncer: desyncer,
-		sniffer:  sniffer,
 	}
 }
 
@@ -150,9 +146,7 @@ func (h *TCPHandler) handleTLS(
 	}
 
 	// Dial Remote
-	if h.sniffer != nil && !cfg.HTTPS.Skip && cfg.HTTPS.FakeCount > 0 {
-		h.sniffer.RegisterUntracked(dst.Addrs)
-	}
+	h.desyncer.PrepareHopTrack(dst.Addrs, &cfg.HTTPS)
 
 	rConn, err := netutil.DialFastest(
 		ctx, dst, "tcp", cfg.Conn.TCPTimeout, sysNet.BindDialer,

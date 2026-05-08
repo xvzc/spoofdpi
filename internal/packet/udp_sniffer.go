@@ -57,9 +57,9 @@ func (us *UDPSniffer) StartCapturing() {
 	}()
 }
 
-// RegisterUntracked registers new IP addresses for tracking.
+// Track registers new IP addresses for hop-count learning.
 // Addresses that are already being tracked are ignored.
-func (us *UDPSniffer) RegisterUntracked(addrs []net.IP) {
+func (us *UDPSniffer) Track(addrs []net.IP) {
 	for _, v := range addrs {
 		us.nhopCache.Set(
 			netutil.NewIPKey(v),

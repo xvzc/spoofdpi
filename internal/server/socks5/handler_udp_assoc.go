@@ -12,7 +12,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
@@ -20,7 +19,6 @@ type UdpAssociateHandler struct {
 	logger   zerolog.Logger
 	pool     *netutil.ConnRegistry[netutil.NATKey]
 	desyncer *desync.UDPDesyncer
-	sniffer  packet.Sniffer
 	cfg      *config.RuntimeConfig
 }
 
@@ -28,14 +26,12 @@ func NewUdpAssociateHandler(
 	logger zerolog.Logger,
 	pool *netutil.ConnRegistry[netutil.NATKey],
 	desyncer *desync.UDPDesyncer,
-	sniffer packet.Sniffer,
 	cfg *config.RuntimeConfig,
 ) *UdpAssociateHandler {
 	return &UdpAssociateHandler{
 		logger:   logger,
 		pool:     pool,
 		desyncer: desyncer,
-		sniffer:  sniffer,
 		cfg:      cfg,
 	}
 }
@@ -160,9 +156,7 @@ func (h *UdpAssociateHandler) Handle(
 		}
 
 		// Register destination for TTL learning when fakes will be sent.
-		if h.sniffer != nil && !cfg.UDP.Skip && cfg.UDP.FakeCount > 0 {
-			h.sniffer.RegisterUntracked(pktDst.Addrs)
-		}
+		h.desyncer.PrepareHopTrack(pktDst.Addrs, &cfg.UDP)
 
 		rRawConn, err := netutil.DialFastest(ctx, pktDst, "udp", 0, nil)
 		if err != nil {

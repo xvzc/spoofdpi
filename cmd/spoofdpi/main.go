@@ -295,7 +295,6 @@ func createServer(
 		httpsHandler := http.NewHTTPSHandler(
 			logging.WithScope(logger, "hnd"),
 			desync.NewTLSDesyncer(tcpWriter, tcpSniffer),
-			tcpSniffer,
 			&cfg.Runtime,
 		)
 
@@ -319,7 +318,6 @@ func createServer(
 		connectHandler := socks5.NewConnectHandler(
 			logging.WithScope(logger, "hnd"),
 			desync.NewTLSDesyncer(tcpWriter, tcpSniffer),
-			tcpSniffer,
 			cfg.Startup.App.ListenAddr,
 			&cfg.Runtime,
 		)
@@ -333,7 +331,6 @@ func createServer(
 				udpWriter,
 				udpSniffer,
 			),
-			udpSniffer,
 			&cfg.Runtime,
 		)
 		bindHandler := socks5.NewBindHandler(logging.WithScope(logger, "hnd"))
@@ -369,7 +366,6 @@ func createServer(
 		tcpHandler := tun.NewTCPHandler(
 			logging.WithScope(logger, "hnd"),
 			desync.NewTLSDesyncer(tcpWriter, tcpSniffer),
-			tcpSniffer,
 			ruleSet,
 			&cfg.Runtime,
 		)
@@ -381,7 +377,6 @@ func createServer(
 				udpWriter,
 				udpSniffer,
 			),
-			udpSniffer,
 			ruleSet,
 			&cfg.Runtime,
 		)

@@ -9,7 +9,7 @@ import (
 
 type Sniffer interface {
 	StartCapturing()
-	RegisterUntracked(addrs []net.IP)
+	Track(addrs []net.IP)
 	GetOptimalTTL(key netutil.IPKey) uint8
 	Cache() cache.Cache[netutil.IPKey, uint8]
 }

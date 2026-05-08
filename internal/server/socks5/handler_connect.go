@@ -12,14 +12,12 @@ import (
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
 type ConnectHandler struct {
 	logger     zerolog.Logger
 	desyncer   *desync.TLSDesyncer
-	sniffer    packet.Sniffer
 	listenAddr net.TCPAddr
 	cfg        *config.RuntimeConfig
 }
@@ -27,14 +25,12 @@ type ConnectHandler struct {
 func NewConnectHandler(
 	logger zerolog.Logger,
 	desyncer *desync.TLSDesyncer,
-	sniffer packet.Sniffer,
 	listenAddr net.TCPAddr,
 	cfg *config.RuntimeConfig,
 ) *ConnectHandler {
 	return &ConnectHandler{
 		logger:     logger,
 		desyncer:   desyncer,
-		sniffer:    sniffer,
 		listenAddr: listenAddr,
 		cfg:        cfg,
 	}
@@ -72,9 +68,7 @@ func (h *ConnectHandler) Handle(
 	}
 
 	// 3. Dial remote
-	if h.sniffer != nil && !cfg.HTTPS.Skip && cfg.HTTPS.FakeCount > 0 {
-		h.sniffer.RegisterUntracked(dst.Addrs)
-	}
+	h.desyncer.PrepareHopTrack(dst.Addrs, &cfg.HTTPS)
 
 	rConn, err := netutil.DialFastest(ctx, dst, "tcp", cfg.Conn.TCPTimeout, nil)
 	if err != nil {
