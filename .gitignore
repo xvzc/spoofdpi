@@ -12,3 +12,9 @@ result
 dist/
 COMMIT
 site/
+
+.claude/
+.codex/
+.opencode/
+/AGENTS.md
+/CLAUDE.md
