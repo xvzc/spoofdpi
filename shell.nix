@@ -38,10 +38,10 @@ pkgs.mkShell {
   packages = with pkgs; [
     go_1_26
     goreleaser
-    go-task
     gopls
     golangci-lint-langserver
     golangciLint
+    (pkgs.writeShellScriptBin "run" ''go build ./cmd/... && sudo ./spoofdpi "$@"'')
     (pkgs.python312.withPackages (pyPkgs: with pyPkgs; [ mkdocs-material ]))
     commitlint
   ];

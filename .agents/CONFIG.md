@@ -32,4 +32,4 @@ If the agent-specific directory (e.g. `.claude/`) does not exist, create it auto
 Automation that runs at specific points in the agent's tool execution lifecycle.
 
 ### Pre tool use
-- `git commit *` → `task pre-commit` (timeout: 180s)
+- `git commit *` → `make pre-commit` (timeout: 180s)
