@@ -1,4 +1,4 @@
-.PHONY: build test lint fmt fmt-check pre-commit docs
+.PHONY: build test lint fmt fmt-check pre-commit claude
 
 build:
 	go build ./cmd/...
@@ -20,5 +20,7 @@ pre-commit:
 	$(MAKE) fmt-check
 	$(MAKE) lint
 
-docs:
-	mkdocs serve
+claude:
+	mkdir -p .claude
+	ln -sf ../.agents/rules .claude/rules
+	ln -sf ../.agents/AGENTS.md .claude/CLAUDE.md

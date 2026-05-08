@@ -4,10 +4,29 @@
 
 spoofdpi is a proxy tool that bypasses Deep Packet Inspection (DPI) — the technique used by many internet censorship systems to inspect and block traffic. It works by fragmenting and desynchronizing TLS handshakes so that DPI middleboxes misparse the connection while the destination server handles it normally.
 
-## Agent configuration
+## Testing
 
-All shared agent configuration lives in `.agents/`. This includes rules, skills, and commands. Each developer wires these into their own agent by creating symlinks — never by copying files.
+```console
+$ go test -tags network ./...
+```
 
-`.agents/CONFIG.md` is the single source of truth for configuration. Read it to understand what permissions and hooks to set up, and to generate your local agent config file (e.g. `settings.json`).
+Use `go test ./...` to exclude network-dependent tests (e.g. sandboxed Nix builds).
 
-Configuration changes are applied to the local agent config only by default. `.agents/CONFIG.md` is updated only when a change is explicitly intended to be shared with the team.
+## Formatting
+
+```console
+$ golangci-lint fmt   # format
+$ golangci-lint run   # lint (config: .golangci.yml)
+```
+
+Or use `make fmt` / `make lint`.
+
+## Documentation
+
+Docs live in `docs/` and are served with `mkdocs serve`.
+
+- `docs/user-guide/` — config options and runtime behavior
+- `docs/getting-started/` — install, quick-start, introduction
+- `docs/developer-guide/` — build/test/lint workflow, commit conventions
+
+Update docs when a change adds, removes, or renames a config option, or changes user-observable runtime behavior. Pure refactors and internal changes don't require doc updates.
