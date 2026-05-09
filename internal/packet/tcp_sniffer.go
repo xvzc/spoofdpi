@@ -148,16 +148,28 @@ func generateSynAckFilter(linkType layers.LinkType) []BPFInstruction {
 
 	// 1. Protocol Verification (IPv4)
 	if linkType == layers.LinkTypeEthernet {
+		// Load EtherType (2 bytes at offset 12), then check for IPv4 (0x0800).
+		// On mismatch, jump 8 forward to the reject instruction.
 		instructions = append(
 			instructions,
 			BPFInstruction{Op: 0x28, Jt: 0, Jf: 0, K: 12},
 			BPFInstruction{Op: 0x15, Jt: 0, Jf: 8, K: 0x0800},
 		)
 	} else {
+		// For Null/Loop/Raw link types the packet starts with a 4-byte family
+		// field (Null/Loop) or directly with the IP header (Raw), so there is
+		// no EtherType to check.  Instead, load the first byte of the IP
+		// header (version | IHL), mask the upper nibble with 0xf0, and verify
+		// it equals 0x40 (IP version 4).  The load must come first; without
+		// it the accumulator is 0 and the check always fails, silently
+		// dropping every packet on these link types.
+		// This section emits 3 instructions (vs 2 for Ethernet), so the false
+		// jump offset is 7, not 8.
 		instructions = append(
 			instructions,
-			BPFInstruction{Op: 0x54, Jt: 0, Jf: 0, K: 0xf0},
-			BPFInstruction{Op: 0x15, Jt: 0, Jf: 8, K: 0x40},
+			BPFInstruction{Op: 0x30, Jt: 0, Jf: 0, K: baseOffset}, // ldb [baseOffset]
+			BPFInstruction{Op: 0x54, Jt: 0, Jf: 0, K: 0xf0},       // and #0xf0
+			BPFInstruction{Op: 0x15, Jt: 0, Jf: 7, K: 0x40},       // jeq #0x40
 		)
 	}
 

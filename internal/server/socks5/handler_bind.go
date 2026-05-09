@@ -73,9 +73,14 @@ func (h *BindHandler) Handle(
 				case <-stopMonitor:
 					return // accept succeeded; don't touch listener
 				default:
-					_ = listener.Close()
-					return
 				}
+				// Read deadline expires every 200ms while waiting for Accept;
+				// that's expected — keep polling. Only a real drop closes the listener.
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue
+				}
+				_ = listener.Close()
+				return
 			}
 			select {
 			case <-stopMonitor:
