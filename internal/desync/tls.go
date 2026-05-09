@@ -30,7 +30,11 @@ type TLSDesyncer struct {
 	sniffer packet.Sniffer
 }
 
-func NewTLSDesyncer(logger zerolog.Logger, writer packet.Writer, sniffer packet.Sniffer) *TLSDesyncer {
+func NewTLSDesyncer(
+	logger zerolog.Logger,
+	writer packet.Writer,
+	sniffer packet.Sniffer,
+) *TLSDesyncer {
 	return &TLSDesyncer{logger: logger, writer: writer, sniffer: sniffer}
 }
 

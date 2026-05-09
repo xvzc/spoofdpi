@@ -25,7 +25,7 @@
           inherit version go;
           pname = "spoofdpi";
           src = self;
-          vendorHash = "sha256-KHP6497t4DFnYyTkcuTaCrpK6j14AwWjZeYDyEfjXBg=";
+          vendorHash = "sha256-7fCyZQnnaoFqjdN89NwUAeujZJvmQnV+lYUbwtNGXMc=";
           subPackages = [ "cmd/spoofdpi" ];
           buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.libpcap ];
           env.CGO_ENABLED = if pkgs.stdenv.isDarwin then "1" else "0";

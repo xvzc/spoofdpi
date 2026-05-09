@@ -17,7 +17,11 @@ type UDPDesyncer struct {
 	sniffer packet.Sniffer
 }
 
-func NewUDPDesyncer(logger zerolog.Logger, writer packet.Writer, sniffer packet.Sniffer) *UDPDesyncer {
+func NewUDPDesyncer(
+	logger zerolog.Logger,
+	writer packet.Writer,
+	sniffer packet.Sniffer,
+) *UDPDesyncer {
 	return &UDPDesyncer{logger: logger, writer: writer, sniffer: sniffer}
 }
 
