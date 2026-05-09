@@ -216,7 +216,14 @@ func connToDst(conn net.Conn) (*netutil.Destination, error) {
 	if ip == nil {
 		return nil, fmt.Errorf("non-ip destination %q", host)
 	}
-	port, _ := strconv.Atoi(portStr)
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"non-numeric port %q in local addr %q",
+			portStr,
+			conn.LocalAddr(),
+		)
+	}
 	return &netutil.Destination{
 		Host:  host,
 		Port:  port,
