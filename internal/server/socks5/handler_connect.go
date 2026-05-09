@@ -112,7 +112,7 @@ func (h *ConnectHandler) Handle(
 			if cfg.HTTPS.Skip {
 				n, err = rConn.Write(tlsMsg.Raw())
 			} else {
-				n, err = h.desyncer.Desync(ctx, h.logger, rConn, tlsMsg, &cfg.HTTPS)
+				n, err = h.desyncer.Desync(ctx, rConn, tlsMsg, &cfg.HTTPS)
 			}
 			if err != nil {
 				return fmt.Errorf("failed to send client hello: %w", err)

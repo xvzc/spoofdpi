@@ -56,9 +56,9 @@ func (ts *TCPSniffer) StartCapturing() {
 	}()
 }
 
-// Track registers new IP addresses for hop-count learning.
+// Register registers new IP addresses for hop-count learning.
 // Addresses that are already being tracked are ignored.
-func (ts *TCPSniffer) Track(addrs []net.IP) {
+func (ts *TCPSniffer) Register(addrs []net.IP) {
 	for _, v := range addrs {
 		ts.nhopCache.Set(
 			netutil.NewIPKey(v),

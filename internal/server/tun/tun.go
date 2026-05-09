@@ -48,10 +48,9 @@ type TunServer struct {
 	tcpHandler *TCPHandler
 	udpHandler *UDPHandler
 
-	sysNet TUNSystemNetwork // OS-specific network configuration
-
 	tcpSniffer packet.Sniffer
 	udpSniffer packet.Sniffer
+	sysNet     TUNSystemNetwork // OS-specific network configuration
 }
 
 func NewTUNServer(
@@ -77,8 +76,6 @@ func (s *TunServer) ListenAndServe(
 ) error {
 	logger := logging.WithLocalScope(appctx, s.logger, "tun")
 
-	// Start pcap capture only if sniffers were supplied
-	// (i.e., cfg.NeedsRawTCP() / NeedsRawUDP() was true at startup).
 	if s.tcpSniffer != nil {
 		s.tcpSniffer.StartCapturing()
 	}

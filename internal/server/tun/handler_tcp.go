@@ -160,7 +160,7 @@ func (h *TCPHandler) handleTLS(
 		Msgf("new remote conn (%s -> %s)", lConn.RemoteAddr(), rConn.RemoteAddr())
 
 	// Send ClientHello with Desync
-	if _, err := h.desyncer.Desync(ctx, logger, rConn, tlsMsg, &cfg.HTTPS); err != nil {
+	if _, err := h.desyncer.Desync(ctx, rConn, tlsMsg, &cfg.HTTPS); err != nil {
 		return err
 	}
 

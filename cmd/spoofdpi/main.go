@@ -193,6 +193,71 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	return nil
 }
 
+// setupPcapIO resolves the gateway MAC (populating route.GatewayMAC) and
+// creates sniffer/writer pairs for whichever L4 protocols cfg requires.
+// Returns nil values for protocols that don't need pcap.
+func setupPcapIO(
+	ctx context.Context,
+	logger zerolog.Logger,
+	route *netutil.Route,
+	cfg *config.Config,
+) (tcpSniffer, udpSniffer packet.Sniffer, tcpWriter, udpWriter packet.Writer, err error) {
+	arpCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	mac, err := packet.ResolveGatewayMAC(
+		arpCtx,
+		logging.WithScope(logger, "pkt"),
+		&route.Iface,
+	)
+	cancel()
+	if err != nil {
+		err = fmt.Errorf("failed to resolve gateway MAC: %w", err)
+		return
+	}
+	route.GatewayMAC = mac
+
+	pktLogger := logging.WithScope(logger, "pkt")
+	hopCache := cache.NewLRUCache[netutil.IPKey, uint8](4096, nil)
+
+	logger.Info().Msg("network info")
+	logger.Info().
+		Str("name", route.Iface.Name).
+		Str("mac", route.Iface.HardwareAddr.String()).
+		Msg(" interface")
+	logger.Info().Str("mac", mac.String()).Msg(" gateway (passive detection)")
+
+	if cfg.NeedsPcapTCP() {
+		handle, hErr := packet.NewHandle(&route.Iface)
+		if hErr != nil {
+			err = fmt.Errorf("tcp pcap handle on %s: %w", route.Iface.Name, hErr)
+			return
+		}
+		tcpSniffer = packet.NewTCPSniffer(
+			pktLogger,
+			hopCache,
+			handle,
+			uint8(cfg.Runtime.Conn.DefaultFakeTTL),
+		)
+		tcpWriter = packet.NewTCPWriter(pktLogger, handle, &route.Iface, mac)
+	}
+
+	if cfg.NeedsPcapUDP() {
+		handle, hErr := packet.NewHandle(&route.Iface)
+		if hErr != nil {
+			err = fmt.Errorf("udp pcap handle on %s: %w", route.Iface.Name, hErr)
+			return
+		}
+		udpSniffer = packet.NewUDPSniffer(
+			pktLogger,
+			hopCache,
+			handle,
+			uint8(cfg.Runtime.Conn.DefaultFakeTTL),
+		)
+		udpWriter = packet.NewUDPWriter(pktLogger, handle, &route.Iface, mac)
+	}
+
+	return
+}
+
 func createServer(
 	appctx context.Context,
 	logger zerolog.Logger,
@@ -217,187 +282,105 @@ func createServer(
 		return nil, fmt.Errorf("failed to find default route: %w", err)
 	}
 
-	// --- Raw packet IO (sniffer + writer) per L4, only when needed ---
 	var tcpSniffer, udpSniffer packet.Sniffer
 	var tcpWriter, udpWriter packet.Writer
 
-	needTCP := cfg.NeedsRawTCP()
-	needUDP := cfg.NeedsRawUDP()
-
-	if needTCP || needUDP {
-		// Resolve the upstream gateway MAC for raw L2 packet emission.
-		arpCtx, cancel := context.WithTimeout(appctx, 10*time.Second)
-		mac, err := packet.ResolveGatewayMAC(
-			arpCtx,
-			logging.WithScope(logger, "pkt"),
-			&defaultRoute.Iface,
+	if cfg.NeedsPcap() {
+		tcpSniffer, udpSniffer, tcpWriter, udpWriter, err = setupPcapIO(
+			appctx,
+			logger,
+			defaultRoute,
+			cfg,
 		)
-		cancel()
 		if err != nil {
-			return nil, fmt.Errorf("failed to resolve gateway MAC: %w", err)
-		}
-		defaultRoute.GatewayMAC = mac
-
-		iface := &defaultRoute.Iface
-
-		logger.Info().Msg("network info")
-		logger.Info().
-			Str("name", iface.Name).
-			Str("mac", iface.HardwareAddr.String()).
-			Msg(" interface")
-		logger.Info().Str("mac", mac.String()).Msg(" gateway (passive detection)")
-
-		// Shared cache for both TCP and UDP raw-packet stacks.
-		hopCache := cache.NewLRUCache[netutil.IPKey, uint8](4096, nil)
-
-		if needTCP {
-			handle, err := packet.NewHandle(iface)
-			if err != nil {
-				return nil, fmt.Errorf("tcp pcap handle on %s: %w", iface.Name, err)
-			}
-			tcpSniffer = packet.NewTCPSniffer(
-				logging.WithScope(logger, "pkt"),
-				hopCache,
-				handle,
-				uint8(cfg.Runtime.Conn.DefaultFakeTTL),
-			)
-			tcpWriter = packet.NewTCPWriter(
-				logging.WithScope(logger, "pkt"),
-				handle,
-				iface,
-				mac,
-			)
-		}
-
-		if needUDP {
-			handle, err := packet.NewHandle(iface)
-			if err != nil {
-				return nil, fmt.Errorf("udp pcap handle on %s: %w", iface.Name, err)
-			}
-			udpSniffer = packet.NewUDPSniffer(
-				logging.WithScope(logger, "pkt"),
-				hopCache,
-				handle,
-				uint8(cfg.Runtime.Conn.DefaultFakeTTL),
-			)
-			udpWriter = packet.NewUDPWriter(
-				logging.WithScope(logger, "pkt"),
-				handle,
-				iface,
-				mac,
-			)
+			return nil, err
 		}
 	}
 
+	tlsDesyncer := desync.NewTLSDesyncer(
+		logging.WithScope(logger, "dsn"),
+		tcpWriter,
+		tcpSniffer,
+	)
+	udpDesyncer := desync.NewUDPDesyncer(
+		logging.WithScope(logger, "dsn"),
+		udpWriter,
+		udpSniffer,
+	)
+
 	switch cfg.Startup.App.Mode {
 	case config.AppModeHTTP:
-		httpHandler := http.NewHTTPHandler(logging.WithScope(logger, "hnd"))
-		httpsHandler := http.NewHTTPSHandler(
-			logging.WithScope(logger, "hnd"),
-			desync.NewTLSDesyncer(tcpWriter, tcpSniffer),
-			&cfg.Runtime,
-		)
-
-		sysNet := http.NewHTTPSystemNetwork(
-			logging.WithScope(logger, "sys"),
-			defaultRoute,
-		)
-
 		return http.NewHTTPProxy(
 			logging.WithScope(logger, "srv"),
 			resolver,
-			httpHandler,
-			httpsHandler,
+			http.NewHTTPHandler(logging.WithScope(logger, "hnd")),
+			http.NewHTTPSHandler(logging.WithScope(logger, "hnd"), tlsDesyncer, &cfg.Runtime),
 			ruleSet,
 			tcpSniffer,
-			sysNet,
+			http.NewHTTPSystemNetwork(logging.WithScope(logger, "sys"), defaultRoute),
 			cfg.Startup.App.ListenAddr,
 			&cfg.Runtime,
 		), nil
+
 	case config.AppModeSOCKS5:
-		connectHandler := socks5.NewConnectHandler(
-			logging.WithScope(logger, "hnd"),
-			desync.NewTLSDesyncer(tcpWriter, tcpSniffer),
-			cfg.Startup.App.ListenAddr,
-			&cfg.Runtime,
-		)
 		udpPool := netutil.NewConnRegistry[netutil.NATKey](4096, 60*time.Second)
 		udpPool.RunCleanupLoop(appctx)
-		udpAssociateHandler := socks5.NewUdpAssociateHandler(
-			logging.WithScope(logger, "hnd"),
-			udpPool,
-			desync.NewUDPDesyncer(
-				logging.WithScope(logger, "dsn"),
-				udpWriter,
-				udpSniffer,
-			),
-			&cfg.Runtime,
-		)
-		bindHandler := socks5.NewBindHandler(logging.WithScope(logger, "hnd"))
-
 		return socks5.NewSOCKS5Proxy(
 			logging.WithScope(logger, "srv"),
 			resolver,
 			ruleSet,
-			connectHandler,
-			bindHandler,
-			udpAssociateHandler,
+			socks5.NewConnectHandler(
+				logging.WithScope(logger, "hnd"),
+				tlsDesyncer,
+				cfg.Startup.App.ListenAddr,
+				&cfg.Runtime,
+			),
+			socks5.NewBindHandler(logging.WithScope(logger, "hnd")),
+			socks5.NewUdpAssociateHandler(
+				logging.WithScope(logger, "hnd"),
+				udpPool,
+				udpDesyncer,
+				&cfg.Runtime,
+			),
 			tcpSniffer,
 			udpSniffer,
-			socks5.NewSOCKS5SystemNetwork(
-				logging.WithScope(logger, "sys"),
-				defaultRoute,
-			),
+			socks5.NewSOCKS5SystemNetwork(logging.WithScope(logger, "sys"), defaultRoute),
 			cfg.Startup.App.ListenAddr,
 			&cfg.Runtime,
 		), nil
+
 	case config.AppModeTUN:
-		if err != nil {
-			return nil, fmt.Errorf("failed to get default route: %w", err)
-		}
 		logger.Info().
 			Str("interface", defaultRoute.Iface.Name).
 			Str("gateway", defaultRoute.Gateway.String()).
 			Msg("determined default interface and gateway")
-
-		// Get FIB ID from config (FreeBSD only, default to 1)
-		fibID := cfg.Startup.App.FreebsdFIB
-
-		tcpHandler := tun.NewTCPHandler(
-			logging.WithScope(logger, "hnd"),
-			desync.NewTLSDesyncer(tcpWriter, tcpSniffer),
-			ruleSet,
-			&cfg.Runtime,
-		)
-
-		udpHandler := tun.NewUDPHandler(
-			logging.WithScope(logger, "hnd"),
-			desync.NewUDPDesyncer(
-				logging.WithScope(logger, "hnd"),
-				udpWriter,
-				udpSniffer,
-			),
-			ruleSet,
-			&cfg.Runtime,
-		)
-
 		sysNet, err := tun.NewTUNSystemNetwork(
 			logging.WithScope(logger, "sys"),
 			defaultRoute,
-			fibID,
+			cfg.Startup.App.FreebsdFIB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create sysnet: %w", err)
 		}
-
 		return tun.NewTUNServer(
 			logging.WithScope(logger, "srv"),
-			tcpHandler,
-			udpHandler,
+			tun.NewTCPHandler(
+				logging.WithScope(logger, "hnd"),
+				tlsDesyncer,
+				ruleSet,
+				&cfg.Runtime,
+			),
+			tun.NewUDPHandler(
+				logging.WithScope(logger, "hnd"),
+				udpDesyncer,
+				ruleSet,
+				&cfg.Runtime,
+			),
 			tcpSniffer,
 			udpSniffer,
 			sysNet,
 		), nil
+
 	default:
 		return nil, fmt.Errorf("unknown server mode: %s", cfg.Startup.App.Mode)
 	}

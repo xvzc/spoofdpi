@@ -66,8 +66,6 @@ func NewHTTPProxy(
 func (p *HTTPProxy) ListenAndServe(
 	appctx context.Context,
 ) error {
-	// Start pcap capture only if a sniffer was supplied
-	// (i.e., cfg.NeedsRawTCP() was true at startup).
 	if p.tcpSniffer != nil {
 		p.tcpSniffer.StartCapturing()
 	}

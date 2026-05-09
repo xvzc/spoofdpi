@@ -89,7 +89,7 @@ func (h *HTTPSHandler) HandleRequest(
 	}
 
 	// 4. Send ClientHello with desync
-	n, err := h.desyncer.Desync(ctx, h.logger, rConn, tlsMsg, &cfg.HTTPS)
+	n, err := h.desyncer.Desync(ctx, rConn, tlsMsg, &cfg.HTTPS)
 	if err != nil {
 		return fmt.Errorf("failed to send client hello: %w", err)
 	}

@@ -75,8 +75,6 @@ func NewSOCKS5Proxy(
 func (p *SOCKS5Proxy) ListenAndServe(
 	appctx context.Context,
 ) error {
-	// Start pcap capture only if sniffers were supplied
-	// (i.e., cfg.NeedsRawTCP() / NeedsRawUDP() was true at startup).
 	if p.tcpSniffer != nil {
 		p.tcpSniffer.StartCapturing()
 	}

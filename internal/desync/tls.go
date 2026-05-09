@@ -25,35 +25,30 @@ type Segment struct {
 // TLSDesyncer splits the data into chunks and optionally
 // disorders packets by manipulating TTL.
 type TLSDesyncer struct {
+	logger  zerolog.Logger
 	writer  packet.Writer
 	sniffer packet.Sniffer
 }
 
-func NewTLSDesyncer(
-	writer packet.Writer, sniffer packet.Sniffer,
-) *TLSDesyncer {
-	return &TLSDesyncer{
-		writer:  writer,
-		sniffer: sniffer,
-	}
+func NewTLSDesyncer(logger zerolog.Logger, writer packet.Writer, sniffer packet.Sniffer) *TLSDesyncer {
+	return &TLSDesyncer{logger: logger, writer: writer, sniffer: sniffer}
 }
 
 // PrepareHopTrack registers addrs with the sniffer for hop-count learning,
 // guarded by the config so the LRU isn't touched when fakes won't be sent.
 func (d *TLSDesyncer) PrepareHopTrack(addrs []net.IP, cfg *config.HTTPSOptions) {
 	if d.sniffer != nil && !cfg.Skip && cfg.FakeCount > 0 {
-		d.sniffer.Track(addrs)
+		d.sniffer.Register(addrs)
 	}
 }
 
 func (d *TLSDesyncer) Desync(
 	ctx context.Context,
-	logger zerolog.Logger,
 	conn net.Conn,
 	msg *proto.TLSMessage,
 	httpsOpts *config.HTTPSOptions,
 ) (int, error) {
-	logger = logging.WithLocalScope(ctx, logger, "tls_desync")
+	logger := logging.WithLocalScope(ctx, d.logger, "tls_desync")
 
 	if httpsOpts.Skip {
 		logger.Trace().Msg("skip desync for this request")

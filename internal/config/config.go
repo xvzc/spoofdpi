@@ -70,10 +70,10 @@ func (c *Config) UnmarshalTOML(data any) (err error) {
 	return
 }
 
-// NeedsRawTCP reports whether any TCP fake-packet feature is enabled —
+// NeedsPcapTCP reports whether any TCP fake-packet feature is enabled —
 // either in the base config or in any rule. The TCP raw packet IO
 // (sniffer + writer) is only set up when this returns true.
-func (c *Config) NeedsRawTCP() bool {
+func (c *Config) NeedsPcapTCP() bool {
 	if c.Runtime.HTTPS.FakeCount > 0 {
 		return true
 	}
@@ -85,8 +85,8 @@ func (c *Config) NeedsRawTCP() bool {
 	return false
 }
 
-// NeedsRawUDP is the UDP counterpart of NeedsRawTCP.
-func (c *Config) NeedsRawUDP() bool {
+// NeedsPcapUDP is the UDP counterpart of NeedsPcapTCP.
+func (c *Config) NeedsPcapUDP() bool {
 	if c.Runtime.UDP.FakeCount > 0 {
 		return true
 	}
@@ -96,6 +96,11 @@ func (c *Config) NeedsRawUDP() bool {
 		}
 	}
 	return false
+}
+
+// NeedsPcap reports whether any raw packet capture is needed.
+func (c *Config) NeedsPcap() bool {
+	return c.NeedsPcapTCP() || c.NeedsPcapUDP()
 }
 
 // Finalize applies defaults that depend on other fields (e.g. ListenAddr

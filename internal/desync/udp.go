@@ -17,23 +17,15 @@ type UDPDesyncer struct {
 	sniffer packet.Sniffer
 }
 
-func NewUDPDesyncer(
-	logger zerolog.Logger,
-	writer packet.Writer,
-	sniffer packet.Sniffer,
-) *UDPDesyncer {
-	return &UDPDesyncer{
-		logger:  logger,
-		writer:  writer,
-		sniffer: sniffer,
-	}
+func NewUDPDesyncer(logger zerolog.Logger, writer packet.Writer, sniffer packet.Sniffer) *UDPDesyncer {
+	return &UDPDesyncer{logger: logger, writer: writer, sniffer: sniffer}
 }
 
 // PrepareHopTrack registers addrs with the sniffer for hop-count learning,
 // guarded by the config so the LRU isn't touched when fakes won't be sent.
 func (d *UDPDesyncer) PrepareHopTrack(addrs []net.IP, cfg *config.UDPOptions) {
 	if d.sniffer != nil && cfg != nil && cfg.FakeCount > 0 {
-		d.sniffer.Track(addrs)
+		d.sniffer.Register(addrs)
 	}
 }
 

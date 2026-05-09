@@ -77,7 +77,7 @@ func (c *Client) Resolve(
 		cfg = &rule.Config
 	}
 
-	logger := logging.WithLocalScope(ctx, c.logger, "mux")
+	logger := logging.WithLocalScope(ctx, c.logger, "client")
 
 	if ip, err := netip.ParseAddr(domain); err == nil {
 		return []netip.Addr{ip}, nil
