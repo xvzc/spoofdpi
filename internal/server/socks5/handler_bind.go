@@ -104,6 +104,12 @@ func (h *BindHandler) Handle(
 	var remoteConn net.Conn
 	select {
 	case <-ctx.Done():
+		// Close the listener to unblock Accept, then drain ch to close any
+		// conn that was accepted concurrently before the listener closed.
+		_ = listener.Close()
+		if res := <-ch; res.conn != nil {
+			_ = res.conn.Close()
+		}
 		return ctx.Err()
 	case res := <-ch:
 		if res.err != nil {
