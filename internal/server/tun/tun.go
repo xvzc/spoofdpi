@@ -13,7 +13,6 @@ import (
 	"sync"
 
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
@@ -41,6 +40,7 @@ type TUNSystemNetwork interface {
 	DefaultRoute() *netutil.Route
 	FIBID() int
 	BindDialer(dialer *net.Dialer, network string, targetIP net.IP) error
+	BuildJobs() ([]netutil.NetworkJob, error)
 }
 
 type TunServer struct {
@@ -394,77 +394,10 @@ func (s *TunServer) stackToTun(
 	}
 }
 
-// CleanupStaleState runs Down commands from any persisted TUN state file and
-// removes it. Call this before DiscoverDefaultRoute so a crashed TUN session
-// does not leave the routing table in a state that obscures the real default route.
-func CleanupStaleState(logger zerolog.Logger) {
-	jobs, exists, err := loadState()
+func (s *TunServer) SetupNetworkJobs(_ context.Context) (string, error) {
+	jobs, err := s.sysNet.BuildJobs()
 	if err != nil {
-		logger.Warn().Err(err).Msg("failed to load stale TUN state")
-		return
+		return "", err
 	}
-	if !exists {
-		return
-	}
-	logger.Info().Msg("cleaning up stale TUN network state")
-	for i := len(jobs) - 1; i >= 0; i-- {
-		for _, cmd := range jobs[i].Down {
-			if out, err := executil.Command(cmd); err != nil {
-				logger.Warn().Err(err).Str("out", strings.TrimSpace(out)).
-					Str("cmd", cmd).Msg("stale cleanup command failed (ignored)")
-			}
-		}
-	}
-	if err := deleteState(); err != nil {
-		logger.Warn().Err(err).Msg("failed to delete stale TUN state file")
-	}
-}
-
-func (s *TunServer) AutoConfigureNetwork(ctx context.Context) (func(), error) {
-	if s.sysNet == nil {
-		return nil, fmt.Errorf("system network not initialized")
-	}
-
-	newState, err := createState(s.sysNet)
-	if err != nil {
-		return nil, err
-	}
-
-	jobs := buildJobs(newState)
-	if err := saveState(jobs); err != nil {
-		return nil, fmt.Errorf("failed to save state: %w", err)
-	}
-
-	var executedJobs int
-
-	unset := func() {
-		for i := executedJobs - 1; i >= 0; i-- {
-			for _, cmd := range jobs[i].Down {
-				if out, err := executil.Command(cmd); err != nil {
-					s.logger.Error().Err(err).Str("out", strings.TrimSpace(out)).
-						Str("cmd", cmd).Msg("cleanup command failed")
-				}
-			}
-		}
-		if err := deleteState(); err != nil {
-			s.logger.Error().Err(err).Msg("failed to delete state file during cleanup")
-		}
-	}
-
-	for i, job := range jobs {
-		for _, cmd := range job.Up {
-			if out, err := executil.Command(cmd); err != nil {
-				unset()
-				return nil, fmt.Errorf(
-					"job %q: %s: %w",
-					job.Description,
-					strings.TrimSpace(out),
-					err,
-				)
-			}
-		}
-		executedJobs = i + 1
-	}
-
-	return unset, nil
+	return StateFile, netutil.SaveJobs(StateFile, jobs)
 }

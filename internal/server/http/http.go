@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/dns"
-	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
@@ -25,6 +23,7 @@ import (
 // HTTPSystemNetwork handles OS-specific network configuration for HTTP proxy.
 type HTTPSystemNetwork interface {
 	DefaultRoute() *netutil.Route
+	BuildJobs(port uint16, pacURL string) ([]netutil.NetworkJob, error)
 }
 
 type HTTPProxy struct {
@@ -108,92 +107,26 @@ func (p *HTTPProxy) ListenAndServe(
 	return nil
 }
 
-// CleanupStaleState runs Down commands from any persisted HTTP proxy state file
-// and removes it.
-func CleanupStaleState(logger zerolog.Logger) {
-	jobs, exists, err := loadState()
-	if err != nil {
-		logger.Warn().Err(err).Msg("failed to load stale HTTP proxy state")
-		return
-	}
-	if !exists {
-		return
-	}
-	logger.Info().Msg("cleaning up stale HTTP proxy state")
-	for i := len(jobs) - 1; i >= 0; i-- {
-		for _, cmd := range jobs[i].Down {
-			if out, err := executil.Command(cmd); err != nil {
-				logger.Warn().Err(err).Str("out", strings.TrimSpace(out)).
-					Str("cmd", cmd).Msg("stale cleanup command failed (ignored)")
-			}
-		}
-	}
-	if err := deleteState(); err != nil {
-		logger.Warn().Err(err).Msg("failed to delete stale HTTP state file")
-	}
-}
-
-func (p *HTTPProxy) AutoConfigureNetwork(ctx context.Context) (func(), error) {
-	if p.sysNet == nil {
-		return nil, fmt.Errorf("system network not initialized")
-	}
-
-	pacContent := fmt.Sprintf(`function FindProxyForURL(url, host) {
-    return "PROXY 127.0.0.1:%d; DIRECT";
-}`, p.listenAddr.Port)
-
-	pacURL, pacServer, err := netutil.RunPACServer(pacContent)
-	if err != nil {
-		return nil, fmt.Errorf("error creating pac server: %w", err)
-	}
-
-	newState, err := createState(
-		p.sysNet.DefaultRoute(), uint16(p.listenAddr.Port), pacURL,
+func (p *HTTPProxy) SetupNetworkJobs(ctx context.Context) (string, error) {
+	pacContent := fmt.Sprintf(
+		"function FindProxyForURL(url, host) {\n    return \"PROXY 127.0.0.1:%d; DIRECT\";\n}",
+		p.listenAddr.Port,
 	)
+	pacURL, pac, err := netutil.RunPACServer(pacContent)
 	if err != nil {
-		_ = pacServer.Close()
-		return nil, err
+		return "", fmt.Errorf("error creating pac server: %w", err)
 	}
-
-	jobs := buildJobs(newState)
-	if err := saveState(jobs); err != nil {
-		_ = pacServer.Close()
-		return nil, fmt.Errorf("failed to save state: %w", err)
+	jobs, err := p.sysNet.BuildJobs(uint16(p.listenAddr.Port), pacURL)
+	if err != nil {
+		_ = pac.Close()
+		return "", err
 	}
-
-	var executedJobs int
-
-	unset := func() {
-		for i := executedJobs - 1; i >= 0; i-- {
-			for _, cmd := range jobs[i].Down {
-				if out, err := executil.Command(cmd); err != nil {
-					p.logger.Error().Err(err).Str("out", strings.TrimSpace(out)).
-						Str("cmd", cmd).Msg("cleanup command failed")
-				}
-			}
-		}
-		_ = pacServer.Close()
-		if err := deleteState(); err != nil {
-			p.logger.Error().Err(err).Msg("failed to delete state file during cleanup")
-		}
+	if err := netutil.SaveJobs(StateFile, jobs); err != nil {
+		_ = pac.Close()
+		return "", fmt.Errorf("failed to save state: %w", err)
 	}
-
-	for i, job := range jobs {
-		for _, cmd := range job.Up {
-			if out, err := executil.Command(cmd); err != nil {
-				unset()
-				return nil, fmt.Errorf(
-					"job %q: %s: %w",
-					job.Description,
-					strings.TrimSpace(out),
-					err,
-				)
-			}
-		}
-		executedJobs = i + 1
-	}
-
-	return unset, nil
+	go func() { <-ctx.Done(); _ = pac.Close() }()
+	return StateFile, nil
 }
 
 func (p *HTTPProxy) Addr() string {

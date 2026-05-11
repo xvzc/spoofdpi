@@ -3,26 +3,20 @@
 package http
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/server"
 )
 
-const httpStateFile = "/tmp/spoofdpi.http.darwin.state"
+const StateFile = "/tmp/spoofdpi.http.darwin.state"
 
-type httpStateDarwin struct {
-	Service   string `json:"service"`
-	Port      uint16 `json:"port"`
-	ProxyType string `json:"proxyType"`
-	PACURL    string `json:"pacURL"`
+type httpNetworkInfoDarwin struct {
+	Service string
+	PACURL  string
 }
 
 type httpSystemNetworkDarwin struct {
@@ -62,82 +56,49 @@ func getNetworkServiceFromInterface(ifaceName string) (string, error) {
 	return strings.TrimSpace(match[1]), nil
 }
 
-func createState(
-	defaultRoute *netutil.Route, serverPort uint16, pacURL string,
-) (*httpStateDarwin, error) {
-	ifaceName := defaultRoute.Iface.Name
-	service, err := getNetworkServiceFromInterface(ifaceName)
+func collectNetworkInfo(
+	defaultRoute *netutil.Route, pacURL string,
+) (*httpNetworkInfoDarwin, error) {
+	service, err := getNetworkServiceFromInterface(defaultRoute.Iface.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get network service: %w", err)
 	}
 
-	return &httpStateDarwin{
-		Service:   service,
-		Port:      serverPort,
-		ProxyType: "PROXY",
-		PACURL:    pacURL,
+	return &httpNetworkInfoDarwin{ //exhaustruct:enforce
+		Service: service,
+		PACURL:  pacURL,
 	}, nil
 }
 
-func buildJobs(state *httpStateDarwin) []server.NetworkJob {
-	var jobs []server.NetworkJob
+func (n *httpSystemNetworkDarwin) BuildJobs(
+	port uint16,
+	pacURL string,
+) ([]netutil.NetworkJob, error) {
+	info, err := collectNetworkInfo(n.defaultRoute, pacURL)
+	if err != nil {
+		return nil, err
+	}
 
-	jobs = append(jobs, server.NetworkJob{
+	var jobs []netutil.NetworkJob
+
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "set auto proxy URL",
-		Up: []string{
-			fmt.Sprintf("networksetup -setautoproxyurl %s %s", state.Service, state.PACURL),
-		},
-		Down: []string{
-			fmt.Sprintf("networksetup -setautoproxystate %s off", state.Service),
-		},
+		Apply: fmt.Sprintf(
+			"networksetup -setautoproxyurl %s %s",
+			info.Service,
+			info.PACURL,
+		),
+		Reset: fmt.Sprintf("networksetup -setautoproxystate %s off", info.Service),
 	})
 
-	jobs = append(jobs, server.NetworkJob{
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "enable proxy auto discovery",
-		Up: []string{
-			fmt.Sprintf("networksetup -setproxyautodiscovery %s on", state.Service),
-		},
-		Down: []string{
-			fmt.Sprintf("networksetup -setproxyautodiscovery %s off", state.Service),
-		},
+		Apply:       fmt.Sprintf("networksetup -setproxyautodiscovery %s on", info.Service),
+		Reset: fmt.Sprintf(
+			"networksetup -setproxyautodiscovery %s off",
+			info.Service,
+		),
 	})
 
-	return jobs
-}
-
-func saveState(jobs []server.NetworkJob) error {
-	type state struct {
-		Jobs      []server.NetworkJob `json:"jobs"`
-		CreatedAt time.Time           `json:"createdAt"`
-	}
-	data, err := json.MarshalIndent(state{Jobs: jobs, CreatedAt: time.Now()}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(httpStateFile, data, 0o644)
-}
-
-func loadState() ([]server.NetworkJob, bool, error) {
-	type state struct {
-		Jobs []server.NetworkJob `json:"jobs"`
-	}
-	data, err := os.ReadFile(httpStateFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	var s state
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, false, err
-	}
-	return s.Jobs, true, nil
-}
-
-func deleteState() error {
-	if err := os.Remove(httpStateFile); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return jobs, nil
 }

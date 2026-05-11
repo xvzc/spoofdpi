@@ -3,40 +3,35 @@
 package tun
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-const stateFile = "/tmp/spoofdpi.freebsd.tun.state"
+const StateFile = "/tmp/spoofdpi.freebsd.tun.state"
 
-type tunStateFreeBSD struct {
-	FIBID            int       `json:"fibID"`
-	GatewayIP        string    `json:"gatewayIP"`
-	PhysIfaceName    string    `json:"physIfaceName"`
-	PhysIfaceCIDR    string    `json:"physifaceCIDR"`
-	TUNName          string    `json:"tunName"`
-	TunLocalIP       string    `json:"tunLocalIP"`
-	TunRemoteIP      string    `json:"tunRemoteIP"`
-	RouteTargetCIDRs []string  `json:"routeTargetCIDRs"`
-	CreatedAt        time.Time `json:"createdAt"`
+type tunNetworkInfoFreeBSD struct {
+	FIBID            int
+	GatewayIP        string
+	PhysIfaceName    string
+	PhysIfaceCIDR    string
+	TUNName          string
+	TunLocalIP       string
+	TunRemoteIP      string
+	RouteTargetCIDRs []string
 }
 
 func createTunDevice() (tun.Device, error) {
 	return tun.CreateTUN("tun-spoofdpi", 1500)
 }
 
-func createState(sysNet TUNSystemNetwork) (*tunStateFreeBSD, error) {
+func collectNetworkInfo(sysNet TUNSystemNetwork) (*tunNetworkInfoFreeBSD, error) {
 	tunName, err := sysNet.TunDevice().Name()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tunName: %w", err)
@@ -72,7 +67,7 @@ func createState(sysNet TUNSystemNetwork) (*tunStateFreeBSD, error) {
 	_, tunCIDR, _ := net.ParseCIDR(tunLocalIP + "/30")
 	routeTargetCIDRs := []string{tunCIDR.String(), "0.0.0.0/1", "128.0.0.0/1"}
 
-	return &tunStateFreeBSD{ //exhaustruct:enforce
+	return &tunNetworkInfoFreeBSD{ //exhaustruct:enforce
 		FIBID:            sysNet.FIBID(),
 		GatewayIP:        sysNet.DefaultRoute().Gateway.String(),
 		PhysIfaceName:    sysNet.DefaultRoute().Iface.Name,
@@ -81,109 +76,67 @@ func createState(sysNet TUNSystemNetwork) (*tunStateFreeBSD, error) {
 		TunLocalIP:       tunLocalIP,
 		TunRemoteIP:      tunRemoteIP,
 		RouteTargetCIDRs: routeTargetCIDRs,
-		CreatedAt:        time.Now(),
 	}, nil
 }
 
-func buildJobs(state *tunStateFreeBSD) []server.NetworkJob {
-	var jobs []server.NetworkJob
+func (n *tunSystemNetworkFreeBSD) BuildJobs() ([]netutil.NetworkJob, error) {
+	info, err := collectNetworkInfo(n)
+	if err != nil {
+		return nil, err
+	}
 
-	jobs = append(jobs, server.NetworkJob{
+	var jobs []netutil.NetworkJob
+
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "configure TUN interface address",
-		Up: []string{
-			fmt.Sprintf(
-				"ifconfig %s %s %s up",
-				state.TUNName,
-				state.TunLocalIP,
-				state.TunRemoteIP,
-			),
-		},
-		Down: []string{fmt.Sprintf("ifconfig %s destroy", state.TUNName)},
+		Apply: fmt.Sprintf(
+			"ifconfig %s %s %s up",
+			info.TUNName,
+			info.TunLocalIP,
+			info.TunRemoteIP,
+		),
+		Reset: fmt.Sprintf("ifconfig %s destroy", info.TUNName),
 	})
 
-	jobs = append(jobs, server.NetworkJob{
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "add FIB subnet route",
-		Up: []string{
-			fmt.Sprintf(
-				"route add -net %s -iface %s -fib %d",
-				state.PhysIfaceCIDR,
-				state.PhysIfaceName,
-				state.FIBID,
-			),
-		},
-		Down: []string{
-			fmt.Sprintf(
-				"route delete -net %s -iface %s -fib %d",
-				state.PhysIfaceCIDR,
-				state.PhysIfaceName,
-				state.FIBID,
-			),
-		},
+		Apply: fmt.Sprintf(
+			"route add -net %s -iface %s -fib %d",
+			info.PhysIfaceCIDR,
+			info.PhysIfaceName,
+			info.FIBID,
+		),
+		Reset: fmt.Sprintf(
+			"route delete -net %s -iface %s -fib %d",
+			info.PhysIfaceCIDR,
+			info.PhysIfaceName,
+			info.FIBID,
+		),
 	})
 
-	jobs = append(jobs, server.NetworkJob{
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "add FIB default route",
-		Up: []string{
-			fmt.Sprintf("route add default %s -fib %d", state.GatewayIP, state.FIBID),
-		},
-		Down: []string{fmt.Sprintf("route delete default -fib %d", state.FIBID)},
+		Apply: fmt.Sprintf(
+			"route add default %s -fib %d",
+			info.GatewayIP,
+			info.FIBID,
+		),
+		Reset: fmt.Sprintf("route delete default -fib %d", info.FIBID),
 	})
 
-	cidrJob := server.NetworkJob{Description: "add CIDR routes via TUN"}
-	for _, t := range state.RouteTargetCIDRs {
-		cidrJob.Up = append(
-			cidrJob.Up,
-			fmt.Sprintf("route -n add -net %s -interface %s", t, state.TUNName),
-		)
-		cidrJob.Down = append(
-			cidrJob.Down,
-			fmt.Sprintf("route -n delete -net %s -interface %s", t, state.TUNName),
-		)
+	for _, t := range info.RouteTargetCIDRs {
+		jobs = append(jobs, netutil.NetworkJob{
+			Description: fmt.Sprintf("add CIDR route %s via TUN", t),
+			Apply:       fmt.Sprintf("route -n add -net %s -interface %s", t, info.TUNName),
+			Reset: fmt.Sprintf(
+				"route -n delete -net %s -interface %s",
+				t,
+				info.TUNName,
+			),
+		})
 	}
-	// Reverse Down so routes are deleted in LIFO order.
-	for i, j := 0, len(cidrJob.Down)-1; i < j; i, j = i+1, j-1 {
-		cidrJob.Down[i], cidrJob.Down[j] = cidrJob.Down[j], cidrJob.Down[i]
-	}
-	jobs = append(jobs, cidrJob)
 
-	return jobs
-}
-
-func saveState(jobs []server.NetworkJob) error {
-	type state struct {
-		Jobs      []server.NetworkJob `json:"jobs"`
-		CreatedAt time.Time           `json:"createdAt"`
-	}
-	data, err := json.MarshalIndent(state{Jobs: jobs, CreatedAt: time.Now()}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(stateFile, data, 0o644)
-}
-
-func loadState() ([]server.NetworkJob, bool, error) {
-	type state struct {
-		Jobs []server.NetworkJob `json:"jobs"`
-	}
-	data, err := os.ReadFile(stateFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	var s state
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, false, err
-	}
-	return s.Jobs, true, nil
-}
-
-func deleteState() error {
-	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return jobs, nil
 }
 
 type tunSystemNetworkFreeBSD struct {

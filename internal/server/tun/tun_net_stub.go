@@ -7,30 +7,13 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-type tunStateStub struct{}
+const StateFile = ""
 
-func loadState() ([]server.NetworkJob, bool, error) {
-	return nil, false, nil
-}
-
-func createState(sysNet TUNSystemNetwork) (*tunStateStub, error) {
+func (n *tunSystemNetworkStub) BuildJobs() ([]netutil.NetworkJob, error) {
 	return nil, nil
-}
-
-func deleteState() error {
-	return nil
-}
-
-func saveState(jobs []server.NetworkJob) error {
-	return nil
-}
-
-func buildJobs(state *tunStateStub) []server.NetworkJob {
-	return nil
 }
 
 func createTunDevice() (tun.Device, error) {

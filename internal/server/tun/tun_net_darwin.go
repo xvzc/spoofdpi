@@ -3,37 +3,32 @@
 package tun
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-const stateFile = "/tmp/spoofdpi.darwin.tun.state"
+const StateFile = "/tmp/spoofdpi.darwin.tun.state"
 
-type tunStateDarwin struct {
-	GatewayIP        string    `json:"gatewayIP"`
-	PhysIfaceName    string    `json:"physIfaceName"`
-	TUNName          string    `json:"tunName"`
-	TunLocalIP       string    `json:"tunLocalIP"`
-	TunRemoteIP      string    `json:"tunRemoteIP"`
-	RouteTargetCIDRs []string  `json:"routeTargetCIDRs"`
-	CreatedAt        time.Time `json:"createdAt"`
+type tunNetworkInfoDarwin struct {
+	GatewayIP        string
+	PhysIfaceName    string
+	TUNName          string
+	TunLocalIP       string
+	TunRemoteIP      string
+	RouteTargetCIDRs []string
 }
 
 func createTunDevice() (tun.Device, error) {
 	return tun.CreateTUN("utun", 1500)
 }
 
-func createState(sysNet TUNSystemNetwork) (*tunStateDarwin, error) {
+func collectNetworkInfo(sysNet TUNSystemNetwork) (*tunNetworkInfoDarwin, error) {
 	tunName, err := sysNet.TunDevice().Name()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tunName: %w", err)
@@ -56,124 +51,76 @@ func createState(sysNet TUNSystemNetwork) (*tunStateDarwin, error) {
 	_, tunCIDR, _ := net.ParseCIDR(tunLocalIP + "/30")
 	routeTargetCIDRs := []string{tunCIDR.String(), "0.0.0.0/1", "128.0.0.0/1"}
 
-	return &tunStateDarwin{ //exhaustruct:enforce
+	return &tunNetworkInfoDarwin{ //exhaustruct:enforce
 		GatewayIP:        sysNet.DefaultRoute().Gateway.String(),
 		PhysIfaceName:    sysNet.DefaultRoute().Iface.Name,
 		TUNName:          tunName,
 		TunLocalIP:       tunLocalIP,
 		TunRemoteIP:      tunRemoteIP,
 		RouteTargetCIDRs: routeTargetCIDRs,
-		CreatedAt:        time.Now(),
 	}, nil
 }
 
-func buildJobs(state *tunStateDarwin) []server.NetworkJob {
-	var jobs []server.NetworkJob
+func (n *tunSystemNetworkDarwin) BuildJobs() ([]netutil.NetworkJob, error) {
+	info, err := collectNetworkInfo(n)
+	if err != nil {
+		return nil, err
+	}
 
-	jobs = append(jobs, server.NetworkJob{
+	var jobs []netutil.NetworkJob
+
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "configure TUN interface address",
-		Up: []string{
-			fmt.Sprintf(
-				"ifconfig %s %s %s up",
-				state.TUNName,
-				state.TunLocalIP,
-				state.TunRemoteIP,
-			),
-		},
-		Down: []string{fmt.Sprintf("ifconfig %s destroy", state.TUNName)},
+		Apply: fmt.Sprintf(
+			"ifconfig %s %s %s up",
+			info.TUNName,
+			info.TunLocalIP,
+			info.TunRemoteIP,
+		),
+		Reset: fmt.Sprintf("ifconfig %s destroy", info.TUNName),
 	})
 
-	jobs = append(jobs, server.NetworkJob{
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "add scoped default route via physical interface",
-		Up: []string{
-			fmt.Sprintf(
-				"route add -ifscope %s default %s",
-				state.PhysIfaceName,
-				state.GatewayIP,
-			),
-		},
-		Down: []string{
-			fmt.Sprintf(
-				"route delete -ifscope %s default %s",
-				state.PhysIfaceName,
-				state.GatewayIP,
-			),
-		},
+		Apply: fmt.Sprintf(
+			"route add -ifscope %s default %s",
+			info.PhysIfaceName,
+			info.GatewayIP,
+		),
+		Reset: fmt.Sprintf(
+			"route delete -ifscope %s default %s",
+			info.PhysIfaceName,
+			info.GatewayIP,
+		),
 	})
 
-	jobs = append(jobs, server.NetworkJob{
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "add host route for gateway",
-		Up: []string{
-			fmt.Sprintf(
-				"route -n add -host %s -interface %s",
-				state.GatewayIP,
-				state.PhysIfaceName,
-			),
-		},
-		Down: []string{
-			fmt.Sprintf(
-				"route -n delete -host %s -interface %s",
-				state.GatewayIP,
-				state.PhysIfaceName,
-			),
-		},
+		Apply: fmt.Sprintf(
+			"route -n add -host %s -interface %s",
+			info.GatewayIP,
+			info.PhysIfaceName,
+		),
+		Reset: fmt.Sprintf(
+			"route -n delete -host %s -interface %s",
+			info.GatewayIP,
+			info.PhysIfaceName,
+		),
 	})
 
-	_, tunCIDR, _ := net.ParseCIDR(state.TunLocalIP + "/30")
-	cidrJob := server.NetworkJob{Description: "add CIDR routes via TUN"}
-	for _, t := range []string{tunCIDR.String(), "0.0.0.0/1", "128.0.0.0/1"} {
-		cidrJob.Up = append(
-			cidrJob.Up,
-			fmt.Sprintf("route -n add -net %s -interface %s", t, state.TUNName),
-		)
-		cidrJob.Down = append(
-			cidrJob.Down,
-			fmt.Sprintf("route -n delete -net %s -interface %s", t, state.TUNName),
-		)
+	for _, t := range info.RouteTargetCIDRs {
+		jobs = append(jobs, netutil.NetworkJob{
+			Description: fmt.Sprintf("add CIDR route %s via TUN", t),
+			Apply:       fmt.Sprintf("route -n add -net %s -interface %s", t, info.TUNName),
+			Reset: fmt.Sprintf(
+				"route -n delete -net %s -interface %s",
+				t,
+				info.TUNName,
+			),
+		})
 	}
-	for i, j := 0, len(cidrJob.Down)-1; i < j; i, j = i+1, j-1 {
-		cidrJob.Down[i], cidrJob.Down[j] = cidrJob.Down[j], cidrJob.Down[i]
-	}
-	jobs = append(jobs, cidrJob)
 
-	return jobs
-}
-
-func saveState(jobs []server.NetworkJob) error {
-	type state struct {
-		Jobs      []server.NetworkJob `json:"jobs"`
-		CreatedAt time.Time           `json:"createdAt"`
-	}
-	data, err := json.MarshalIndent(state{Jobs: jobs, CreatedAt: time.Now()}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(stateFile, data, 0o644)
-}
-
-func loadState() ([]server.NetworkJob, bool, error) {
-	type state struct {
-		Jobs []server.NetworkJob `json:"jobs"`
-	}
-	data, err := os.ReadFile(stateFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	var s state
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, false, err
-	}
-	return s.Jobs, true, nil
-}
-
-func deleteState() error {
-	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return jobs, nil
 }
 
 // tunSystemNetworkDarwin implements TUNSystemNetwork for Darwin

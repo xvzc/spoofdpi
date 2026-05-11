@@ -176,13 +176,14 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	}
 	logger.Info().Msgf("server started on %s", srv.Addr())
 	if cfg.Startup.App.AutoConfigureNetwork {
-		unset, acErr := srv.AutoConfigureNetwork(appctx)
-		if acErr != nil {
+		if stateFile, acErr := srv.SetupNetworkJobs(appctx); acErr != nil {
 			// Non-fatal: server is running, just couldn't auto-set
 			// system proxy. Log and continue rather than tearing down.
 			logger.Error().Err(acErr).Msg("failed to set system network config")
-		} else if unset != nil {
-			defer unset()
+		} else if acErr := netutil.ApplyJobs(logger, stateFile); acErr != nil {
+			logger.Error().Err(acErr).Msg("failed to apply network config")
+		} else {
+			defer netutil.ResetJobs(logger, stateFile)
 		}
 	}
 
@@ -280,9 +281,9 @@ func createServer(
 	// Clean up stale network state before route discovery so a crashed TUN
 	// session does not leave the routing table in a state that obscures the
 	// real default route.
-	tun.CleanupStaleState(logger)
-	http.CleanupStaleState(logger)
-	socks5.CleanupStaleState(logger)
+	netutil.ResetJobs(logger, tun.StateFile)
+	netutil.ResetJobs(logger, http.StateFile)
+	netutil.ResetJobs(logger, socks5.StateFile)
 
 	defaultRoute, err := netutil.DiscoverDefaultRoute()
 	if err != nil {

@@ -3,34 +3,29 @@
 package tun
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-const stateFile = "/tmp/spoofdpi.linux.tun.state"
+const StateFile = "/tmp/spoofdpi.linux.tun.state"
 
-type tunStateLinux struct {
-	RouteTableID     int       `json:"routeTableID"`
-	GatewayIP        string    `json:"gatewayIP"`
-	TUNName          string    `json:"tunName"`
-	PhysIfaceName    string    `json:"physIfaceName"`
-	PhysIfaceIP      string    `json:"ifaceIP"`
-	TunLocalIP       string    `json:"tunLocalIP"`
-	TunRemoteIP      string    `json:"tunRemoteIP"`
-	RouteTargetCIDRs []string  `json:"routeTargetCIDRs"`
-	CreatedAt        time.Time `json:"createdAt"`
+type tunNetworkInfoLinux struct {
+	RouteTableID     int
+	GatewayIP        string
+	TUNName          string
+	PhysIfaceName    string
+	PhysIfaceIP      string
+	TunLocalIP       string
+	TunRemoteIP      string
+	RouteTargetCIDRs []string
 }
 
 var (
@@ -42,9 +37,7 @@ func createTunDevice() (tun.Device, error) {
 	return tun.CreateTUN("tun-spoofdpi", 1500)
 }
 
-func createState(sysNet TUNSystemNetwork) (*tunStateLinux, error) {
-	var err error
-
+func collectNetworkInfo(sysNet TUNSystemNetwork) (*tunNetworkInfoLinux, error) {
 	tunName, err := sysNet.TunDevice().Name()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tunName: %w", err)
@@ -82,7 +75,7 @@ func createState(sysNet TUNSystemNetwork) (*tunStateLinux, error) {
 	_, tunCIDR, _ := net.ParseCIDR(tunLocalIP + "/30")
 	routeTargetCIDRs := []string{tunCIDR.String(), "0.0.0.0/1", "128.0.0.0/1"}
 
-	return &tunStateLinux{ //exhaustruct:enforce
+	return &tunNetworkInfoLinux{ //exhaustruct:enforce
 		RouteTableID:     routeTableID,
 		GatewayIP:        gatewayIP,
 		TUNName:          tunName,
@@ -91,143 +84,92 @@ func createState(sysNet TUNSystemNetwork) (*tunStateLinux, error) {
 		TunLocalIP:       tunLocalIP,
 		TunRemoteIP:      tunRemoteIP,
 		RouteTargetCIDRs: routeTargetCIDRs,
-		CreatedAt:        time.Now(),
 	}, nil
 }
 
-func buildJobs(state *tunStateLinux) []server.NetworkJob {
-	var jobs []server.NetworkJob
+func (n *tunSystemNetworkLinux) BuildJobs() ([]netutil.NetworkJob, error) {
+	info, err := collectNetworkInfo(n)
+	if err != nil {
+		return nil, err
+	}
 
-	jobs = append(jobs, server.NetworkJob{
+	var jobs []netutil.NetworkJob
+
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "remove TUN interface",
-		Up:          nil,
-		Down:        []string{fmt.Sprintf("ip link delete %s", state.TUNName)},
+		Reset:       fmt.Sprintf("ip link delete %s", info.TUNName),
 	})
 
-	jobs = append(jobs, server.NetworkJob{
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "configure TUN interface address",
-		Up: []string{
-			fmt.Sprintf(
-				"ip addr add %s peer %s dev %s",
-				state.TunLocalIP,
-				state.TunRemoteIP,
-				state.TUNName,
-			),
-		},
-		Down: []string{
-			fmt.Sprintf(
-				"ip addr del %s peer %s dev %s",
-				state.TunLocalIP,
-				state.TunRemoteIP,
-				state.TUNName,
-			),
-		},
+		Apply: fmt.Sprintf(
+			"ip addr add %s peer %s dev %s",
+			info.TunLocalIP,
+			info.TunRemoteIP,
+			info.TUNName,
+		),
+		Reset: fmt.Sprintf(
+			"ip addr del %s peer %s dev %s",
+			info.TunLocalIP,
+			info.TunRemoteIP,
+			info.TUNName,
+		),
 	})
 
-	jobs = append(jobs, server.NetworkJob{
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "bring TUN interface up",
-		Up:          []string{fmt.Sprintf("ip link set dev %s up", state.TUNName)},
-		Down:        []string{fmt.Sprintf("ip link set dev %s down", state.TUNName)},
+		Apply:       fmt.Sprintf("ip link set dev %s up", info.TUNName),
+		Reset:       fmt.Sprintf("ip link set dev %s down", info.TUNName),
 	})
 
-	jobs = append(jobs, server.NetworkJob{
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "add gateway host route",
-		Up: []string{
-			fmt.Sprintf("ip route add %s dev %s", state.GatewayIP, state.PhysIfaceName),
-		},
-		Down: []string{
-			fmt.Sprintf("ip route del %s dev %s", state.GatewayIP, state.PhysIfaceName),
-		},
+		Apply: fmt.Sprintf(
+			"ip route add %s dev %s",
+			info.GatewayIP,
+			info.PhysIfaceName,
+		),
+		Reset: fmt.Sprintf(
+			"ip route del %s dev %s",
+			info.GatewayIP,
+			info.PhysIfaceName,
+		),
 	})
 
-	jobs = append(jobs, server.NetworkJob{
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "add default route to routing table",
-		Up: []string{
-			fmt.Sprintf(
-				"ip route add default via %s dev %s table %d",
-				state.GatewayIP,
-				state.PhysIfaceName,
-				state.RouteTableID,
-			),
-		},
-		Down: []string{
-			fmt.Sprintf("ip route del default table %d", state.RouteTableID),
-		},
+		Apply: fmt.Sprintf(
+			"ip route add default via %s dev %s table %d",
+			info.GatewayIP,
+			info.PhysIfaceName,
+			info.RouteTableID,
+		),
+		Reset: fmt.Sprintf("ip route del default table %d", info.RouteTableID),
 	})
 
-	jobs = append(jobs, server.NetworkJob{
+	jobs = append(jobs, netutil.NetworkJob{
 		Description: "add policy routing rule",
-		Up: []string{
-			fmt.Sprintf(
-				"ip rule add from %s lookup %d",
-				state.PhysIfaceIP,
-				state.RouteTableID,
-			),
-		},
-		Down: []string{
-			fmt.Sprintf(
-				"ip rule del from %s lookup %d",
-				state.PhysIfaceIP,
-				state.RouteTableID,
-			),
-		},
+		Apply: fmt.Sprintf(
+			"ip rule add from %s lookup %d",
+			info.PhysIfaceIP,
+			info.RouteTableID,
+		),
+		Reset: fmt.Sprintf(
+			"ip rule del from %s lookup %d",
+			info.PhysIfaceIP,
+			info.RouteTableID,
+		),
 	})
 
-	cidrJob := server.NetworkJob{Description: "add CIDR routes via TUN"}
-	for _, t := range state.RouteTargetCIDRs {
-		cidrJob.Up = append(
-			cidrJob.Up,
-			fmt.Sprintf("ip route add %s dev %s", t, state.TUNName),
-		)
-		cidrJob.Down = append(
-			cidrJob.Down,
-			fmt.Sprintf("ip route del %s dev %s", t, state.TUNName),
-		)
+	for _, t := range info.RouteTargetCIDRs {
+		jobs = append(jobs, netutil.NetworkJob{
+			Description: fmt.Sprintf("add CIDR route %s via TUN", t),
+			Apply:       fmt.Sprintf("ip route add %s dev %s", t, info.TUNName),
+			Reset:       fmt.Sprintf("ip route del %s dev %s", t, info.TUNName),
+		})
 	}
-	// Reverse Down so routes are deleted in LIFO order.
-	for i, j := 0, len(cidrJob.Down)-1; i < j; i, j = i+1, j-1 {
-		cidrJob.Down[i], cidrJob.Down[j] = cidrJob.Down[j], cidrJob.Down[i]
-	}
-	jobs = append(jobs, cidrJob)
 
-	return jobs
-}
-
-func saveState(jobs []server.NetworkJob) error {
-	type state struct {
-		Jobs      []server.NetworkJob `json:"jobs"`
-		CreatedAt time.Time           `json:"createdAt"`
-	}
-	data, err := json.MarshalIndent(state{Jobs: jobs, CreatedAt: time.Now()}, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(stateFile, data, 0o644)
-}
-
-func loadState() ([]server.NetworkJob, bool, error) {
-	type state struct {
-		Jobs []server.NetworkJob `json:"jobs"`
-	}
-	data, err := os.ReadFile(stateFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, false, nil
-		}
-		return nil, false, err
-	}
-	var s state
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, false, err
-	}
-	return s.Jobs, true, nil
-}
-
-func deleteState() error {
-	if err := os.Remove(stateFile); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return jobs, nil
 }
 
 // tunSystemNetworkLinux implements TUNSystemNetwork for Linux
