@@ -3,7 +3,6 @@
 package tun
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -96,15 +95,113 @@ func createState(sysNet TUNSystemNetwork) (*tunStateLinux, error) {
 	}, nil
 }
 
-func saveState(state *tunStateLinux) error {
-	data, err := json.Marshal(state)
+func buildJobs(state *tunStateLinux) []server.NetworkJob {
+	cidrJob := server.NetworkJob{Description: "add CIDR routes via TUN"}
+	for _, t := range state.RouteTargetCIDRs {
+		cidrJob.Up = append(
+			cidrJob.Up,
+			fmt.Sprintf("ip route add %s dev %s", t, state.TUNName),
+		)
+		cidrJob.Down = append(
+			cidrJob.Down,
+			fmt.Sprintf("ip route del %s dev %s", t, state.TUNName),
+		)
+	}
+	// Reverse Down so routes are deleted in LIFO order.
+	for i, j := 0, len(cidrJob.Down)-1; i < j; i, j = i+1, j-1 {
+		cidrJob.Down[i], cidrJob.Down[j] = cidrJob.Down[j], cidrJob.Down[i]
+	}
+
+	return []server.NetworkJob{
+		{
+			Description: "remove TUN interface",
+			Up:          nil,
+			Down:        []string{fmt.Sprintf("ip link delete %s", state.TUNName)},
+		},
+		{
+			Description: "configure TUN interface address",
+			Up: []string{
+				fmt.Sprintf(
+					"ip addr add %s peer %s dev %s",
+					state.TunLocalIP,
+					state.TunRemoteIP,
+					state.TUNName,
+				),
+			},
+			Down: []string{
+				fmt.Sprintf(
+					"ip addr del %s peer %s dev %s",
+					state.TunLocalIP,
+					state.TunRemoteIP,
+					state.TUNName,
+				),
+			},
+		},
+		{
+			Description: "bring TUN interface up",
+			Up:          []string{fmt.Sprintf("ip link set dev %s up", state.TUNName)},
+			Down:        []string{fmt.Sprintf("ip link set dev %s down", state.TUNName)},
+		},
+		{
+			Description: "add gateway host route",
+			Up: []string{
+				fmt.Sprintf("ip route add %s dev %s", state.GatewayIP, state.PhysIfaceName),
+			},
+			Down: []string{
+				fmt.Sprintf("ip route del %s dev %s", state.GatewayIP, state.PhysIfaceName),
+			},
+		},
+		{
+			Description: "add default route to routing table",
+			Up: []string{
+				fmt.Sprintf(
+					"ip route add default via %s dev %s table %d",
+					state.GatewayIP,
+					state.PhysIfaceName,
+					state.RouteTableID,
+				),
+			},
+			Down: []string{
+				fmt.Sprintf("ip route del default table %d", state.RouteTableID),
+			},
+		},
+		{
+			Description: "add policy routing rule",
+			Up: []string{
+				fmt.Sprintf(
+					"ip rule add from %s lookup %d",
+					state.PhysIfaceIP,
+					state.RouteTableID,
+				),
+			},
+			Down: []string{
+				fmt.Sprintf(
+					"ip rule del from %s lookup %d",
+					state.PhysIfaceIP,
+					state.RouteTableID,
+				),
+			},
+		},
+		cidrJob,
+	}
+}
+
+func saveState(jobs []server.NetworkJob) error {
+	type state struct {
+		Jobs      []server.NetworkJob `json:"jobs"`
+		CreatedAt time.Time           `json:"createdAt"`
+	}
+	data, err := json.Marshal(state{Jobs: jobs, CreatedAt: time.Now()})
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(stateFile, data, 0o644)
 }
 
-func loadState() (*tunStateLinux, bool, error) {
+func loadState() ([]server.NetworkJob, bool, error) {
+	type state struct {
+		Jobs []server.NetworkJob `json:"jobs"`
+	}
 	data, err := os.ReadFile(stateFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -112,11 +209,11 @@ func loadState() (*tunStateLinux, bool, error) {
 		}
 		return nil, false, err
 	}
-	var state tunStateLinux
-	if err := json.Unmarshal(data, &state); err != nil {
+	var s state
+	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, false, err
 	}
-	return &state, true, nil
+	return s.Jobs, true, nil
 }
 
 func deleteState() error {
@@ -229,165 +326,6 @@ func (n *tunSystemNetworkLinux) BindDialer(
 	}
 
 	return nil
-}
-
-func configurationJobs(
-	ctx context.Context,
-	logger zerolog.Logger,
-	state *tunStateLinux,
-) []server.ConfigurationJob {
-	var jobs []server.ConfigurationJob
-
-	jobs = append(jobs, server.ConfigurationJob{
-		Apply: nil,
-		Reset: func() error {
-			if out, err := executil.Commandf("ip link delete %s",
-				state.TUNName,
-			); err != nil {
-				logger.Trace().Err(err).Str("out", strings.TrimSpace(out)).
-					Msg("ip link delete (ignored)")
-			}
-
-			return nil
-		},
-	})
-
-	jobs = append(jobs, server.ConfigurationJob{
-		Apply: func() error {
-			if out, err := executil.Commandf("ip addr add %s peer %s dev %s",
-				state.TunLocalIP, state.TunRemoteIP, state.TUNName,
-			); err != nil {
-				return fmt.Errorf("failed to set interface address: %s: %w", out, err)
-			}
-
-			return nil
-		},
-		Reset: func() error {
-			// Remove IP address and peer from the tunnel interface.
-			if out, err := executil.Commandf("ip addr del %s peer %s dev %s",
-				state.TunLocalIP, state.TunRemoteIP, state.TUNName,
-			); err != nil {
-				logger.Trace().Err(err).Str("out", strings.TrimSpace(out)).
-					Msg("ip addr del (ignored)")
-			}
-
-			return nil
-		},
-	})
-
-	jobs = append(jobs, server.ConfigurationJob{
-		Apply: func() error {
-			// Bring the tunnel interface state to up.
-			if out, err := executil.Commandf("ip link set dev %s up",
-				state.TUNName,
-			); err != nil {
-				return fmt.Errorf("failed to bring interface up: %s: %w", out, err)
-			}
-
-			return nil
-		},
-		Reset: func() error {
-			// Bring the tunnel interface state to down.
-			if out, err := executil.Commandf("ip link set dev %s down",
-				state.TUNName,
-			); err != nil {
-				logger.Trace().Err(err).Str("out", strings.TrimSpace(out)).
-					Msg("ip link set down (ignored)")
-			}
-
-			return nil
-		},
-	})
-
-	jobs = append(jobs, server.ConfigurationJob{
-		Apply: func() error {
-			if out, err := executil.Commandf("ip route add %s dev %s",
-				state.GatewayIP, state.PhysIfaceName,
-			); err != nil {
-				return fmt.Errorf("failed to add gateway route: %s: %w", out, err)
-			}
-
-			return nil
-		},
-		Reset: func() error {
-			if out, err := executil.Commandf("ip route del %s dev %s",
-				state.GatewayIP, state.PhysIfaceName,
-			); err != nil {
-				logger.Trace().Err(err).Str("out", strings.TrimSpace(out)).
-					Msg("ip route del gateway (ignored)")
-			}
-
-			return nil
-		},
-	})
-
-	jobs = append(jobs, server.ConfigurationJob{
-		Apply: func() error {
-			if _, err := executil.Commandf("ip route add default via %s dev %s table %d",
-				state.GatewayIP, state.PhysIfaceName, state.RouteTableID,
-			); err != nil {
-				return fmt.Errorf("failed to add default route to table: %w", err)
-			}
-
-			return nil
-		},
-		Reset: func() error {
-			if out, err := executil.Commandf("ip route del default table %d",
-				state.RouteTableID,
-			); err != nil {
-				logger.Trace().Err(err).Str("out", strings.TrimSpace(out)).
-					Msg("ip route del table (ignored)")
-			}
-
-			return nil
-		},
-	})
-
-	jobs = append(jobs, server.ConfigurationJob{
-		Apply: func() error {
-			if _, err := executil.Commandf("ip rule add from %s lookup %d",
-				state.PhysIfaceIP, state.RouteTableID,
-			); err != nil {
-				return fmt.Errorf("failed to add policy rule: %w", err)
-			}
-
-			return nil
-		},
-		Reset: func() error {
-			if out, err := executil.Commandf("ip rule del from %s lookup %d",
-				state.PhysIfaceIP, state.RouteTableID,
-			); err != nil {
-				logger.Trace().Err(err).Str("out", strings.TrimSpace(out)).
-					Msg("ip rule del (ignored)")
-			}
-
-			return nil
-		},
-	})
-
-	for _, target := range state.RouteTargetCIDRs {
-		jobs = append(jobs, server.ConfigurationJob{
-			Apply: func() error {
-				if out, err := executil.Commandf("ip route add %s dev %s",
-					target, state.TUNName,
-				); err != nil {
-					return fmt.Errorf("failed to add route for %s: %w: %s", target, err, out)
-				}
-				return nil
-			},
-			Reset: func() error {
-				if out, err := executil.Commandf("ip route del %s dev %s",
-					target, state.TUNName,
-				); err != nil {
-					logger.Trace().Err(err).Str("out", strings.TrimSpace(out)).
-						Msg("ip route del (ignored)")
-				}
-				return nil
-			},
-		})
-	}
-
-	return jobs
 }
 
 func getOrAllocateTableID() (int, error) {

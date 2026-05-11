@@ -3,7 +3,6 @@
 package tun
 
 import (
-	"context"
 	"net"
 
 	"github.com/rs/zerolog"
@@ -14,7 +13,7 @@ import (
 
 type tunStateStub struct{}
 
-func loadState() (*tunStateStub, bool, error) {
+func loadState() ([]server.NetworkJob, bool, error) {
 	return nil, false, nil
 }
 
@@ -26,20 +25,16 @@ func deleteState() error {
 	return nil
 }
 
-func saveState(state *tunStateStub) error {
+func saveState(jobs []server.NetworkJob) error {
+	return nil
+}
+
+func buildJobs(state *tunStateStub) []server.NetworkJob {
 	return nil
 }
 
 func createTunDevice() (tun.Device, error) {
 	return nil, nil
-}
-
-func configurationJobs(
-	ctx context.Context,
-	logger zerolog.Logger,
-	state *tunStateStub,
-) []server.ConfigurationJob {
-	return nil
 }
 
 // tunSystemNetworkStub implements TUNSystemNetwork for unsupported platforms

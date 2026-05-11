@@ -277,6 +277,13 @@ func createServer(
 		&cfg.Runtime,
 	)
 
+	// Clean up stale network state before route discovery so a crashed TUN
+	// session does not leave the routing table in a state that obscures the
+	// real default route.
+	tun.CleanupStaleState(logger)
+	http.CleanupStaleState(logger)
+	socks5.CleanupStaleState(logger)
+
 	defaultRoute, err := netutil.DiscoverDefaultRoute()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find default route: %w", err)

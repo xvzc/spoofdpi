@@ -9,11 +9,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/dns"
+	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
@@ -118,24 +120,34 @@ func (p *SOCKS5Proxy) ListenAndServe(
 	return nil
 }
 
+// CleanupStaleState runs Down commands from any persisted SOCKS5 proxy state file
+// and removes it.
+func CleanupStaleState(logger zerolog.Logger) {
+	jobs, exists, err := loadState()
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to load stale SOCKS5 proxy state")
+		return
+	}
+	if !exists {
+		return
+	}
+	logger.Info().Msg("cleaning up stale SOCKS5 proxy state")
+	for i := len(jobs) - 1; i >= 0; i-- {
+		for _, cmd := range jobs[i].Down {
+			if out, err := executil.Command(cmd); err != nil {
+				logger.Warn().Err(err).Str("out", strings.TrimSpace(out)).
+					Str("cmd", cmd).Msg("stale cleanup command failed (ignored)")
+			}
+		}
+	}
+	if err := deleteState(); err != nil {
+		logger.Warn().Err(err).Msg("failed to delete stale SOCKS5 state file")
+	}
+}
+
 func (p *SOCKS5Proxy) AutoConfigureNetwork(ctx context.Context) (func(), error) {
 	if p.sysNet == nil {
 		return nil, fmt.Errorf("system network not initialized")
-	}
-
-	if staleState, exists, err := loadState(); err == nil && exists {
-		p.logger.Info().Msg("cleaning up stale state")
-		staleStateJobs := configurationJobs(ctx, p.logger, staleState)
-
-		for i := len(staleStateJobs) - 1; i >= 0; i-- {
-			if err := staleStateJobs[i].Reset(); err != nil {
-				p.logger.Error().Err(err).Msg("failed to run unset job")
-			}
-		}
-
-		if err := deleteState(); err != nil {
-			p.logger.Error().Err(err).Msg("failed to delete stale state")
-		}
 	}
 
 	pacContent := fmt.Sprintf(`function FindProxyForURL(url, host) {
@@ -155,49 +167,42 @@ func (p *SOCKS5Proxy) AutoConfigureNetwork(ctx context.Context) (func(), error) 
 		return nil, err
 	}
 
-	if err := saveState(newState); err != nil {
+	jobs := buildJobs(newState)
+	if err := saveState(jobs); err != nil {
 		_ = pacServer.Close()
 		return nil, fmt.Errorf("failed to save state: %w", err)
 	}
 
-	newStateJobs := configurationJobs(ctx, p.logger, newState)
 	var executedJobs int
-
-	set := func() error {
-		for i, each := range newStateJobs {
-			if each.Apply == nil {
-				continue
-			}
-
-			if err := each.Apply(); err != nil {
-				return fmt.Errorf("failed to run set job: %w", err)
-			}
-			executedJobs = i + 1
-		}
-		return nil
-	}
 
 	unset := func() {
 		for i := executedJobs - 1; i >= 0; i-- {
-			if newStateJobs[i].Reset == nil {
-				continue
-			}
-
-			if err := newStateJobs[i].Reset(); err != nil {
-				p.logger.Error().Err(err).Msg("failed to run unset job")
+			for _, cmd := range jobs[i].Down {
+				if out, err := executil.Command(cmd); err != nil {
+					p.logger.Error().Err(err).Str("out", strings.TrimSpace(out)).
+						Str("cmd", cmd).Msg("cleanup command failed")
+				}
 			}
 		}
-
 		_ = pacServer.Close()
-
 		if err := deleteState(); err != nil {
 			p.logger.Error().Err(err).Msg("failed to delete state file during cleanup")
 		}
 	}
 
-	if err := set(); err != nil {
-		unset()
-		return nil, err
+	for i, job := range jobs {
+		for _, cmd := range job.Up {
+			if out, err := executil.Command(cmd); err != nil {
+				unset()
+				return nil, fmt.Errorf(
+					"job %q: %s: %w",
+					job.Description,
+					strings.TrimSpace(out),
+					err,
+				)
+			}
+		}
+		executedJobs = i + 1
 	}
 
 	return unset, nil

@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/rs/zerolog"
+	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
@@ -393,26 +394,35 @@ func (s *TunServer) stackToTun(
 	}
 }
 
+// CleanupStaleState runs Down commands from any persisted TUN state file and
+// removes it. Call this before DiscoverDefaultRoute so a crashed TUN session
+// does not leave the routing table in a state that obscures the real default route.
+func CleanupStaleState(logger zerolog.Logger) {
+	jobs, exists, err := loadState()
+	if err != nil {
+		logger.Warn().Err(err).Msg("failed to load stale TUN state")
+		return
+	}
+	if !exists {
+		return
+	}
+	logger.Info().Msg("cleaning up stale TUN network state")
+	for i := len(jobs) - 1; i >= 0; i-- {
+		for _, cmd := range jobs[i].Down {
+			if out, err := executil.Command(cmd); err != nil {
+				logger.Warn().Err(err).Str("out", strings.TrimSpace(out)).
+					Str("cmd", cmd).Msg("stale cleanup command failed (ignored)")
+			}
+		}
+	}
+	if err := deleteState(); err != nil {
+		logger.Warn().Err(err).Msg("failed to delete stale TUN state file")
+	}
+}
+
 func (s *TunServer) AutoConfigureNetwork(ctx context.Context) (func(), error) {
 	if s.sysNet == nil {
 		return nil, fmt.Errorf("system network not initialized")
-	}
-
-	if staleState, exists, err := loadState(); err == nil && exists {
-		s.logger.Info().Msg("cleaning up stale state")
-		staleStateJobs := configurationJobs(ctx, s.logger, staleState)
-
-		// Reverts only the successfully applied jobs in LIFO order
-		for i := len(staleStateJobs) - 1; i >= 0; i-- {
-			if err := staleStateJobs[i].Reset(); err != nil {
-				s.logger.Error().Err(err).Msg("failed to run unset job")
-			}
-		}
-
-		// Cleans up the persisted state file to ensure complete rollback and teardown.
-		if err := deleteState(); err != nil {
-			s.logger.Error().Err(err).Msg("failed to delete stale state")
-		}
 	}
 
 	newState, err := createState(s.sysNet)
@@ -420,51 +430,40 @@ func (s *TunServer) AutoConfigureNetwork(ctx context.Context) (func(), error) {
 		return nil, err
 	}
 
-	if err := saveState(newState); err != nil {
+	jobs := buildJobs(newState)
+	if err := saveState(jobs); err != nil {
 		return nil, fmt.Errorf("failed to save state: %w", err)
 	}
 
-	// Tracks the count of successfully executed configuration jobs
-
-	newStateJobs := configurationJobs(ctx, s.logger, newState)
 	var executedJobs int
 
-	set := func() error {
-		for i, each := range newStateJobs {
-			if each.Apply == nil {
-				continue
-			}
-
-			if err := each.Apply(); err != nil {
-				return fmt.Errorf("failed to run set job: %w", err)
-			}
-			// Increments the counter after successful job execution
-			executedJobs = i + 1 // We use index + 1 in cases none of the job was successfull
-		}
-		return nil
-	}
-
 	unset := func() {
-		// Reverts only the successfully applied jobs in LIFO order
 		for i := executedJobs - 1; i >= 0; i-- {
-			if newStateJobs[i].Reset == nil {
-				continue
-			}
-
-			if err := newStateJobs[i].Reset(); err != nil {
-				s.logger.Error().Err(err).Msg("failed to run unset job")
+			for _, cmd := range jobs[i].Down {
+				if out, err := executil.Command(cmd); err != nil {
+					s.logger.Error().Err(err).Str("out", strings.TrimSpace(out)).
+						Str("cmd", cmd).Msg("cleanup command failed")
+				}
 			}
 		}
-
-		// Cleans up the persisted state file to ensure complete rollback and teardown.
 		if err := deleteState(); err != nil {
 			s.logger.Error().Err(err).Msg("failed to delete state file during cleanup")
 		}
 	}
 
-	if err := set(); err != nil {
-		unset()
-		return nil, err
+	for i, job := range jobs {
+		for _, cmd := range job.Up {
+			if out, err := executil.Command(cmd); err != nil {
+				unset()
+				return nil, fmt.Errorf(
+					"job %q: %s: %w",
+					job.Description,
+					strings.TrimSpace(out),
+					err,
+				)
+			}
+		}
+		executedJobs = i + 1
 	}
 
 	return unset, nil

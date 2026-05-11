@@ -3,7 +3,6 @@
 package tun
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -13,7 +12,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
@@ -69,15 +67,96 @@ func createState(sysNet TUNSystemNetwork) (*tunStateDarwin, error) {
 	}, nil
 }
 
-func saveState(state *tunStateDarwin) error {
-	data, err := json.Marshal(state)
+func buildJobs(state *tunStateDarwin) []server.NetworkJob {
+	_, tunCIDR, _ := net.ParseCIDR(state.TunLocalIP + "/30")
+	targets := []string{tunCIDR.String(), "0.0.0.0/1", "128.0.0.0/1"}
+
+	var cidrUp, cidrDown []string
+	for _, t := range targets {
+		cidrUp = append(
+			cidrUp,
+			fmt.Sprintf("route -n add -net %s -interface %s", t, state.TUNName),
+		)
+		cidrDown = append(
+			cidrDown,
+			fmt.Sprintf("route -n delete -net %s -interface %s", t, state.TUNName),
+		)
+	}
+	for i, j := 0, len(cidrDown)-1; i < j; i, j = i+1, j-1 {
+		cidrDown[i], cidrDown[j] = cidrDown[j], cidrDown[i]
+	}
+
+	return []server.NetworkJob{
+		{
+			Description: "configure TUN interface address",
+			Up: []string{
+				fmt.Sprintf(
+					"ifconfig %s %s %s up",
+					state.TUNName,
+					state.TunLocalIP,
+					state.TunRemoteIP,
+				),
+			},
+			Down: []string{fmt.Sprintf("ifconfig %s destroy", state.TUNName)},
+		},
+		{
+			Description: "add scoped default route via physical interface",
+			Up: []string{
+				fmt.Sprintf(
+					"route add -ifscope %s default %s",
+					state.PhysIfaceName,
+					state.GatewayIP,
+				),
+			},
+			Down: []string{
+				fmt.Sprintf(
+					"route delete -ifscope %s default %s",
+					state.PhysIfaceName,
+					state.GatewayIP,
+				),
+			},
+		},
+		{
+			Description: "add host route for gateway",
+			Up: []string{
+				fmt.Sprintf(
+					"route -n add -host %s -interface %s",
+					state.GatewayIP,
+					state.PhysIfaceName,
+				),
+			},
+			Down: []string{
+				fmt.Sprintf(
+					"route -n delete -host %s -interface %s",
+					state.GatewayIP,
+					state.PhysIfaceName,
+				),
+			},
+		},
+		{
+			Description: "add CIDR routes via TUN",
+			Up:          cidrUp,
+			Down:        cidrDown,
+		},
+	}
+}
+
+func saveState(jobs []server.NetworkJob) error {
+	type state struct {
+		Jobs      []server.NetworkJob `json:"jobs"`
+		CreatedAt time.Time           `json:"createdAt"`
+	}
+	data, err := json.Marshal(state{Jobs: jobs, CreatedAt: time.Now()})
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(stateFile, data, 0o644)
 }
 
-func loadState() (*tunStateDarwin, bool, error) {
+func loadState() ([]server.NetworkJob, bool, error) {
+	type state struct {
+		Jobs []server.NetworkJob `json:"jobs"`
+	}
 	data, err := os.ReadFile(stateFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -85,11 +164,11 @@ func loadState() (*tunStateDarwin, bool, error) {
 		}
 		return nil, false, err
 	}
-	var state tunStateDarwin
-	if err := json.Unmarshal(data, &state); err != nil {
+	var s state
+	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, false, err
 	}
-	return &state, true, nil
+	return s.Jobs, true, nil
 }
 
 func deleteState() error {
@@ -202,105 +281,4 @@ func (n *tunSystemNetworkDarwin) BindDialer(
 	}
 
 	return nil
-}
-
-func configurationJobs(
-	ctx context.Context,
-	logger zerolog.Logger,
-	state *tunStateDarwin,
-) []server.ConfigurationJob {
-	var jobs []server.ConfigurationJob
-
-	jobs = append(jobs, server.ConfigurationJob{
-		Apply: func() error {
-			if out, err := executil.Commandf("ifconfig %s %s %s up",
-				state.TUNName, state.TunLocalIP, state.TunRemoteIP); err != nil {
-				return fmt.Errorf("failed to set interface address: %s: %w", out, err)
-			}
-
-			return nil
-		},
-		Reset: func() error {
-			if out, err := executil.Commandf("ifconfig %s destroy",
-				state.TUNName,
-			); err != nil {
-				logger.Trace().Err(err).Str("out", strings.TrimSpace(out)).
-					Msg("failed to unset interface address (ignored)")
-			}
-
-			return nil
-		},
-	})
-
-	jobs = append(jobs, server.ConfigurationJob{
-		Apply: func() error {
-			if out, err := executil.Commandf("route add -ifscope %s default %s",
-				state.PhysIfaceName, state.GatewayIP); err != nil {
-				return fmt.Errorf("failed to add scoped default route: %s: %w", out, err)
-			}
-
-			return nil
-		},
-		Reset: func() error {
-			if out, err := executil.Commandf("route delete -ifscope %s default %s",
-				state.PhysIfaceName, state.GatewayIP,
-			); err != nil {
-				logger.Debug().
-					Err(err).
-					Str("out", out).
-					Msg("route delete -ifscope (ignored)")
-			}
-
-			return nil
-		},
-	})
-
-	jobs = append(jobs, server.ConfigurationJob{
-		Apply: func() error {
-			if out, err := executil.Commandf("route -n add -host %s -interface %s",
-				state.GatewayIP, state.PhysIfaceName,
-			); err != nil {
-				return fmt.Errorf("failed to add host route: %s: %w", out, err)
-			}
-
-			return nil
-		},
-		Reset: func() error {
-			if out, err := executil.Commandf("route -n delete -host %s -interface %s",
-				state.GatewayIP, state.PhysIfaceName,
-			); err != nil {
-				logger.Debug().
-					Err(err).
-					Str("out", out).
-					Msg("route -n delete -host (ignored)")
-			}
-			return nil
-		},
-	})
-
-	for _, target := range state.RouteTargetCIDRs {
-		jobs = append(jobs, server.ConfigurationJob{
-			Apply: func() error {
-				if out, err := executil.Commandf("route -n add -net %s -interface %s",
-					target, state.TUNName,
-				); err != nil {
-					return fmt.Errorf("failed to add route for %s: %s: %w", target, out, err)
-				}
-
-				return nil
-			},
-			Reset: func() error {
-				if out, err := executil.Commandf("route -n delete -net %s -interface %s",
-					target, state.TUNName,
-				); err != nil {
-					logger.Trace().Err(err).Str("out", strings.TrimSpace(out)).
-						Msg("route delete (ignored)")
-				}
-
-				return nil
-			},
-		})
-	}
-
-	return jobs
 }

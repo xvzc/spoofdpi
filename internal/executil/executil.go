@@ -8,17 +8,17 @@ import (
 )
 
 func Commandf(format string, args ...any) (string, error) {
-	fullCmd := fmt.Sprintf(format, args...)
+	return Command(fmt.Sprintf(format, args...))
+}
 
-	splitArgs, err := shell.Fields(fullCmd, nil)
+func Command(cmd string) (string, error) {
+	args, err := shell.Fields(cmd, nil)
 	if err != nil {
 		return "", err
 	}
-
-	if len(splitArgs) == 0 {
+	if len(args) == 0 {
 		return "", nil
 	}
-
-	out, err := exec.Command(splitArgs[0], splitArgs[1:]...).CombinedOutput()
+	out, err := exec.Command(args[0], args[1:]...).CombinedOutput()
 	return string(out), err
 }

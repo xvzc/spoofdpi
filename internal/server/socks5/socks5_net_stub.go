@@ -3,8 +3,6 @@
 package socks5
 
 import (
-	"context"
-
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/server"
@@ -23,37 +21,28 @@ func (n *socks5SystemNetworkStub) DefaultRoute() *netutil.Route {
 	return nil
 }
 
-type socks5StateDarwin struct {
-	Service   string `json:"service"`
-	Port      uint16 `json:"port"`
-	ProxyType string `json:"proxyType"`
-	PACURL    string `json:"pacURL"`
-}
+type socks5StateStub struct{}
 
 func createState(
 	defaultRoute *netutil.Route,
 	port uint16,
 	pacURL string,
-) (*socks5StateDarwin, error) {
-	return &socks5StateDarwin{}, nil
+) (*socks5StateStub, error) {
+	return &socks5StateStub{}, nil
 }
 
-func saveState(state *socks5StateDarwin) error {
+func buildJobs(state *socks5StateStub) []server.NetworkJob {
 	return nil
 }
 
-func loadState() (*socks5StateDarwin, bool, error) {
+func saveState(jobs []server.NetworkJob) error {
+	return nil
+}
+
+func loadState() ([]server.NetworkJob, bool, error) {
 	return nil, false, nil
 }
 
 func deleteState() error {
-	return nil
-}
-
-func configurationJobs(
-	ctx context.Context,
-	logger zerolog.Logger,
-	state *socks5StateDarwin,
-) []server.ConfigurationJob {
 	return nil
 }

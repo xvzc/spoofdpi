@@ -3,12 +3,12 @@
 package socks5
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
@@ -79,15 +79,45 @@ func createState(
 	}, nil
 }
 
-func saveState(state *socks5StateDarwin) error {
-	data, err := json.Marshal(state)
+func buildJobs(state *socks5StateDarwin) []server.NetworkJob {
+	return []server.NetworkJob{
+		{
+			Description: "set auto proxy URL",
+			Up: []string{
+				fmt.Sprintf("networksetup -setautoproxyurl %s %s", state.Service, state.PACURL),
+			},
+			Down: []string{
+				fmt.Sprintf("networksetup -setautoproxystate %s off", state.Service),
+			},
+		},
+		{
+			Description: "enable proxy auto discovery",
+			Up: []string{
+				fmt.Sprintf("networksetup -setproxyautodiscovery %s on", state.Service),
+			},
+			Down: []string{
+				fmt.Sprintf("networksetup -setproxyautodiscovery %s off", state.Service),
+			},
+		},
+	}
+}
+
+func saveState(jobs []server.NetworkJob) error {
+	type state struct {
+		Jobs      []server.NetworkJob `json:"jobs"`
+		CreatedAt time.Time           `json:"createdAt"`
+	}
+	data, err := json.Marshal(state{Jobs: jobs, CreatedAt: time.Now()})
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(socks5StateFile, data, 0o644)
 }
 
-func loadState() (*socks5StateDarwin, bool, error) {
+func loadState() ([]server.NetworkJob, bool, error) {
+	type state struct {
+		Jobs []server.NetworkJob `json:"jobs"`
+	}
 	data, err := os.ReadFile(socks5StateFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -95,11 +125,11 @@ func loadState() (*socks5StateDarwin, bool, error) {
 		}
 		return nil, false, err
 	}
-	var state socks5StateDarwin
-	if err := json.Unmarshal(data, &state); err != nil {
+	var s state
+	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, false, err
 	}
-	return &state, true, nil
+	return s.Jobs, true, nil
 }
 
 func deleteState() error {
@@ -107,57 +137,4 @@ func deleteState() error {
 		return err
 	}
 	return nil
-}
-
-func configurationJobs(
-	ctx context.Context,
-	logger zerolog.Logger,
-	state *socks5StateDarwin,
-) []server.ConfigurationJob {
-	var jobs []server.ConfigurationJob
-
-	jobs = append(jobs, server.ConfigurationJob{
-		Apply: func() error {
-			if out, err := executil.Commandf("networksetup -setautoproxyurl %s %s",
-				state.Service, state.PACURL,
-			); err != nil {
-				return fmt.Errorf("setting autoproxyurl: %s: %w", out, err)
-			}
-			return nil
-		},
-		Reset: func() error {
-			if out, err := executil.Commandf("networksetup -setautoproxystate %s off",
-				state.Service,
-			); err != nil {
-				logger.Trace().Err(err).Str("out", out).
-					Msg("failed to unset autoproxystate (ignored)")
-			}
-
-			return nil
-		},
-	})
-
-	jobs = append(jobs, server.ConfigurationJob{
-		Apply: func() error {
-			if out, err := executil.Commandf("networksetup -setproxyautodiscovery %s on",
-				state.Service,
-			); err != nil {
-				return fmt.Errorf("setting proxyautodiscovery: %s: %w", out, err)
-			}
-
-			return nil
-		},
-		Reset: func() error {
-			if out, err := executil.Commandf("networksetup -setproxyautodiscovery %s off",
-				state.Service,
-			); err != nil {
-				logger.Trace().Err(err).Str("out", out).
-					Msg("failed to unset proxyautodiscovery (ignored)")
-			}
-
-			return nil
-		},
-	})
-
-	return jobs
 }
