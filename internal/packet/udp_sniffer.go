@@ -114,12 +114,13 @@ func (us *UDPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	key := netutil.NewIPKey(srcIP)
 	nhops := estimateHops(ttlLeft)
 
-	_, exists := us.nhopCache.Get(key)
+	prev, exists := us.nhopCache.Get(key)
 	if !exists {
 		return
 	}
 
-	if us.nhopCache.Set(key, nhops, nil) {
+	us.nhopCache.Set(key, nhops, nil)
+	if nhops != prev {
 		logger.Trace().
 			Str("from", key.String()).
 			Uint8("nhops", nhops).

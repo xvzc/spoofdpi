@@ -114,12 +114,13 @@ func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	key := netutil.NewIPKey(srcIP)
 	nhops := estimateHops(ttlLeft)
 
-	_, exists := ts.nhopCache.Get(key)
+	prev, exists := ts.nhopCache.Get(key)
 	if !exists {
 		return
 	}
 
-	if ts.nhopCache.Set(key, nhops, nil) {
+	ts.nhopCache.Set(key, nhops, nil)
+	if nhops != prev {
 		logger.Trace().
 			Str("from", key.String()).
 			Uint8("nhops", nhops).
