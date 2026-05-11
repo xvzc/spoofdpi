@@ -96,6 +96,83 @@ func createState(sysNet TUNSystemNetwork) (*tunStateLinux, error) {
 }
 
 func buildJobs(state *tunStateLinux) []server.NetworkJob {
+	var jobs []server.NetworkJob
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "remove TUN interface",
+		Up:          nil,
+		Down:        []string{fmt.Sprintf("ip link delete %s", state.TUNName)},
+	})
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "configure TUN interface address",
+		Up: []string{
+			fmt.Sprintf(
+				"ip addr add %s peer %s dev %s",
+				state.TunLocalIP,
+				state.TunRemoteIP,
+				state.TUNName,
+			),
+		},
+		Down: []string{
+			fmt.Sprintf(
+				"ip addr del %s peer %s dev %s",
+				state.TunLocalIP,
+				state.TunRemoteIP,
+				state.TUNName,
+			),
+		},
+	})
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "bring TUN interface up",
+		Up:          []string{fmt.Sprintf("ip link set dev %s up", state.TUNName)},
+		Down:        []string{fmt.Sprintf("ip link set dev %s down", state.TUNName)},
+	})
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "add gateway host route",
+		Up: []string{
+			fmt.Sprintf("ip route add %s dev %s", state.GatewayIP, state.PhysIfaceName),
+		},
+		Down: []string{
+			fmt.Sprintf("ip route del %s dev %s", state.GatewayIP, state.PhysIfaceName),
+		},
+	})
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "add default route to routing table",
+		Up: []string{
+			fmt.Sprintf(
+				"ip route add default via %s dev %s table %d",
+				state.GatewayIP,
+				state.PhysIfaceName,
+				state.RouteTableID,
+			),
+		},
+		Down: []string{
+			fmt.Sprintf("ip route del default table %d", state.RouteTableID),
+		},
+	})
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "add policy routing rule",
+		Up: []string{
+			fmt.Sprintf(
+				"ip rule add from %s lookup %d",
+				state.PhysIfaceIP,
+				state.RouteTableID,
+			),
+		},
+		Down: []string{
+			fmt.Sprintf(
+				"ip rule del from %s lookup %d",
+				state.PhysIfaceIP,
+				state.RouteTableID,
+			),
+		},
+	})
+
 	cidrJob := server.NetworkJob{Description: "add CIDR routes via TUN"}
 	for _, t := range state.RouteTargetCIDRs {
 		cidrJob.Up = append(
@@ -111,79 +188,9 @@ func buildJobs(state *tunStateLinux) []server.NetworkJob {
 	for i, j := 0, len(cidrJob.Down)-1; i < j; i, j = i+1, j-1 {
 		cidrJob.Down[i], cidrJob.Down[j] = cidrJob.Down[j], cidrJob.Down[i]
 	}
+	jobs = append(jobs, cidrJob)
 
-	return []server.NetworkJob{
-		{
-			Description: "remove TUN interface",
-			Up:          nil,
-			Down:        []string{fmt.Sprintf("ip link delete %s", state.TUNName)},
-		},
-		{
-			Description: "configure TUN interface address",
-			Up: []string{
-				fmt.Sprintf(
-					"ip addr add %s peer %s dev %s",
-					state.TunLocalIP,
-					state.TunRemoteIP,
-					state.TUNName,
-				),
-			},
-			Down: []string{
-				fmt.Sprintf(
-					"ip addr del %s peer %s dev %s",
-					state.TunLocalIP,
-					state.TunRemoteIP,
-					state.TUNName,
-				),
-			},
-		},
-		{
-			Description: "bring TUN interface up",
-			Up:          []string{fmt.Sprintf("ip link set dev %s up", state.TUNName)},
-			Down:        []string{fmt.Sprintf("ip link set dev %s down", state.TUNName)},
-		},
-		{
-			Description: "add gateway host route",
-			Up: []string{
-				fmt.Sprintf("ip route add %s dev %s", state.GatewayIP, state.PhysIfaceName),
-			},
-			Down: []string{
-				fmt.Sprintf("ip route del %s dev %s", state.GatewayIP, state.PhysIfaceName),
-			},
-		},
-		{
-			Description: "add default route to routing table",
-			Up: []string{
-				fmt.Sprintf(
-					"ip route add default via %s dev %s table %d",
-					state.GatewayIP,
-					state.PhysIfaceName,
-					state.RouteTableID,
-				),
-			},
-			Down: []string{
-				fmt.Sprintf("ip route del default table %d", state.RouteTableID),
-			},
-		},
-		{
-			Description: "add policy routing rule",
-			Up: []string{
-				fmt.Sprintf(
-					"ip rule add from %s lookup %d",
-					state.PhysIfaceIP,
-					state.RouteTableID,
-				),
-			},
-			Down: []string{
-				fmt.Sprintf(
-					"ip rule del from %s lookup %d",
-					state.PhysIfaceIP,
-					state.RouteTableID,
-				),
-			},
-		},
-		cidrJob,
-	}
+	return jobs
 }
 
 func saveState(jobs []server.NetworkJob) error {
@@ -191,7 +198,7 @@ func saveState(jobs []server.NetworkJob) error {
 		Jobs      []server.NetworkJob `json:"jobs"`
 		CreatedAt time.Time           `json:"createdAt"`
 	}
-	data, err := json.Marshal(state{Jobs: jobs, CreatedAt: time.Now()})
+	data, err := json.MarshalIndent(state{Jobs: jobs, CreatedAt: time.Now()}, "", "  ")
 	if err != nil {
 		return err
 	}

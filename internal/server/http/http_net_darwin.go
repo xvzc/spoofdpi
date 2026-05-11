@@ -80,26 +80,29 @@ func createState(
 }
 
 func buildJobs(state *httpStateDarwin) []server.NetworkJob {
-	return []server.NetworkJob{
-		{
-			Description: "set auto proxy URL",
-			Up: []string{
-				fmt.Sprintf("networksetup -setautoproxyurl %s %s", state.Service, state.PACURL),
-			},
-			Down: []string{
-				fmt.Sprintf("networksetup -setautoproxystate %s off", state.Service),
-			},
+	var jobs []server.NetworkJob
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "set auto proxy URL",
+		Up: []string{
+			fmt.Sprintf("networksetup -setautoproxyurl %s %s", state.Service, state.PACURL),
 		},
-		{
-			Description: "enable proxy auto discovery",
-			Up: []string{
-				fmt.Sprintf("networksetup -setproxyautodiscovery %s on", state.Service),
-			},
-			Down: []string{
-				fmt.Sprintf("networksetup -setproxyautodiscovery %s off", state.Service),
-			},
+		Down: []string{
+			fmt.Sprintf("networksetup -setautoproxystate %s off", state.Service),
 		},
-	}
+	})
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "enable proxy auto discovery",
+		Up: []string{
+			fmt.Sprintf("networksetup -setproxyautodiscovery %s on", state.Service),
+		},
+		Down: []string{
+			fmt.Sprintf("networksetup -setproxyautodiscovery %s off", state.Service),
+		},
+	})
+
+	return jobs
 }
 
 func saveState(jobs []server.NetworkJob) error {
@@ -107,7 +110,7 @@ func saveState(jobs []server.NetworkJob) error {
 		Jobs      []server.NetworkJob `json:"jobs"`
 		CreatedAt time.Time           `json:"createdAt"`
 	}
-	data, err := json.Marshal(state{Jobs: jobs, CreatedAt: time.Now()})
+	data, err := json.MarshalIndent(state{Jobs: jobs, CreatedAt: time.Now()}, "", "  ")
 	if err != nil {
 		return err
 	}

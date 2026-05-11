@@ -68,77 +68,75 @@ func createState(sysNet TUNSystemNetwork) (*tunStateDarwin, error) {
 }
 
 func buildJobs(state *tunStateDarwin) []server.NetworkJob {
-	_, tunCIDR, _ := net.ParseCIDR(state.TunLocalIP + "/30")
-	targets := []string{tunCIDR.String(), "0.0.0.0/1", "128.0.0.0/1"}
+	var jobs []server.NetworkJob
 
-	var cidrUp, cidrDown []string
-	for _, t := range targets {
-		cidrUp = append(
-			cidrUp,
+	jobs = append(jobs, server.NetworkJob{
+		Description: "configure TUN interface address",
+		Up: []string{
+			fmt.Sprintf(
+				"ifconfig %s %s %s up",
+				state.TUNName,
+				state.TunLocalIP,
+				state.TunRemoteIP,
+			),
+		},
+		Down: []string{fmt.Sprintf("ifconfig %s destroy", state.TUNName)},
+	})
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "add scoped default route via physical interface",
+		Up: []string{
+			fmt.Sprintf(
+				"route add -ifscope %s default %s",
+				state.PhysIfaceName,
+				state.GatewayIP,
+			),
+		},
+		Down: []string{
+			fmt.Sprintf(
+				"route delete -ifscope %s default %s",
+				state.PhysIfaceName,
+				state.GatewayIP,
+			),
+		},
+	})
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "add host route for gateway",
+		Up: []string{
+			fmt.Sprintf(
+				"route -n add -host %s -interface %s",
+				state.GatewayIP,
+				state.PhysIfaceName,
+			),
+		},
+		Down: []string{
+			fmt.Sprintf(
+				"route -n delete -host %s -interface %s",
+				state.GatewayIP,
+				state.PhysIfaceName,
+			),
+		},
+	})
+
+	_, tunCIDR, _ := net.ParseCIDR(state.TunLocalIP + "/30")
+	cidrJob := server.NetworkJob{Description: "add CIDR routes via TUN"}
+	for _, t := range []string{tunCIDR.String(), "0.0.0.0/1", "128.0.0.0/1"} {
+		cidrJob.Up = append(
+			cidrJob.Up,
 			fmt.Sprintf("route -n add -net %s -interface %s", t, state.TUNName),
 		)
-		cidrDown = append(
-			cidrDown,
+		cidrJob.Down = append(
+			cidrJob.Down,
 			fmt.Sprintf("route -n delete -net %s -interface %s", t, state.TUNName),
 		)
 	}
-	for i, j := 0, len(cidrDown)-1; i < j; i, j = i+1, j-1 {
-		cidrDown[i], cidrDown[j] = cidrDown[j], cidrDown[i]
+	for i, j := 0, len(cidrJob.Down)-1; i < j; i, j = i+1, j-1 {
+		cidrJob.Down[i], cidrJob.Down[j] = cidrJob.Down[j], cidrJob.Down[i]
 	}
+	jobs = append(jobs, cidrJob)
 
-	return []server.NetworkJob{
-		{
-			Description: "configure TUN interface address",
-			Up: []string{
-				fmt.Sprintf(
-					"ifconfig %s %s %s up",
-					state.TUNName,
-					state.TunLocalIP,
-					state.TunRemoteIP,
-				),
-			},
-			Down: []string{fmt.Sprintf("ifconfig %s destroy", state.TUNName)},
-		},
-		{
-			Description: "add scoped default route via physical interface",
-			Up: []string{
-				fmt.Sprintf(
-					"route add -ifscope %s default %s",
-					state.PhysIfaceName,
-					state.GatewayIP,
-				),
-			},
-			Down: []string{
-				fmt.Sprintf(
-					"route delete -ifscope %s default %s",
-					state.PhysIfaceName,
-					state.GatewayIP,
-				),
-			},
-		},
-		{
-			Description: "add host route for gateway",
-			Up: []string{
-				fmt.Sprintf(
-					"route -n add -host %s -interface %s",
-					state.GatewayIP,
-					state.PhysIfaceName,
-				),
-			},
-			Down: []string{
-				fmt.Sprintf(
-					"route -n delete -host %s -interface %s",
-					state.GatewayIP,
-					state.PhysIfaceName,
-				),
-			},
-		},
-		{
-			Description: "add CIDR routes via TUN",
-			Up:          cidrUp,
-			Down:        cidrDown,
-		},
-	}
+	return jobs
 }
 
 func saveState(jobs []server.NetworkJob) error {
@@ -146,7 +144,7 @@ func saveState(jobs []server.NetworkJob) error {
 		Jobs      []server.NetworkJob `json:"jobs"`
 		CreatedAt time.Time           `json:"createdAt"`
 	}
-	data, err := json.Marshal(state{Jobs: jobs, CreatedAt: time.Now()})
+	data, err := json.MarshalIndent(state{Jobs: jobs, CreatedAt: time.Now()}, "", "  ")
 	if err != nil {
 		return err
 	}

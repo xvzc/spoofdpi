@@ -86,6 +86,49 @@ func createState(sysNet TUNSystemNetwork) (*tunStateFreeBSD, error) {
 }
 
 func buildJobs(state *tunStateFreeBSD) []server.NetworkJob {
+	var jobs []server.NetworkJob
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "configure TUN interface address",
+		Up: []string{
+			fmt.Sprintf(
+				"ifconfig %s %s %s up",
+				state.TUNName,
+				state.TunLocalIP,
+				state.TunRemoteIP,
+			),
+		},
+		Down: []string{fmt.Sprintf("ifconfig %s destroy", state.TUNName)},
+	})
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "add FIB subnet route",
+		Up: []string{
+			fmt.Sprintf(
+				"route add -net %s -iface %s -fib %d",
+				state.PhysIfaceCIDR,
+				state.PhysIfaceName,
+				state.FIBID,
+			),
+		},
+		Down: []string{
+			fmt.Sprintf(
+				"route delete -net %s -iface %s -fib %d",
+				state.PhysIfaceCIDR,
+				state.PhysIfaceName,
+				state.FIBID,
+			),
+		},
+	})
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "add FIB default route",
+		Up: []string{
+			fmt.Sprintf("route add default %s -fib %d", state.GatewayIP, state.FIBID),
+		},
+		Down: []string{fmt.Sprintf("route delete default -fib %d", state.FIBID)},
+	})
+
 	cidrJob := server.NetworkJob{Description: "add CIDR routes via TUN"}
 	for _, t := range state.RouteTargetCIDRs {
 		cidrJob.Up = append(
@@ -101,48 +144,9 @@ func buildJobs(state *tunStateFreeBSD) []server.NetworkJob {
 	for i, j := 0, len(cidrJob.Down)-1; i < j; i, j = i+1, j-1 {
 		cidrJob.Down[i], cidrJob.Down[j] = cidrJob.Down[j], cidrJob.Down[i]
 	}
+	jobs = append(jobs, cidrJob)
 
-	return []server.NetworkJob{
-		{
-			Description: "configure TUN interface address",
-			Up: []string{
-				fmt.Sprintf(
-					"ifconfig %s %s %s up",
-					state.TUNName,
-					state.TunLocalIP,
-					state.TunRemoteIP,
-				),
-			},
-			Down: []string{fmt.Sprintf("ifconfig %s destroy", state.TUNName)},
-		},
-		{
-			Description: "add FIB subnet route",
-			Up: []string{
-				fmt.Sprintf(
-					"route add -net %s -iface %s -fib %d",
-					state.PhysIfaceCIDR,
-					state.PhysIfaceName,
-					state.FIBID,
-				),
-			},
-			Down: []string{
-				fmt.Sprintf(
-					"route delete -net %s -iface %s -fib %d",
-					state.PhysIfaceCIDR,
-					state.PhysIfaceName,
-					state.FIBID,
-				),
-			},
-		},
-		{
-			Description: "add FIB default route",
-			Up: []string{
-				fmt.Sprintf("route add default %s -fib %d", state.GatewayIP, state.FIBID),
-			},
-			Down: []string{fmt.Sprintf("route delete default -fib %d", state.FIBID)},
-		},
-		cidrJob,
-	}
+	return jobs
 }
 
 func saveState(jobs []server.NetworkJob) error {
@@ -150,7 +154,7 @@ func saveState(jobs []server.NetworkJob) error {
 		Jobs      []server.NetworkJob `json:"jobs"`
 		CreatedAt time.Time           `json:"createdAt"`
 	}
-	data, err := json.Marshal(state{Jobs: jobs, CreatedAt: time.Now()})
+	data, err := json.MarshalIndent(state{Jobs: jobs, CreatedAt: time.Now()}, "", "  ")
 	if err != nil {
 		return err
 	}
