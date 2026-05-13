@@ -94,20 +94,6 @@ func (n *tunSystemNetworkDarwin) BuildJobs() ([]netutil.NetworkJob, error) {
 		),
 	})
 
-	jobs = append(jobs, netutil.NetworkJob{
-		Description: "add host route for gateway",
-		Apply: fmt.Sprintf(
-			"route -n add -host %s -interface %s",
-			info.GatewayIP,
-			info.PhysIfaceName,
-		),
-		Reset: fmt.Sprintf(
-			"route -n delete -host %s -interface %s",
-			info.GatewayIP,
-			info.PhysIfaceName,
-		),
-	})
-
 	for _, t := range info.RouteTargetCIDRs {
 		jobs = append(jobs, netutil.NetworkJob{
 			Description: fmt.Sprintf("add CIDR route %s via TUN", t),
