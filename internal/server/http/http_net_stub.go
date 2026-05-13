@@ -5,6 +5,7 @@ package http
 import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
 const StateFile = ""
@@ -13,12 +14,12 @@ type httpSystemNetworkStub struct{}
 
 func NewHTTPSystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *netutil.Route,
+	defaultRoute *packet.Route,
 ) HTTPSystemNetwork {
 	return &httpSystemNetworkStub{}
 }
 
-func (n *httpSystemNetworkStub) DefaultRoute() *netutil.Route {
+func (n *httpSystemNetworkStub) DefaultRoute() *packet.Route {
 	return nil
 }
 

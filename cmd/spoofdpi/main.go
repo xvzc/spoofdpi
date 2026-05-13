@@ -198,24 +198,10 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 // creates sniffer/writer pairs for whichever L4 protocols cfg requires.
 // Returns nil values for protocols that don't need pcap.
 func setupPcapIO(
-	ctx context.Context,
 	logger zerolog.Logger,
-	route *netutil.Route,
+	route *packet.Route,
 	cfg *config.Config,
 ) (tcpSniffer, udpSniffer packet.Sniffer, tcpWriter, udpWriter packet.Writer, err error) {
-	arpCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	mac, err := packet.ResolveGatewayMAC(
-		arpCtx,
-		logging.WithScope(logger, "pkt"),
-		&route.Iface,
-	)
-	cancel()
-	if err != nil {
-		err = fmt.Errorf("failed to resolve gateway MAC: %w", err)
-		return
-	}
-	route.GatewayMAC = mac
-
 	pktLogger := logging.WithScope(logger, "pkt")
 	hopCache := cache.NewLRUCache[netutil.IPKey, uint8](4096, nil)
 
@@ -224,7 +210,7 @@ func setupPcapIO(
 		Str("name", route.Iface.Name).
 		Str("mac", route.Iface.HardwareAddr.String()).
 		Msg(" interface")
-	logger.Info().Str("mac", mac.String()).Msg(" gateway (passive detection)")
+	logger.Info().Str("mac", route.GatewayMAC.String()).Msg(" gateway (passive detection)")
 
 	if cfg.NeedsPcapTCP() {
 		handle, hErr := packet.NewHandle(&route.Iface)
@@ -238,7 +224,7 @@ func setupPcapIO(
 			handle,
 			uint8(cfg.Runtime.Conn.DefaultFakeTTL),
 		)
-		tcpWriter = packet.NewTCPWriter(pktLogger, handle, &route.Iface, mac)
+		tcpWriter = packet.NewTCPWriter(pktLogger, handle, &route.Iface, route.GatewayMAC)
 	}
 
 	if cfg.NeedsPcapUDP() {
@@ -253,7 +239,7 @@ func setupPcapIO(
 			handle,
 			uint8(cfg.Runtime.Conn.DefaultFakeTTL),
 		)
-		udpWriter = packet.NewUDPWriter(pktLogger, handle, &route.Iface, mac)
+		udpWriter = packet.NewUDPWriter(pktLogger, handle, &route.Iface, route.GatewayMAC)
 	}
 
 	return
@@ -285,7 +271,9 @@ func createServer(
 	netutil.ResetJobs(logger, http.StateFile)
 	netutil.ResetJobs(logger, socks5.StateFile)
 
-	defaultRoute, err := netutil.DiscoverDefaultRoute()
+	discoverCtx, discoverCancel := context.WithTimeout(appctx, 10*time.Second)
+	defaultRoute, err := packet.DiscoverRoute(discoverCtx, logging.WithScope(logger, "pkt"))
+	discoverCancel()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find default route: %w", err)
 	}
@@ -295,7 +283,6 @@ func createServer(
 
 	if cfg.NeedsPcap() {
 		tcpSniffer, udpSniffer, tcpWriter, udpWriter, err = setupPcapIO(
-			appctx,
 			logger,
 			defaultRoute,
 			cfg,

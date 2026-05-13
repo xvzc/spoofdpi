@@ -37,7 +37,7 @@ var _ tcpip.NetworkProtocolNumber = ipv4.ProtocolNumber
 // TUNSystemNetwork handles OS-specific network configuration for TUN mode.
 type TUNSystemNetwork interface {
 	TunDevice() tun.Device
-	DefaultRoute() *netutil.Route
+	DefaultRoute() *packet.Route
 	FIBID() int
 	BindDialer(dialer *net.Dialer, network string, targetIP net.IP) error
 	BuildJobs() ([]netutil.NetworkJob, error)

@@ -22,7 +22,7 @@ import (
 
 // HTTPSystemNetwork handles OS-specific network configuration for HTTP proxy.
 type HTTPSystemNetwork interface {
-	DefaultRoute() *netutil.Route
+	DefaultRoute() *packet.Route
 	BuildJobs(port uint16, pacURL string) ([]netutil.NetworkJob, error)
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
 const StateFile = "/tmp/spoofdpi.http.darwin.state"
@@ -21,12 +22,12 @@ type httpNetworkInfoDarwin struct {
 
 type httpSystemNetworkDarwin struct {
 	logger       zerolog.Logger
-	defaultRoute *netutil.Route
+	defaultRoute *packet.Route
 }
 
 func NewHTTPSystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *netutil.Route,
+	defaultRoute *packet.Route,
 ) HTTPSystemNetwork {
 	return &httpSystemNetworkDarwin{
 		logger:       logger,
@@ -34,7 +35,7 @@ func NewHTTPSystemNetwork(
 	}
 }
 
-func (n *httpSystemNetworkDarwin) DefaultRoute() *netutil.Route {
+func (n *httpSystemNetworkDarwin) DefaultRoute() *packet.Route {
 	return n.defaultRoute
 }
 
@@ -57,7 +58,7 @@ func getNetworkServiceFromInterface(ifaceName string) (string, error) {
 }
 
 func collectNetworkInfo(
-	defaultRoute *netutil.Route, pacURL string,
+	defaultRoute *packet.Route, pacURL string,
 ) (*httpNetworkInfoDarwin, error) {
 	service, err := getNetworkServiceFromInterface(defaultRoute.Iface.Name)
 	if err != nil {

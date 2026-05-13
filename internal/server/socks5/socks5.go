@@ -25,7 +25,7 @@ import (
 
 // SOCKS5SystemNetwork handles OS-specific network configuration for SOCKS5 proxy.
 type SOCKS5SystemNetwork interface {
-	DefaultRoute() *netutil.Route
+	DefaultRoute() *packet.Route
 	BuildJobs(port uint16, pacURL string) ([]netutil.NetworkJob, error)
 }
 
