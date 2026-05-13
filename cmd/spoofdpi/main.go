@@ -194,52 +194,55 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	return nil
 }
 
-// setupPcapIO resolves the gateway MAC (populating route.GatewayMAC) and
-// creates sniffer/writer pairs for whichever L4 protocols cfg requires.
-// Returns nil values for protocols that don't need pcap.
+// setupPcapIO creates pcap handles and sniffer/writer pairs for both TCP and UDP.
+// StartCapturing is called selectively based on cfg.
 func setupPcapIO(
 	logger zerolog.Logger,
 	route *packet.Route,
 	cfg *config.Config,
 ) (tcpSniffer, udpSniffer packet.Sniffer, tcpWriter, udpWriter packet.Writer, err error) {
 	pktLogger := logging.WithScope(logger, "pkt")
-	hopCache := cache.NewLRUCache[netutil.IPKey, uint8](4096, nil)
+	hopCache := cache.NewLRUCache[netutil.IPKey, uint8](16, 8192, nil)
 
 	logger.Info().Msg("network info")
 	logger.Info().
 		Str("name", route.Iface.Name).
 		Str("mac", route.Iface.HardwareAddr.String()).
 		Msg(" interface")
-	logger.Info().Str("mac", route.GatewayMAC.String()).Msg(" gateway (passive detection)")
+	logger.Info().
+		Str("mac", route.GatewayMAC.String()).
+		Msg(" gateway (passive detection)")
 
+	tcpHandle, hErr := packet.NewHandle(&route.Iface)
+	if hErr != nil {
+		err = fmt.Errorf("tcp pcap handle on %s: %w", route.Iface.Name, hErr)
+		return
+	}
+	tcpSniffer = packet.NewTCPSniffer(
+		pktLogger,
+		hopCache,
+		tcpHandle,
+		uint8(cfg.Runtime.Conn.DefaultFakeTTL),
+	)
+	tcpWriter = packet.NewTCPWriter(pktLogger, tcpHandle, &route.Iface, route.GatewayMAC)
 	if cfg.NeedsPcapTCP() {
-		handle, hErr := packet.NewHandle(&route.Iface)
-		if hErr != nil {
-			err = fmt.Errorf("tcp pcap handle on %s: %w", route.Iface.Name, hErr)
-			return
-		}
-		tcpSniffer = packet.NewTCPSniffer(
-			pktLogger,
-			hopCache,
-			handle,
-			uint8(cfg.Runtime.Conn.DefaultFakeTTL),
-		)
-		tcpWriter = packet.NewTCPWriter(pktLogger, handle, &route.Iface, route.GatewayMAC)
+		tcpSniffer.StartCapturing()
 	}
 
+	udpHandle, hErr := packet.NewHandle(&route.Iface)
+	if hErr != nil {
+		err = fmt.Errorf("udp pcap handle on %s: %w", route.Iface.Name, hErr)
+		return
+	}
+	udpSniffer = packet.NewUDPSniffer(
+		pktLogger,
+		hopCache,
+		udpHandle,
+		uint8(cfg.Runtime.Conn.DefaultFakeTTL),
+	)
+	udpWriter = packet.NewUDPWriter(pktLogger, udpHandle, &route.Iface, route.GatewayMAC)
 	if cfg.NeedsPcapUDP() {
-		handle, hErr := packet.NewHandle(&route.Iface)
-		if hErr != nil {
-			err = fmt.Errorf("udp pcap handle on %s: %w", route.Iface.Name, hErr)
-			return
-		}
-		udpSniffer = packet.NewUDPSniffer(
-			pktLogger,
-			hopCache,
-			handle,
-			uint8(cfg.Runtime.Conn.DefaultFakeTTL),
-		)
-		udpWriter = packet.NewUDPWriter(pktLogger, handle, &route.Iface, route.GatewayMAC)
+		udpSniffer.StartCapturing()
 	}
 
 	return
@@ -272,24 +275,19 @@ func createServer(
 	netutil.ResetJobs(logger, socks5.StateFile)
 
 	discoverCtx, discoverCancel := context.WithTimeout(appctx, 10*time.Second)
-	defaultRoute, err := packet.DiscoverRoute(discoverCtx, logging.WithScope(logger, "pkt"))
+	defaultRoute, err := packet.DiscoverRoute(discoverCtx)
 	discoverCancel()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find default route: %w", err)
 	}
 
-	var tcpSniffer, udpSniffer packet.Sniffer
-	var tcpWriter, udpWriter packet.Writer
-
-	if cfg.NeedsPcap() {
-		tcpSniffer, udpSniffer, tcpWriter, udpWriter, err = setupPcapIO(
-			logger,
-			defaultRoute,
-			cfg,
-		)
-		if err != nil {
-			return nil, err
-		}
+	tcpSniffer, udpSniffer, tcpWriter, udpWriter, err := setupPcapIO(
+		logger,
+		defaultRoute,
+		cfg,
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	tlsDesyncer := desync.NewTLSDesyncer(

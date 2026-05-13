@@ -9,13 +9,13 @@ import (
 )
 
 // ConnRegistry manages UDP connections with LRU eviction policy and idle timeout.
-type ConnRegistry[K comparable] struct {
+type ConnRegistry[K cache.Key] struct {
 	storage cache.Cache[K, *IdleTimeoutConn]
 	timeout time.Duration
 }
 
 // NewConnRegistry creates a new pool with the specified capacity and timeout.
-func NewConnRegistry[K comparable](
+func NewConnRegistry[K cache.Key](
 	capacity int,
 	timeout time.Duration,
 ) *ConnRegistry[K] {
@@ -27,7 +27,7 @@ func NewConnRegistry[K comparable](
 		_ = v.Conn.Close()
 	}
 
-	p.storage = cache.NewLRUCache[K, *IdleTimeoutConn](capacity, onInvalidate)
+	p.storage = cache.NewLRUCache[K, *IdleTimeoutConn](16, capacity, onInvalidate)
 
 	return p
 }

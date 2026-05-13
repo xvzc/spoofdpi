@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
@@ -25,7 +24,7 @@ var dnsProbe = &netutil.Destination{
 }
 
 // DiscoverRoute discovers the default network route by observing ARP traffic.
-func DiscoverRoute(ctx context.Context, logger zerolog.Logger) (*Route, error) {
+func DiscoverRoute(ctx context.Context) (*Route, error) {
 	conn, err := netutil.DialFastest(ctx, dnsProbe, "udp", 2*time.Second, nil)
 	if err != nil {
 		return nil, fmt.Errorf("cannot reach external network: %w", err)
@@ -59,7 +58,6 @@ func DiscoverRoute(ctx context.Context, logger zerolog.Logger) (*Route, error) {
 
 	gwIP, gwMAC, err := captureRouteInfo(
 		ctx,
-		logger,
 		handle,
 		localIP,
 		iface.HardwareAddr,
@@ -198,7 +196,6 @@ func (c *routeCapture) snapshot() (gwIP net.IP, gwMAC net.HardwareAddr) {
 
 func captureRouteInfo(
 	ctx context.Context,
-	_ zerolog.Logger,
 	handle Handle,
 	localIP net.IP,
 	ifaceMAC net.HardwareAddr,

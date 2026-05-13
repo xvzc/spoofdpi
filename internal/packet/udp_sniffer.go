@@ -44,11 +44,11 @@ func (us *UDPSniffer) Cache() cache.Cache[netutil.IPKey, uint8] {
 
 // StartCapturing begins monitoring for UDP packets in a background goroutine.
 func (us *UDPSniffer) StartCapturing() {
-	packetSource := gopacket.NewPacketSource(us.handle, us.handle.LinkType())
-	packets := packetSource.Packets()
-
 	_ = us.handle.ClearBPF()
 	_ = us.handle.SetBPFRawInstructionFilter(generateUdpFilter(us.handle.LinkType()))
+
+	packetSource := gopacket.NewPacketSource(us.handle, us.handle.LinkType())
+	packets := packetSource.Packets()
 
 	go func() {
 		for packet := range packets {

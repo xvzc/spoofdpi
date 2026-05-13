@@ -1,6 +1,7 @@
 package netutil
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 )
@@ -69,6 +70,8 @@ func (k IPKey) String() string {
 	return srcIP.String()
 }
 
+func (k IPKey) Bytes() []byte { return k[:] }
+
 // NewIPKey zero-alloc constructs an IPKey from net.IP
 func NewIPKey(ip net.IP) IPKey {
 	var k IPKey
@@ -77,6 +80,15 @@ func NewIPKey(ip net.IP) IPKey {
 		copy(k[:], ip16)
 	}
 	return k
+}
+
+func (k NATKey) Bytes() []byte {
+	var b [36]byte
+	copy(b[0:16], k.SrcIP[:])
+	binary.BigEndian.PutUint16(b[16:18], k.SrcPort)
+	copy(b[18:34], k.DstIP[:])
+	binary.BigEndian.PutUint16(b[34:36], k.DstPort)
+	return b[:]
 }
 
 // NewNATKey zero-alloc constructs a NATKey from two UDPAddr

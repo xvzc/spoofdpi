@@ -67,10 +67,6 @@ func NewHTTPProxy(
 func (p *HTTPProxy) ListenAndServe(
 	appctx context.Context,
 ) error {
-	if p.tcpSniffer != nil {
-		p.tcpSniffer.StartCapturing()
-	}
-
 	listener, err := net.ListenTCP("tcp", &p.listenAddr)
 	if err != nil {
 		return fmt.Errorf(

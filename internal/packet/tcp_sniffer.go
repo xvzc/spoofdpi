@@ -44,10 +44,11 @@ func (ts *TCPSniffer) Cache() cache.Cache[netutil.IPKey, uint8] {
 
 // StartCapturing begins monitoring for SYN/ACK packets in a background goroutine.
 func (ts *TCPSniffer) StartCapturing() {
-	packetSource := gopacket.NewPacketSource(ts.handle, ts.handle.LinkType())
-	packets := packetSource.Packets()
 	_ = ts.handle.ClearBPF()
 	_ = ts.handle.SetBPFRawInstructionFilter(generateSynAckFilter(ts.handle.LinkType()))
+
+	packetSource := gopacket.NewPacketSource(ts.handle, ts.handle.LinkType())
+	packets := packetSource.Packets()
 
 	go func() {
 		for packet := range packets {

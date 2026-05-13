@@ -77,13 +77,6 @@ func (s *TunServer) ListenAndServe(
 ) error {
 	logger := logging.WithLocalScope(appctx, s.logger, "tun")
 
-	if s.tcpSniffer != nil {
-		s.tcpSniffer.StartCapturing()
-	}
-	if s.udpSniffer != nil {
-		s.udpSniffer.StartCapturing()
-	}
-
 	tunDevice := s.sysNet.TunDevice()
 	if tunDevice == nil {
 		return fmt.Errorf("tun device not available")

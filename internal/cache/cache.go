@@ -29,8 +29,17 @@ func (o *options) WithSkipExisting(skipExisting bool) *options {
 	return o
 }
 
+// Key is the constraint for cache keys. Bytes() is required instead of String() because
+// sharded caches use it to compute the shard index, and raw bytes are significantly cheaper
+// to hash than a formatted string — e.g. IPKey.String() formats an IP address and allocates,
+// while IPKey.Bytes() returns the underlying array slice with zero allocation.
+type Key interface {
+	comparable
+	Bytes() []byte
+}
+
 // Cache is the unified interface for all cache implementations.
-type Cache[K comparable, V any] interface {
+type Cache[K Key, V any] interface {
 	Get(key K) (V, bool)
 	Set(key K, value V, opts *options) bool
 	Delete(key K)

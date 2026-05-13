@@ -76,13 +76,6 @@ func NewSOCKS5Proxy(
 func (p *SOCKS5Proxy) ListenAndServe(
 	appctx context.Context,
 ) error {
-	if p.tcpSniffer != nil {
-		p.tcpSniffer.StartCapturing()
-	}
-	if p.udpSniffer != nil {
-		p.udpSniffer.StartCapturing()
-	}
-
 	listener, err := net.ListenTCP("tcp", &p.listenAddr)
 	if err != nil {
 		return fmt.Errorf(

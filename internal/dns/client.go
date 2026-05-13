@@ -22,6 +22,10 @@ type internalResolver interface {
 	) ([]netip.Addr, uint32, error)
 }
 
+type hostname string
+
+func (h hostname) Bytes() []byte { return []byte(h) }
+
 // Client is the top-level DNS resolver. It holds the three backends, a shared
 // cache, and the runtime config. Callers hold *Client directly — it does not
 // implement an interface.
@@ -30,7 +34,7 @@ type Client struct {
 	https  *httpsResolver
 	udp    *udpResolver
 	system *systemResolver
-	cache  cache.Cache[string, []netip.Addr]
+	cache  cache.Cache[hostname, []netip.Addr]
 	cfg    *config.RuntimeConfig
 }
 
@@ -59,7 +63,7 @@ func NewClient(
 		https:  https,
 		udp:    udp,
 		system: system,
-		cache: cache.NewTTLCache[string, []netip.Addr](cache.TTLCacheAttrs{
+		cache: cache.NewTTLCache[hostname, []netip.Addr](cache.TTLCacheAttrs{
 			NumOfShards:     64,
 			CleanupInterval: 3 * time.Minute,
 		}),
@@ -91,7 +95,7 @@ func (c *Client) Resolve(
 
 	useCache := cfg.DNS.Cache && cfg.DNS.Mode != config.DNSModeSystem
 	if useCache {
-		if addrs, ok := c.cache.Get(domain); ok {
+		if addrs, ok := c.cache.Get(hostname(domain)); ok {
 			logger.Debug().Str("domain", domain).Msg("cache hit")
 			return addrs, nil
 		}
@@ -112,7 +116,7 @@ func (c *Client) Resolve(
 
 	if useCache {
 		_ = c.cache.Set(
-			domain,
+			hostname(domain),
 			addrs,
 			cache.Options().WithTTL(time.Duration(ttl)*time.Second),
 		)

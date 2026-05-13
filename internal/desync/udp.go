@@ -28,7 +28,7 @@ func NewUDPDesyncer(
 // PrepareHopTrack registers addrs with the sniffer for hop-count learning,
 // guarded by the config so the LRU isn't touched when fakes won't be sent.
 func (d *UDPDesyncer) PrepareHopTrack(addrs []net.IP, cfg *config.UDPOptions) {
-	if d.sniffer != nil && cfg != nil && cfg.FakeCount > 0 {
+	if cfg.FakeCount > 0 {
 		d.sniffer.Register(addrs)
 	}
 }
@@ -41,7 +41,7 @@ func (d *UDPDesyncer) Desync(
 ) (int, error) {
 	logger := logging.WithLocalScope(ctx, d.logger, "udp_desync")
 
-	if d.sniffer == nil || d.writer == nil || opts == nil || opts.FakeCount <= 0 {
+	if opts.FakeCount <= 0 {
 		return 0, nil
 	}
 
