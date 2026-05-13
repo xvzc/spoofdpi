@@ -6,12 +6,24 @@ let
     let
       version = "2.12.1";
       url = "https://github.com/golangci/golangci-lint/releases/download";
-      platform =
+      meta =
         {
-          "aarch64-darwin" = "darwin-arm64";
-          "x86_64-darwin" = "darwin-amd64";
-          "aarch64-linux" = "linux-arm64";
-          "x86_64-linux" = "linux-amd64";
+          "aarch64-darwin" = {
+            platform = "darwin-arm64";
+            hash = "sha256-OTpk75t1pbbIyL+IlbjYIIeQ5mkKQ94ZoS8/i8DprVI=";
+          };
+          "x86_64-darwin" = {
+            platform = "darwin-amd64";
+            hash = throw "golangci-lint: unsupported platform x86_64-darwin, add hash to shell.nix";
+          };
+          "aarch64-linux" = {
+            platform = "linux-arm64";
+            hash = throw "golangci-lint: unsupported platform aarch64-linux, add hash to shell.nix";
+          };
+          "x86_64-linux" = {
+            platform = "linux-amd64";
+            hash = "sha256-gseTLZqhDDTiLvVpYaxarXHUoUgGoaMbBpMa3SaIs2g=";
+          };
         }
         .${pkgs.stdenv.hostPlatform.system};
     in
@@ -19,10 +31,10 @@ let
       pname = "golangci-lint";
       inherit version;
       src = pkgs.fetchurl {
-        url = "${url}/v${version}/golangci-lint-${version}-${platform}.tar.gz";
-        hash = "sha256-OTpk75t1pbbIyL+IlbjYIIeQ5mkKQ94ZoS8/i8DprVI=";
+        url = "${url}/v${version}/golangci-lint-${version}-${meta.platform}.tar.gz";
+        inherit (meta) hash;
       };
-      sourceRoot = "golangci-lint-${version}-${platform}";
+      sourceRoot = "golangci-lint-${version}-${meta.platform}";
       installPhase = ''
         runHook preInstall
         mkdir -p $out/bin
