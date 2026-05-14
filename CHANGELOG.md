@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.5.2](https://github.com/xvzc/spoofdpi/compare/v1.5.1...v1.5.2) (2026-05-14)
+
+
+### Bug Fixes
+
+* **config:** preserve defaults when partial TOML sections are present ([0714ed1](https://github.com/xvzc/spoofdpi/commit/0714ed10568b0fb877c303705fb3f97000b99fd8))
+* **desync:** sort segment plans before slicing ([f92bac7](https://github.com/xvzc/spoofdpi/commit/f92bac7eb1df4aa9c164509c2babd8786026b296))
+* **nix:** update vendorHash for new go modules ([daaa803](https://github.com/xvzc/spoofdpi/commit/daaa8033f69839553c44bafe25d46a3afc0277f5))
+* **packet,socks5:** fix BPF load missing in non-Ethernet path and bind timeout handling ([2354354](https://github.com/xvzc/spoofdpi/commit/23543547686f6588684f9b5eb81ca02a30b8d7c5))
+* **packet:** restrict sniffer TTL updates to registered destinations ([9e2dc90](https://github.com/xvzc/spoofdpi/commit/9e2dc902fd32f3edbb1d6929ae4030e6a7333fd8))
+* **packet:** suppress duplicate ttl sniff logs when nhops is unchanged ([5d68874](https://github.com/xvzc/spoofdpi/commit/5d688745b99f05271ab5f2d5bb3a92794a046b37))
+* **socks5:** correct BIND handler implementation ([bbc45d8](https://github.com/xvzc/spoofdpi/commit/bbc45d8d58c02b0bd2812601ecfb44a6bdc7ea51))
+* **socks5:** drain accept channel on context cancellation to prevent fd leak ([82d58e7](https://github.com/xvzc/spoofdpi/commit/82d58e771827d05a0097ab120743d5d2a4a7c1c5))
+* **tun:** remove host route for gateway on Darwin ([e0cfa04](https://github.com/xvzc/spoofdpi/commit/e0cfa041f2c3cd589ebde77566dd160d6b0b60bc))
+* **tun:** return error on non-numeric port in connToDst ([9b7c847](https://github.com/xvzc/spoofdpi/commit/9b7c847b85ef0a8d236e0485d2ae3af80604dce0))
+
 ## [1.5.1](https://github.com/xvzc/spoofdpi/compare/v1.5.0...v1.5.1) (2026-05-05)
 
 
