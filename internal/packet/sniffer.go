@@ -3,7 +3,6 @@ package packet
 import (
 	"net"
 
-	"github.com/xvzc/spoofdpi/internal/cache"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
@@ -11,7 +10,6 @@ type Sniffer interface {
 	StartCapturing()
 	Register(addrs []net.IP)
 	GetOptimalTTL(key netutil.IPKey) uint8
-	Cache() cache.Cache[netutil.IPKey, uint8]
 }
 
 // estimateHops estimates the number of hops based on TTL.

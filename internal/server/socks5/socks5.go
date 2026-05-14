@@ -38,9 +38,7 @@ type SOCKS5Proxy struct {
 	bindHandler         *BindHandler
 	udpAssociateHandler *UdpAssociateHandler
 
-	tcpSniffer packet.Sniffer
-	udpSniffer packet.Sniffer
-	sysNet     SOCKS5SystemNetwork
+	sysNet SOCKS5SystemNetwork
 	listenAddr net.TCPAddr
 	cfg        *config.RuntimeConfig
 }
@@ -52,8 +50,6 @@ func NewSOCKS5Proxy(
 	connectHandler *ConnectHandler,
 	bindHandler *BindHandler,
 	udpAssociateHandler *UdpAssociateHandler,
-	tcpSniffer packet.Sniffer,
-	udpSniffer packet.Sniffer,
 	sysNet SOCKS5SystemNetwork,
 	listenAddr net.TCPAddr,
 	cfg *config.RuntimeConfig,
@@ -65,8 +61,6 @@ func NewSOCKS5Proxy(
 		connectHandler:      connectHandler,
 		bindHandler:         bindHandler,
 		udpAssociateHandler: udpAssociateHandler,
-		tcpSniffer:          tcpSniffer,
-		udpSniffer:          udpSniffer,
 		sysNet:              sysNet,
 		listenAddr:          listenAddr,
 		cfg:                 cfg,

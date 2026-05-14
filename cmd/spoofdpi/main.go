@@ -309,7 +309,6 @@ func createServer(
 			http.NewHTTPHandler(logging.WithScope(logger, "hnd")),
 			http.NewHTTPSHandler(logging.WithScope(logger, "hnd"), tlsDesyncer, &cfg.Runtime),
 			ruleSet,
-			tcpSniffer,
 			http.NewHTTPSystemNetwork(logging.WithScope(logger, "sys"), defaultRoute),
 			cfg.Startup.App.ListenAddr,
 			&cfg.Runtime,
@@ -335,8 +334,6 @@ func createServer(
 				udpDesyncer,
 				&cfg.Runtime,
 			),
-			tcpSniffer,
-			udpSniffer,
 			socks5.NewSOCKS5SystemNetwork(logging.WithScope(logger, "sys"), defaultRoute),
 			cfg.Startup.App.ListenAddr,
 			&cfg.Runtime,
@@ -369,8 +366,6 @@ func createServer(
 				ruleSet,
 				&cfg.Runtime,
 			),
-			tcpSniffer,
-			udpSniffer,
 			sysNet,
 		), nil
 

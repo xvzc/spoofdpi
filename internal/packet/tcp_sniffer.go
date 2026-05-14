@@ -38,10 +38,6 @@ func NewTCPSniffer(
 	}
 }
 
-func (ts *TCPSniffer) Cache() cache.Cache[netutil.IPKey, uint8] {
-	return ts.nhopCache
-}
-
 // StartCapturing begins monitoring for SYN/ACK packets in a background goroutine.
 func (ts *TCPSniffer) StartCapturing() {
 	_ = ts.handle.ClearBPF()

@@ -34,8 +34,7 @@ type HTTPProxy struct {
 	httpsHandler *HTTPSHandler
 	ruleSet      *rule.RuleSet
 
-	tcpSniffer packet.Sniffer
-	sysNet     HTTPSystemNetwork
+	sysNet HTTPSystemNetwork
 	listenAddr net.TCPAddr
 	cfg        *config.RuntimeConfig
 }
@@ -46,7 +45,6 @@ func NewHTTPProxy(
 	httpHandler *HTTPHandler,
 	httpsHandler *HTTPSHandler,
 	ruleSet *rule.RuleSet,
-	tcpSniffer packet.Sniffer,
 	sysNet HTTPSystemNetwork,
 	listenAddr net.TCPAddr,
 	cfg *config.RuntimeConfig,
@@ -57,8 +55,7 @@ func NewHTTPProxy(
 		httpHandler:  httpHandler,
 		httpsHandler: httpsHandler,
 		ruleSet:      ruleSet,
-		tcpSniffer:   tcpSniffer,
-		sysNet:       sysNet,
+		sysNet: sysNet,
 		listenAddr:   listenAddr,
 		cfg:          cfg,
 	}

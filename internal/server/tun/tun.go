@@ -49,26 +49,20 @@ type TunServer struct {
 	tcpHandler *TCPHandler
 	udpHandler *UDPHandler
 
-	tcpSniffer packet.Sniffer
-	udpSniffer packet.Sniffer
-	sysNet     TUNSystemNetwork // OS-specific network configuration
+	sysNet TUNSystemNetwork
 }
 
 func NewTUNServer(
 	logger zerolog.Logger,
 	tcpHandler *TCPHandler,
 	udpHandler *UDPHandler,
-	tcpSniffer packet.Sniffer,
-	udpSniffer packet.Sniffer,
 	sysNet TUNSystemNetwork,
 ) server.Server {
 	return &TunServer{
 		logger:     logger,
 		tcpHandler: tcpHandler,
 		udpHandler: udpHandler,
-		tcpSniffer: tcpSniffer,
-		udpSniffer: udpSniffer,
-		sysNet:     sysNet,
+		sysNet: sysNet,
 	}
 }
 

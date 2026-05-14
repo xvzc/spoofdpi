@@ -38,10 +38,6 @@ func NewUDPSniffer(
 	}
 }
 
-func (us *UDPSniffer) Cache() cache.Cache[netutil.IPKey, uint8] {
-	return us.nhopCache
-}
-
 // StartCapturing begins monitoring for UDP packets in a background goroutine.
 func (us *UDPSniffer) StartCapturing() {
 	_ = us.handle.ClearBPF()
