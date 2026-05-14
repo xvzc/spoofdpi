@@ -4,272 +4,142 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	"github.com/xvzc/spoofdpi/internal/netutil"
+	gw "github.com/jackpal/gateway"
+	"github.com/xvzc/spoofdpi/internal/config"
 )
 
-var dnsProbe = &netutil.Destination{
-	Addrs: []net.IP{
-		net.ParseIP("8.8.8.8"),
-		net.ParseIP("8.8.4.4"),
-		net.ParseIP("1.1.1.1"),
-		net.ParseIP("1.0.0.1"),
-		net.ParseIP("9.9.9.9"),
-	},
-	Port: 53,
+// DiscoverRoute discovers the default network route.
+// Gateway IP and interface are resolved from the OS routing table.
+// GatewayMAC is resolved via ARP only when cfg.NeedsPcap() is true.
+func DiscoverRoute(ctx context.Context, cfg *config.Config) (*Route, error) {
+	gwIP, err := gw.DiscoverGateway()
+	if err != nil {
+		return nil, fmt.Errorf("discover gateway: %w", err)
+	}
+
+	localIP, err := gw.DiscoverInterface()
+	if err != nil {
+		return nil, fmt.Errorf("discover interface: %w", err)
+	}
+
+	iface, err := findIfaceByIP(localIP)
+	if err != nil {
+		return nil, err
+	}
+
+	route := &Route{
+		Iface:   *iface,
+		Gateway: gwIP,
+	}
+
+	if cfg.NeedsPcap() {
+		route.GatewayMAC, err = resolveGatewayMAC(ctx, iface, localIP, gwIP)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return route, nil
 }
 
-// DiscoverRoute discovers the default network route by observing ARP traffic.
-func DiscoverRoute(ctx context.Context) (*Route, error) {
-	conn, err := netutil.DialFastest(ctx, dnsProbe, "udp", 2*time.Second, nil)
-	if err != nil {
-		return nil, fmt.Errorf("cannot reach external network: %w", err)
-	}
-	localIP := conn.LocalAddr().(*net.UDPAddr).IP
-	_ = conn.Close()
-
+func findIfaceByIP(localIP net.IP) (*net.Interface, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil, fmt.Errorf("net.Interfaces: %w", err)
 	}
-
-	iface, subnets, err := findIfaceByIP(localIP, ifaces)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(iface.HardwareAddr) == 0 {
-		if physical := findPhysicalInterface(ifaces); physical != nil {
-			iface = physical
-			addrs, _ := iface.Addrs()
-			subnets = buildSubnets(addrs)
-		}
-	}
-
-	handle, err := NewHandle(iface)
-	if err != nil {
-		return nil, fmt.Errorf("open handle on %s: %w", iface.Name, err)
-	}
-	defer handle.Close()
-
-	gwIP, gwMAC, err := captureRouteInfo(
-		ctx,
-		handle,
-		localIP,
-		iface.HardwareAddr,
-		subnets,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Route{
-		Iface:      *iface,
-		Gateway:    gwIP,
-		GatewayMAC: gwMAC,
-	}, nil
-}
-
-type subnetAddr struct {
-	ip      net.IP
-	netmask net.IPMask
-}
-
-func buildSubnets(addrs []net.Addr) []subnetAddr {
-	var subnets []subnetAddr
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil {
-			subnets = append(subnets, subnetAddr{ip: ipnet.IP, netmask: ipnet.Mask})
-		}
-	}
-	return subnets
-}
-
-func findIfaceByIP(
-	localIP net.IP,
-	ifaces []net.Interface,
-) (*net.Interface, []subnetAddr, error) {
 	for i := range ifaces {
-		iface := ifaces[i]
+		iface := &ifaces[i]
 		addrs, err := iface.Addrs()
 		if err != nil {
 			continue
 		}
 		for _, addr := range addrs {
 			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.Equal(localIP) {
-				return &iface, buildSubnets(addrs), nil
+				return iface, nil
 			}
 		}
 	}
-	return nil, nil, fmt.Errorf("no interface found for %s", localIP)
+	return nil, fmt.Errorf("no interface found for %s", localIP)
 }
 
-func findPhysicalInterface(ifaces []net.Interface) *net.Interface {
-	for i := range ifaces {
-		iface := ifaces[i]
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		if len(iface.HardwareAddr) == 0 {
-			continue
-		}
-		addrs, _ := iface.Addrs()
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil &&
-				!ipnet.IP.IsLoopback() {
-				return &iface
-			}
-		}
-	}
-	return nil
-}
-
-type routeCapture struct {
-	mu    sync.Mutex
-	gwIP  net.IP
-	gwMAC net.HardwareAddr
-}
-
-func (c *routeCapture) update(pkt gopacket.Packet, localIP net.IP) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if arpLayer := pkt.Layer(layers.LayerTypeARP); arpLayer != nil {
-		arp := arpLayer.(*layers.ARP)
-		srcProto := net.IP(arp.SourceProtAddress)
-		dstProto := net.IP(arp.DstProtAddress)
-
-		if srcProto.Equal(localIP) {
-			if arp.Operation == layers.ARPRequest && c.gwIP == nil &&
-				!dstProto.Equal(localIP) {
-				c.gwIP = cloneIP(dstProto)
-			}
-		}
-		if arp.Operation == layers.ARPReply && dstProto.Equal(localIP) {
-			if c.gwMAC == nil {
-				c.gwMAC = cloneMAC(arp.SourceHwAddress)
-			}
-			if c.gwIP == nil {
-				c.gwIP = cloneIP(srcProto)
-			}
-		}
-		return
-	}
-
-	ethLayer := pkt.Layer(layers.LayerTypeEthernet)
-	if ethLayer == nil {
-		return
-	}
-	eth := ethLayer.(*layers.Ethernet)
-
-	var srcIP, dstIP net.IP
-	if ipLayer := pkt.Layer(layers.LayerTypeIPv4); ipLayer != nil {
-		ip := ipLayer.(*layers.IPv4)
-		srcIP, dstIP = ip.SrcIP, ip.DstIP
-	} else if ipLayer := pkt.Layer(layers.LayerTypeIPv6); ipLayer != nil {
-		ip := ipLayer.(*layers.IPv6)
-		srcIP, dstIP = ip.SrcIP, ip.DstIP
-	}
-
-	if srcIP.Equal(localIP) && !isPrivateIP(dstIP) {
-		if c.gwMAC == nil {
-			c.gwMAC = cloneMAC(eth.DstMAC)
-		}
-	}
-}
-
-func (c *routeCapture) isComplete() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.gwIP != nil && len(c.gwMAC) > 0
-}
-
-func (c *routeCapture) snapshot() (gwIP net.IP, gwMAC net.HardwareAddr) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.gwIP, c.gwMAC
-}
-
-func captureRouteInfo(
+func resolveGatewayMAC(
 	ctx context.Context,
-	handle Handle,
-	localIP net.IP,
-	ifaceMAC net.HardwareAddr,
-	subnets []subnetAddr,
-) (net.IP, net.HardwareAddr, error) {
-	state := &routeCapture{}
+	iface *net.Interface,
+	localIP, gwIP net.IP,
+) (net.HardwareAddr, error) {
+	localIP4 := localIP.To4()
+	gwIP4 := gwIP.To4()
+	if localIP4 == nil || gwIP4 == nil {
+		return nil, fmt.Errorf("non-IPv4 gateway not supported")
+	}
 
-	go func() {
-		src := gopacket.NewPacketSource(handle, handle.LinkType())
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case pkt, ok := <-src.Packets():
-				if !ok {
-					return
-				}
-				state.update(pkt, localIP)
-			}
-		}
-	}()
+	handle, err := NewHandle(iface)
+	if err != nil {
+		return nil, fmt.Errorf("open pcap handle on %s: %w", iface.Name, err)
+	}
+	defer handle.Close()
 
+	macCh := make(chan net.HardwareAddr, 1)
+	go captureARPReply(ctx, handle, gwIP4, macCh)
+
+	// Let the capture goroutine start before sending the first probe.
 	select {
 	case <-ctx.Done():
-		return nil, nil, ctx.Err()
-	case <-time.After(200 * time.Millisecond):
+		return nil, ctx.Err()
+	case <-time.After(100 * time.Millisecond):
 	}
 
-	probeGateway(ctx)
+	_ = sendARPRequest(handle, iface.HardwareAddr, localIP4, gwIP4)
 
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
-	arpProbed := false
 
 	for {
-		if state.isComplete() {
-			gwIP, gwMAC := state.snapshot()
-			return gwIP, gwMAC, nil
-		}
 		select {
+		case mac := <-macCh:
+			return mac, nil
 		case <-ctx.Done():
-			return nil, nil, fmt.Errorf("route discovery timed out")
+			return nil, fmt.Errorf("resolve gateway MAC: timed out")
 		case <-ticker.C:
-			probeGateway(ctx)
-			gwIP, _ := state.snapshot()
-			if gwIP == nil && !arpProbed {
-				sendGatewayARPProbes(handle, ifaceMAC, localIP, subnets)
-				arpProbed = true
-			}
+			_ = sendARPRequest(handle, iface.HardwareAddr, localIP4, gwIP4)
 		}
 	}
 }
 
-func sendGatewayARPProbes(
+func captureARPReply(
+	ctx context.Context,
 	handle Handle,
-	ifaceMAC net.HardwareAddr,
-	localIP net.IP,
-	subnets []subnetAddr,
+	gwIP net.IP,
+	macCh chan<- net.HardwareAddr,
 ) {
-	localIP4 := localIP.To4()
-	if localIP4 == nil {
-		return
-	}
-	for _, s := range subnets {
-		subnet := s.ip.Mask(s.netmask)
-		if len(subnet) < 4 {
-			continue
-		}
-		for _, offset := range []byte{1, 2, 254} {
-			probeIP := net.IP{subnet[0], subnet[1], subnet[2], offset}
-			if probeIP.Equal(localIP4) {
+	src := gopacket.NewPacketSource(handle, handle.LinkType())
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case pkt, ok := <-src.Packets():
+			if !ok {
+				return
+			}
+			arpLayer := pkt.Layer(layers.LayerTypeARP)
+			if arpLayer == nil {
 				continue
 			}
-			_ = sendARPRequest(handle, ifaceMAC, localIP4, probeIP)
+			arp := arpLayer.(*layers.ARP)
+			if arp.Operation != layers.ARPReply {
+				continue
+			}
+			if net.IP(arp.SourceProtAddress).Equal(gwIP) {
+				select {
+				case macCh <- cloneMAC(arp.SourceHwAddress):
+				default:
+				}
+				return
+			}
 		}
 	}
 }
@@ -299,31 +169,8 @@ func sendARPRequest(handle Handle, srcMAC net.HardwareAddr, srcIP, dstIP net.IP)
 	return handle.WritePacketData(buf.Bytes())
 }
 
-func cloneIP(ip net.IP) net.IP {
-	out := make(net.IP, len(ip))
-	copy(out, ip)
-	return out
-}
-
-func isPrivateIP(ip net.IP) bool {
-	return ip.IsPrivate() ||
-		ip.IsLoopback() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsLinkLocalUnicast()
-}
-
 func cloneMAC(mac net.HardwareAddr) net.HardwareAddr {
 	out := make(net.HardwareAddr, len(mac))
 	copy(out, mac)
 	return out
-}
-
-func probeGateway(ctx context.Context) {
-	conn, err := netutil.DialFastest(ctx, dnsProbe, "udp", 2*time.Second, nil)
-	if err != nil {
-		return
-	}
-	defer func() { _ = conn.Close() }()
-
-	_, _ = conn.Write([]byte("."))
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/google/gopacket/layers"
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/cache"
+	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/session"
@@ -26,15 +27,15 @@ type TCPSniffer struct {
 
 func NewTCPSniffer(
 	logger zerolog.Logger,
-	cache cache.Cache[netutil.IPKey, uint8],
 	handle Handle,
-	defaultTTL uint8,
+	cache cache.Cache[netutil.IPKey, uint8],
+	cfg *config.RuntimeConfig,
 ) *TCPSniffer {
 	return &TCPSniffer{
 		logger:     logger,
-		nhopCache:  cache,
 		handle:     handle,
-		defaultTTL: defaultTTL,
+		nhopCache:  cache,
+		defaultTTL: uint8(cfg.Conn.DefaultFakeTTL),
 	}
 }
 

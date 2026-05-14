@@ -42,7 +42,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				assert.Equal(t, HTTPSSplitModeSNI, cfg.Runtime.HTTPS.SplitMode)
 				assert.Equal(t, uint8(35), cfg.Runtime.HTTPS.ChunkSize)
 				assert.False(t, cfg.Runtime.HTTPS.Skip)
-				assert.Equal(t, 0, cfg.Runtime.UDP.FakeCount)
+				assert.Equal(t, uint8(0), cfg.Runtime.UDP.FakeCount)
 				assert.Equal(t, 64, len(cfg.Runtime.UDP.FakePacket))
 			},
 		},
@@ -106,7 +106,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				assert.True(t, cfg.Runtime.HTTPS.Skip)
 
 				// UDP
-				assert.Equal(t, 5, cfg.Runtime.UDP.FakeCount)
+				assert.Equal(t, uint8(5), cfg.Runtime.UDP.FakeCount)
 				assert.Equal(t, []byte{0x01, 0x02}, cfg.Runtime.UDP.FakePacket)
 			},
 		},
@@ -305,7 +305,7 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
 	assert.False(t, capturedCfg.Runtime.HTTPS.Skip)
 
 	// UDP
-	assert.Equal(t, 20, capturedCfg.Runtime.UDP.FakeCount)
+	assert.Equal(t, uint8(20), capturedCfg.Runtime.UDP.FakeCount)
 	assert.Equal(t, []byte{0xcc, 0xdd}, capturedCfg.Runtime.UDP.FakePacket)
 	assert.Equal(t, []byte{0xcc, 0xdd}, capturedCfg.Runtime.UDP.FakePacket)
 

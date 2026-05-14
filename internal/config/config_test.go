@@ -112,7 +112,7 @@ func TestConfig_NeedsPcapTCP(t *testing.T) {
 			name: "udp fake count alone is not TCP",
 			config: Config{
 				Runtime: RuntimeConfig{
-					UDP: UDPOptions{FakeCount: 1},
+					UDP: UDPOptions{FakeCount: uint8(1)},
 				},
 			},
 			expect: false,
@@ -140,7 +140,7 @@ func TestConfig_NeedsPcapUDP(t *testing.T) {
 			name: "global udp fake count > 0",
 			config: Config{
 				Runtime: RuntimeConfig{
-					UDP: UDPOptions{FakeCount: 1},
+					UDP: UDPOptions{FakeCount: uint8(1)},
 				},
 			},
 			expect: true,
@@ -152,7 +152,7 @@ func TestConfig_NeedsPcapUDP(t *testing.T) {
 					Rules: []Rule{
 						{
 							Config: RuntimeConfig{
-								UDP: UDPOptions{FakeCount: 1},
+								UDP: UDPOptions{FakeCount: uint8(1)},
 							},
 						},
 					},

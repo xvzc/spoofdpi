@@ -3,7 +3,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"net"
 	"strings"
 	"time"
@@ -530,7 +529,7 @@ func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
 
 type UDPOptions struct {
 	Skip       bool   `toml:"skip"`
-	FakeCount  int    `toml:"fake-count"`
+	FakeCount  uint8  `toml:"fake-count"`
 	FakePacket []byte `toml:"fake-packet"`
 }
 
@@ -539,9 +538,9 @@ type UDPOptions struct {
 // so the user can tell whether a packet is configured.
 func (o UDPOptions) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Skip          bool `json:"skip"`
-		FakeCount     int  `json:"fake-count"`
-		FakePacketLen int  `json:"fake-packet-len,omitempty"`
+		Skip          bool  `json:"skip"`
+		FakeCount     uint8 `json:"fake-count"`
+		FakePacketLen int   `json:"fake-packet-len,omitempty"`
 	}{
 		Skip:          o.Skip,
 		FakeCount:     o.FakeCount,
@@ -558,15 +557,7 @@ func (o *UDPOptions) UnmarshalTOML(data any) (err error) {
 	if p := findFrom(m, "skip", parseBoolFn(), &err); isOk(p, err) {
 		o.Skip = *p
 	}
-	if p := findFrom(
-		m,
-		"fake-count",
-		parseIntFn[int](int64Range(0, math.MaxInt64)),
-		&err,
-	); isOk(
-		p,
-		err,
-	) {
+	if p := findFrom(m, "fake-count", parseIntFn[uint8](checkUint8), &err); isOk(p, err) {
 		o.FakeCount = *p
 	}
 	if fp := findSliceFrom(m, "fake-packet", parseByteFn(nil), &err); fp != nil {

@@ -4,7 +4,7 @@ build:
 	go build ./cmd/...
 
 test:
-	go test $(ARGS) -race -tags network ./...
+	go test $(ARGS) -race -tags network ./... -v
 
 lint:
 	golangci-lint run

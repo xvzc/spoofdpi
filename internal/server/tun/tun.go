@@ -62,7 +62,7 @@ func NewTUNServer(
 		logger:     logger,
 		tcpHandler: tcpHandler,
 		udpHandler: udpHandler,
-		sysNet: sysNet,
+		sysNet:     sysNet,
 	}
 }
 

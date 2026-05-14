@@ -23,14 +23,13 @@ type UDPWriter struct {
 func NewUDPWriter(
 	logger zerolog.Logger,
 	handle Handle,
-	iface *net.Interface,
-	gatewayMAC net.HardwareAddr,
+	route *Route,
 ) *UDPWriter {
 	return &UDPWriter{
 		logger:     logger,
 		handle:     handle,
-		iface:      iface,
-		gatewayMAC: gatewayMAC,
+		iface:      &route.Iface,
+		gatewayMAC: route.GatewayMAC,
 	}
 }
 

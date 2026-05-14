@@ -32,36 +32,35 @@ type SOCKS5SystemNetwork interface {
 type SOCKS5Proxy struct {
 	logger zerolog.Logger
 
-	dns                 *dns.Client
-	ruleSet             *rule.RuleSet
 	connectHandler      *ConnectHandler
 	bindHandler         *BindHandler
 	udpAssociateHandler *UdpAssociateHandler
-
-	sysNet SOCKS5SystemNetwork
-	listenAddr net.TCPAddr
-	cfg        *config.RuntimeConfig
+	sysNet              SOCKS5SystemNetwork
+	dns                 *dns.Client
+	ruleSet             *rule.RuleSet
+	listenAddr          net.TCPAddr
+	cfg                 *config.RuntimeConfig
 }
 
 func NewSOCKS5Proxy(
 	logger zerolog.Logger,
-	dnsClient *dns.Client,
-	ruleSet *rule.RuleSet,
 	connectHandler *ConnectHandler,
 	bindHandler *BindHandler,
 	udpAssociateHandler *UdpAssociateHandler,
 	sysNet SOCKS5SystemNetwork,
+	dnsClient *dns.Client,
+	ruleSet *rule.RuleSet,
 	listenAddr net.TCPAddr,
 	cfg *config.RuntimeConfig,
 ) server.Server {
 	return &SOCKS5Proxy{
 		logger:              logger,
-		dns:                 dnsClient,
-		ruleSet:             ruleSet,
 		connectHandler:      connectHandler,
 		bindHandler:         bindHandler,
 		udpAssociateHandler: udpAssociateHandler,
 		sysNet:              sysNet,
+		dns:                 dnsClient,
+		ruleSet:             ruleSet,
 		listenAddr:          listenAddr,
 		cfg:                 cfg,
 	}

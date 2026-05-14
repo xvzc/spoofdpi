@@ -524,7 +524,7 @@ func TestUDPOptions_UnmarshalTOML(t *testing.T) {
 			wantErr: false,
 			assert: func(t *testing.T, o UDPOptions) {
 				assert.True(t, o.Skip)
-				assert.Equal(t, 3, o.FakeCount)
+				assert.Equal(t, uint8(3), o.FakeCount)
 				assert.Equal(t, []byte{0xAA, 0xBB}, o.FakePacket)
 			},
 		},

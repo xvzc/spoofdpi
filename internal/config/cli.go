@@ -370,9 +370,9 @@ func CreateCommand(
 				),
 				Value:     0,
 				OnlyOnce:  true,
-				Validator: int64Range(0, math.MaxInt),
+				Validator: int64Range(0, math.MaxUint8),
 				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
-					n := int(v)
+					n := uint8(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
 						cfg.Runtime.UDP.FakeCount = n
 					})

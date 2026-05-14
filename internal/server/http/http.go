@@ -29,33 +29,32 @@ type HTTPSystemNetwork interface {
 type HTTPProxy struct {
 	logger zerolog.Logger
 
-	dns          *dns.Client
 	httpHandler  *HTTPHandler
 	httpsHandler *HTTPSHandler
+	sysNet       HTTPSystemNetwork
+	dns          *dns.Client
 	ruleSet      *rule.RuleSet
-
-	sysNet HTTPSystemNetwork
-	listenAddr net.TCPAddr
-	cfg        *config.RuntimeConfig
+	listenAddr   net.TCPAddr
+	cfg          *config.RuntimeConfig
 }
 
 func NewHTTPProxy(
 	logger zerolog.Logger,
-	dnsClient *dns.Client,
 	httpHandler *HTTPHandler,
 	httpsHandler *HTTPSHandler,
-	ruleSet *rule.RuleSet,
 	sysNet HTTPSystemNetwork,
+	dnsClient *dns.Client,
+	ruleSet *rule.RuleSet,
 	listenAddr net.TCPAddr,
 	cfg *config.RuntimeConfig,
 ) server.Server {
 	return &HTTPProxy{
 		logger:       logger,
-		dns:          dnsClient,
 		httpHandler:  httpHandler,
 		httpsHandler: httpsHandler,
+		sysNet:       sysNet,
+		dns:          dnsClient,
 		ruleSet:      ruleSet,
-		sysNet: sysNet,
 		listenAddr:   listenAddr,
 		cfg:          cfg,
 	}

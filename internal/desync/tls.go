@@ -41,9 +41,10 @@ func NewTLSDesyncer(
 // PrepareHopTrack registers addrs with the sniffer for hop-count learning,
 // guarded by the config so the LRU isn't touched when fakes won't be sent.
 func (d *TLSDesyncer) PrepareHopTrack(addrs []net.IP, cfg *config.HTTPSOptions) {
-	if !cfg.Skip && cfg.FakeCount > 0 {
-		d.sniffer.Register(addrs)
+	if d.sniffer == nil || cfg.Skip || cfg.FakeCount == 0 {
+		return
 	}
+	d.sniffer.Register(addrs)
 }
 
 func (d *TLSDesyncer) Desync(
@@ -59,7 +60,7 @@ func (d *TLSDesyncer) Desync(
 		return d.sendSegments(conn, logger, []Segment{{Packet: msg.Raw()}})
 	}
 
-	if httpsOpts.FakeCount > 0 {
+	if httpsOpts.FakeCount > 0 && d.sniffer != nil && d.writer != nil {
 		oTTL := d.sniffer.GetOptimalTTL(
 			netutil.NewIPKey(conn.RemoteAddr().(*net.TCPAddr).IP),
 		)
