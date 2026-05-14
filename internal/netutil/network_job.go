@@ -19,13 +19,17 @@ type NetworkJob struct {
 	Reset       string `json:"reset,omitempty"`
 }
 
+type jobState struct {
+	Jobs      []NetworkJob `json:"jobs"`
+	CreatedAt time.Time    `json:"createdAt"`
+}
+
 // SaveJobs marshals jobs to a JSON state file at path.
 func SaveJobs(path string, jobs []NetworkJob) error {
-	type state struct {
-		Jobs      []NetworkJob `json:"jobs"`
-		CreatedAt time.Time    `json:"createdAt"`
+	if path == "" {
+		return nil
 	}
-	data, err := json.MarshalIndent(state{Jobs: jobs, CreatedAt: time.Now()}, "", "  ")
+	data, err := json.MarshalIndent(jobState{Jobs: jobs, CreatedAt: time.Now()}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -33,10 +37,10 @@ func SaveJobs(path string, jobs []NetworkJob) error {
 }
 
 // LoadJobs reads and unmarshals the state file at path.
-// Returns (nil, false, nil) when the file does not exist.
+// Returns (nil, false, nil) when path is empty or the file does not exist.
 func LoadJobs(path string) ([]NetworkJob, bool, error) {
-	type state struct {
-		Jobs []NetworkJob `json:"jobs"`
+	if path == "" {
+		return nil, false, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -45,7 +49,7 @@ func LoadJobs(path string) ([]NetworkJob, bool, error) {
 		}
 		return nil, false, err
 	}
-	var s state
+	var s jobState
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, false, err
 	}
