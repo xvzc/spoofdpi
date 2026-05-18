@@ -1,0 +1,17 @@
+.gp {
+  user-select: none;
+  -webkit-user-select: none; /* Safari */
+  -moz-user-select: none;    /* Firefox */
+  -ms-user-select: none;
+
+  color: #7aeba3 !important;
+  padding-right: 0.5em;
+}
+
+.kc {
+  color: #f5c4f4 !important;
+}
+
+.nv {
+  color: #8b8bc7 !important;
+}
