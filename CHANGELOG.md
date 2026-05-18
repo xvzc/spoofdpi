@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.3](https://github.com/xvzc/spoofdpi/compare/v1.5.2...v1.5.3) (2026-05-18)
+
+
+### Bug Fixes
+
+* **config:** update validation error message domain → domains ([a7383d2](https://github.com/xvzc/spoofdpi/commit/a7383d2c1d7c8e091b70ffb557874907e5a986e6))
+
 ## [1.5.2](https://github.com/xvzc/spoofdpi/compare/v1.5.1...v1.5.2) (2026-05-14)
 
 
