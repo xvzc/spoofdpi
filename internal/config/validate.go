@@ -143,7 +143,7 @@ func checkRule(r Rule) error {
 
 func checkMatchAttrs(m MatchAttrs) error {
 	if len(m.Domains) == 0 && len(m.CIDRs) == 0 {
-		return fmt.Errorf("match must have at least one 'domain' or 'cidrs' entry")
+		return fmt.Errorf("match must have at least one 'domains' or 'cidrs' entry")
 	}
 	return nil
 }
