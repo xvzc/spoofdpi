@@ -576,7 +576,7 @@ func (o *UDPOptions) UnmarshalTOML(data any) (err error) {
 // └──────────────┘
 
 type MatchAttrs struct {
-	Domains []string `toml:"domain"`
+	Domains []string `toml:"domains"`
 	CIDRs   []string `toml:"cidrs"`
 }
 
@@ -600,7 +600,7 @@ func (a *MatchAttrs) UnmarshalTOML(data any) (err error) {
 		return fmt.Errorf("'match' must be table type")
 	}
 
-	if raw := findSliceFrom(v, "domain", parseStringFn(nil), &err); raw != nil {
+	if raw := findSliceFrom(v, "domains", parseStringFn(nil), &err); raw != nil {
 		for _, d := range raw {
 			if e := checkDomainPattern(d); e != nil {
 				return fmt.Errorf("invalid domain %q: %w", d, e)

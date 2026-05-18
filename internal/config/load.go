@@ -182,7 +182,7 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 	return rules, nil
 }
 
-// expandFileMatchList expands any file: entries in the domain/cidrs
+// expandFileMatchList expands any file: entries in the domains/cidrs
 // arrays of a raw match map in-place. Missing files emit a warning via
 // AddWarnMsg; other I/O failures return an error.
 func expandFileMatchList(v any, ruleIdx int, configDir string) error {
@@ -190,7 +190,7 @@ func expandFileMatchList(v any, ruleIdx int, configDir string) error {
 	if !ok {
 		return nil
 	}
-	for _, key := range []string{"domain", "cidrs"} {
+	for _, key := range []string{"domains", "cidrs"} {
 		arr, ok := m[key].([]any)
 		if !ok {
 			continue

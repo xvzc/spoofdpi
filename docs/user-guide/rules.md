@@ -19,28 +19,21 @@ The top-level `[[rules]]` array contains one table per rule. Each rule consists 
 
 ## Match Criteria (`match`)
 
-You can specify a `domain` list or an `addr` list (containing `cidr` and `port`).
+You can specify a `domains` list or a `cidrs` list.
 
-| Field    | Type   | Description                                                                 |
-| :------- | :----- | :-------------------------------------------------------------------------- |
-| `domain` | Array  | List of domain patterns. Supports wildcards (`*`, `**`).                    |
-| `addr`   | Array  | List of address rules. Each rule requires `cidr` and `port`.                |
-
-### Address Rule (`addr`)
-
-| Field  | Type   | Description                                                                 |
-| :----- | :----- | :-------------------------------------------------------------------------- |
-| `cidr` | String | IP range in CIDR notation (e.g., `192.168.0.0/24`).                         |
-| `port` | String | Port or port range (e.g., `80`, `80-443`, `all`).                          |
+| Field     | Type   | Description                                                                 |
+| :-------- | :----- | :-------------------------------------------------------------------------- |
+| `domains` | Array  | List of domain patterns. Supports wildcards (`*`, `**`).                    |
+| `cidrs`   | Array  | List of IP ranges in CIDR notation (e.g., `["10.0.0.0/8"]`).               |
 
 ### File-based match lists
 
-Both `domain` and `cidrs` accept items with a `file:` prefix. The path after the prefix is read line by line, and each non-empty, non-comment line is treated as an additional item.
+Both `domains` and `cidrs` accept items with a `file:` prefix. The path after the prefix is read line by line, and each non-empty, non-comment line is treated as an additional item.
 
 ```toml
 [[rules]]
     name = "streaming"
-    match = { domain = ["file:assets/streaming-domains.txt", "*.youtube.com"] }
+    match = { domains = ["file:assets/streaming-domains.txt", "*.youtube.com"] }
     https = { fake-count = 5 }
 ```
 
@@ -99,21 +92,21 @@ Customize how HTTPS connections are established. The available fields mirror the
 [[rules]]
     name = "allow youtube"
     priority = 50
-    match = { domain = ["*.youtube.com"] }
+    match = { domains = ["*.youtube.com"] }
     https = { disorder = true, fake-count = 7 }
 
 # Example B: Bypass DPI for local network traffic (Standard Connection)
 [[rules]]
     name = "skip local"
     priority = 51
-    match = { addr = [{ cidr = "192.168.0.0/24", port = "all" }] }
+    match = { cidrs = ["192.168.0.0/24"] }
     https = { skip = true }
 
 # Example C: Block a specific domain
 [[rules]]
     name = "block ads"
     priority = 100
-    match = { domain = ["ads.example.com"] }
+    match = { domains = ["ads.example.com"] }
     block = true
 ```
 
@@ -125,6 +118,6 @@ Earlier versions used `[[policy.overrides]]` instead of `[[rules]]`. The old key
 # Deprecated form — still works, prints a warning
 [[policy.overrides]]
     name = "allow youtube"
-    match = { domain = ["*.youtube.com"] }
+    match = { domains = ["*.youtube.com"] }
     https = { fake-count = 7 }
 ```

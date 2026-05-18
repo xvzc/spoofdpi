@@ -28,7 +28,7 @@ func TestConfig_UnmarshalTOML(t *testing.T) {
 						{
 							"name": "test",
 							"match": map[string]any{
-								"domain": []any{"example.com"},
+								"domains": []any{"example.com"},
 							},
 							"dns": map[string]any{
 								"route": "doh",
@@ -219,7 +219,7 @@ func TestResolveRules_inheritsFromBase(t *testing.T) {
 		{
 			"name": "rule1",
 			"match": map[string]any{
-				"domain": []any{"example.com"},
+				"domains": []any{"example.com"},
 			},
 			"https": map[string]any{
 				// Only override fake-count; other HTTPS fields should
@@ -305,7 +305,7 @@ func TestResolveRules_skipNotInheritedFromBase(t *testing.T) {
 
 			item := map[string]any{
 				"name":  "r",
-				"match": map[string]any{"domain": []any{"example.com"}},
+				"match": map[string]any{"domains": []any{"example.com"}},
 			}
 			if tc.ruleHTTPS != nil {
 				item["https"] = tc.ruleHTTPS

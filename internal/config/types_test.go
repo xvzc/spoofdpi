@@ -227,7 +227,7 @@ func TestMatchAttrs_UnmarshalTOML(t *testing.T) {
 		{
 			name: "valid domain",
 			input: map[string]any{
-				"domain": []any{"example.com"},
+				"domains": []any{"example.com"},
 			},
 			wantErr: false,
 			assert: func(t *testing.T, m MatchAttrs) {
@@ -294,7 +294,7 @@ func TestRule_UnmarshalTOML(t *testing.T) {
 			input: map[string]any{
 				"name": "rule1",
 				"match": map[string]any{
-					"domain": []any{"example.com"},
+					"domains": []any{"example.com"},
 				},
 				"block": true,
 			},

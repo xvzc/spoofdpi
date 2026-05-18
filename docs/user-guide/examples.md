@@ -33,18 +33,18 @@ Route traffic differently based on the domain or IP address.
 # Block ads
 [[rules]]
     name = "block ads"
-    match = { domain = ["ads.example.com"] }
+    match = { domains = ["ads.example.com"] }
     block = true
 
 # Bypass DPI for specific blocked site
 [[rules]]
     name = "unblock site"
-    match = { domain = ["blocked-site.com"] }
-    https = { fake-count = 7, disorder = true }
+    match = { domains = ["blocked-site.com"] }
+    https = { fake-count = 2, disorder = true }
 
 # Use local network directly (no processing)
 [[rules]]
     name = "local bypass"
-    match = { addr = [{ cidr = "192.168.0.0/16", port = "all" }] }
+    match = { cidrs = ["192.168.0.0/16"] }
     https = { skip = true }
 ```

@@ -211,10 +211,8 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
     priority = 100
     block = true
     match = {
-        domain = ["example.com"],
-        addr = [
-            {cidr = "192.168.1.0/24", port = "80-443"}
-        ]
+        domains = ["example.com"],
+        cidrs = ["192.168.1.0/24"],
     }
     dns = {
         mode = "udp",
@@ -331,7 +329,7 @@ func TestLoad_RuleInheritsFromCLIAndTOML(t *testing.T) {
 
 [[rules]]
     name = "partial-rule"
-    match = { domain = ["example.com"] }
+    match = { domains = ["example.com"] }
     https = { chunk-size = 50, skip = true }
 `
 	tmpDir := t.TempDir()
