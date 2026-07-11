@@ -102,9 +102,16 @@ func (h *HTTPSHandler) HandleRequest(
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Bound the established tunnel: a half-dead peer (gone with no FIN/RST) would
+	// otherwise leak both copy goroutines and both fds forever, accumulating over
+	// long uptime. IdleTimeoutConn resets on activity in either direction, so only
+	// fully-silent tunnels are reaped (the resulting timeout is treated as benign).
+	lIdle := netutil.NewIdleTimeoutConn(lConn, netutil.DefaultTunnelIdleTimeout)
+	rIdle := netutil.NewIdleTimeoutConn(rConn, netutil.DefaultTunnelIdleTimeout)
+
 	startedAt := time.Now()
-	go netutil.TunnelConns(ctx, resCh, lConn, rConn, netutil.TunnelDirOut)
-	go netutil.TunnelConns(ctx, resCh, rConn, lConn, netutil.TunnelDirIn)
+	go netutil.TunnelConns(ctx, resCh, lIdle, rIdle, netutil.TunnelDirOut)
+	go netutil.TunnelConns(ctx, resCh, rIdle, lIdle, netutil.TunnelDirIn)
 
 	handleErrs := func(errs []error) error {
 		if len(errs) == 0 {

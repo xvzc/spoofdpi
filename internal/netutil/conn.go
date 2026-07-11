@@ -232,6 +232,14 @@ func (b *BufferedConn) Peek(n int) ([]byte, error) {
 	return b.r.Peek(n)
 }
 
+// DefaultTunnelIdleTimeout bounds how long an established TCP tunnel may sit with
+// no traffic in either direction before it is torn down. Without it, a half-dead
+// connection (peer gone with no FIN/RST — common behind NAT/flaky links) keeps its
+// two copy goroutines and two fds alive forever, so they accumulate over long
+// uptime and drive CPU up. Activity in either direction resets the timer, so this
+// only reaps genuinely-silent tunnels. Mirrors the existing UDPIdleTimeout.
+const DefaultTunnelIdleTimeout = 300 * time.Second
+
 // IdleTimeoutConn wraps a net.Conn to extend the deadline on every Read/Write call.
 // This is useful for sessions which should stay alive as long as there is activity.
 type IdleTimeoutConn struct {
