@@ -56,9 +56,14 @@ func (h *HTTPHandler) HandleRequest(
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// See handler_https.go: bound the tunnel so a half-dead peer can't leak its
+	// copy goroutines and fds forever. Activity in either direction resets it.
+	lIdle := netutil.NewIdleTimeoutConn(lConn, netutil.DefaultTunnelIdleTimeout)
+	rIdle := netutil.NewIdleTimeoutConn(rConn, netutil.DefaultTunnelIdleTimeout)
+
 	startedAt := time.Now()
-	go netutil.TunnelConns(ctx, resCh, lConn, rConn, netutil.TunnelDirOut)
-	go netutil.TunnelConns(ctx, resCh, rConn, lConn, netutil.TunnelDirIn)
+	go netutil.TunnelConns(ctx, resCh, lIdle, rIdle, netutil.TunnelDirOut)
+	go netutil.TunnelConns(ctx, resCh, rIdle, lIdle, netutil.TunnelDirIn)
 
 	return netutil.WaitForTunnelCompletion(
 		ctx,
