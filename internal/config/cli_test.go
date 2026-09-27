@@ -5,12 +5,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/urfave/cli/v3"
 )
 
 func TestCreateCommand_Flags(t *testing.T) {
@@ -372,4 +374,58 @@ func TestLoad_RuleInheritsFromCLIAndTOML(t *testing.T) {
 	// Package default inherited (no one set it)
 	assert.False(t, rule.Config.HTTPS.Disorder,
 		"rule inherits disorder=false from package default")
+}
+
+// TestCreateCommand_EnumUsageMatchesValidator guards the enum flags' help text
+// against drifting away from the values their validators actually accept.
+// Regression test: --dns-mode advertised <'udp'|'doh'|'sys'> while only
+// "udp", "https" and "system" were accepted, and --https-split-mode listed
+// "sni" twice while omitting "first-byte".
+func TestCreateCommand_EnumUsageMatchesValidator(t *testing.T) {
+	tcs := []struct {
+		flag   string
+		values []string
+	}{
+		{flag: "app-mode", values: availableAppModeValues},
+		{flag: "dns-mode", values: availableDNSModeValues},
+		{flag: "dns-qtype", values: availableDNSQueryValues},
+		{flag: "https-split-mode", values: availableHTTPSModeValues},
+	}
+
+	runFunc := func(ctx context.Context, configDir string, cfg *Config) error {
+		return nil
+	}
+	cmd := CreateCommand(runFunc, "v0.0.0", "commit", "build")
+
+	usageOf := func(t *testing.T, name string) string {
+		t.Helper()
+		for _, f := range cmd.Flags {
+			if !slices.Contains(f.Names(), name) {
+				continue
+			}
+			df, ok := f.(cli.DocGenerationFlag)
+			require.True(t, ok, "flag --%s does not expose its usage", name)
+			return df.GetUsage()
+		}
+		t.Fatalf("flag --%s not found", name)
+		return ""
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.flag, func(t *testing.T) {
+			// The hint must list every accepted value, exactly once each,
+			// and advertise nothing the validator would reject.
+			assert.Contains(t, usageOf(t, tc.flag), enumUsage(tc.values))
+		})
+	}
+}
+
+// TestEnumUsage pins the rendering of the usage hint.
+func TestEnumUsage(t *testing.T) {
+	assert.Equal(
+		t,
+		`<"udp"|"https"|"system">`,
+		enumUsage([]string{"udp", "https", "system"}),
+	)
+	assert.Equal(t, `<"only">`, enumUsage([]string{"only"}))
 }

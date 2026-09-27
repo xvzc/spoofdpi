@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/user"
+	"strings"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -91,10 +92,11 @@ func CreateCommand(
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name: "app-mode",
-				Usage: fmt.Sprintf(`<"http"|"socks5"|"tun">
+				Usage: fmt.Sprintf(`%s
 				Specifies the proxy mode.
 				Note that 'socks5' and 'tun' modes are currently experimental.
 				(default: %q)`,
+					enumUsage(availableAppModeValues),
 					defaultCfg.Startup.App.Mode.String(),
 				),
 				OnlyOnce:  true,
@@ -178,9 +180,10 @@ func CreateCommand(
 
 			&cli.StringFlag{
 				Name: "dns-mode",
-				Usage: fmt.Sprintf(`<'udp'|'doh'|'sys'>
+				Usage: fmt.Sprintf(`%s
 				Default resolution mode for domains that do not match any specific rule.
 				(default: %q)`,
+					enumUsage(availableDNSModeValues),
 					defaultCfg.Runtime.DNS.Mode.String(),
 				),
 				Value:     "udp",
@@ -216,9 +219,10 @@ func CreateCommand(
 
 			&cli.StringFlag{
 				Name: "dns-qtype",
-				Usage: fmt.Sprintf(`<"ipv4"|"ipv6"|"all">
+				Usage: fmt.Sprintf(`%s
 				Filters DNS queries by record type (A for IPv4, AAAA for IPv6).
 				(default: %q)`,
+					enumUsage(availableDNSQueryValues),
 					defaultCfg.Runtime.DNS.QType.String(),
 				),
 				Value:     "ipv4",
@@ -307,8 +311,9 @@ func CreateCommand(
 
 			&cli.StringFlag{
 				Name: "https-split-mode",
-				Usage: fmt.Sprintf(`<"sni"|"random"|"chunk"|"sni"|"custom"|"none">
+				Usage: fmt.Sprintf(`%s
 				Specifies the default packet fragmentation strategy to use. (default: %q)`,
+					enumUsage(availableHTTPSModeValues),
 					defaultCfg.Runtime.HTTPS.SplitMode.String(),
 				),
 				Value:     "chunk",
@@ -344,9 +349,9 @@ func CreateCommand(
 				Name: "https-chunk-size",
 				Usage: fmt.Sprintf(`
 				The chunk size (in bytes) for packet fragmentation. This value is only applied 
-				when 'https-split-default' is 'chunk'. While setting the size to '0' internally 
+				when 'https-split-mode' is 'chunk'. While setting the size to '0' internally 
 				disables fragmentation (to avoid division-by-zero errors), you should set 
-				'https-split-default' to 'none' to disable the feature cleanly.
+				'https-split-mode' to 'none' to disable the feature cleanly.
 				(default: %v, max: %v)`,
 					defaultCfg.Runtime.HTTPS.ChunkSize,
 					math.MaxUint8,
@@ -569,6 +574,18 @@ func CreateCommand(
 	}
 
 	return cmd
+}
+
+// enumUsage renders the accepted values of an enum flag as a usage hint,
+// e.g. <"udp"|"https"|"system">. It is derived from the same slice the
+// flag's validator checks against, so the help text cannot drift away from
+// what the flag actually accepts.
+func enumUsage(values []string) string {
+	quoted := make([]string, len(values))
+	for i, v := range values {
+		quoted[i] = fmt.Sprintf("%q", v)
+	}
+	return "<" + strings.Join(quoted, "|") + ">"
 }
 
 func determineRealHome() string {
