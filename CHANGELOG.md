@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.4](https://github.com/xvzc/spoofdpi/compare/v1.5.3...v1.5.4) (2026-09-28)
+
+
+### Bug Fixes
+
+* **config:** derive enum flag usage text from validator values ([ee86fa2](https://github.com/xvzc/spoofdpi/commit/ee86fa21b8d924846b284ead18560b6759c3e37d))
+
 ## [1.5.3](https://github.com/xvzc/spoofdpi/compare/v1.5.2...v1.5.3) (2026-05-18)
 
 
