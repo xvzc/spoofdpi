@@ -14,8 +14,9 @@ type Server interface {
 	Addr() string
 
 	// SetupNetworkJobs builds the job list, saves it to the state file, and
-	// returns the state file path. For HTTP/SOCKS5 this also starts the PAC
+	// returns the state file path. On darwin, HTTP/SOCKS5 also start the PAC
 	// server, tied to ctx so it shuts down automatically when ctx is cancelled.
+	// The returned path may be empty when the platform has nothing to configure.
 	SetupNetworkJobs(ctx context.Context) (string, error)
 }
 
