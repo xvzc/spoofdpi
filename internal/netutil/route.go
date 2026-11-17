@@ -31,8 +31,14 @@ func DiscoverInterface() (*net.Interface, net.IP, error) {
 }
 
 // DiscoverRoute discovers the default network route.
-// Gateway IP and interface are resolved from the OS routing table.
-func DiscoverRoute() (*Route, error) {
+// If gateway is nil, the gateway IP and interface are resolved from the OS
+// routing table. Otherwise the given gateway is used as is, and the
+// interface is the one whose subnet contains it, so the two always match.
+func DiscoverRoute(gateway net.IP) (*Route, error) {
+	if gateway != nil {
+		return routeForGateway(gateway)
+	}
+
 	gwIP, err := gw.DiscoverGateway()
 	if err != nil {
 		return nil, fmt.Errorf("discover gateway: %w", err)
@@ -68,4 +74,79 @@ func findIfaceByIP(localIP net.IP) (*net.Interface, error) {
 		}
 	}
 	return nil, fmt.Errorf("no interface found for %s", localIP)
+}
+
+type ifaceAddrs struct {
+	iface net.Interface
+	addrs []net.Addr
+}
+
+func routeForGateway(gateway net.IP) (*Route, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, fmt.Errorf("net.Interfaces: %w", err)
+	}
+
+	candidates := make([]ifaceAddrs, 0, len(ifaces))
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		candidates = append(candidates, ifaceAddrs{iface: iface, addrs: addrs})
+	}
+
+	iface, localIP, err := findIfaceByGateway(candidates, gateway)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Route{
+		Iface:   *iface,
+		LocalIP: localIP,
+		Gateway: gateway,
+	}, nil
+}
+
+// findIfaceByGateway returns the first interface that is up, is not a
+// loopback, and has an IPv4 subnet containing gateway, together with its
+// own address on that subnet.
+func findIfaceByGateway(
+	candidates []ifaceAddrs,
+	gateway net.IP,
+) (*net.Interface, net.IP, error) {
+	gw4 := gateway.To4()
+	if gw4 == nil {
+		return nil, nil, fmt.Errorf("gateway %s is not an IPv4 address", gateway)
+	}
+
+	for i := range candidates {
+		iface := &candidates[i].iface
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		for _, addr := range candidates[i].addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			localIP := ipnet.IP.To4()
+			if localIP == nil || !ipnet.Contains(gw4) {
+				continue
+			}
+			if localIP.Equal(gw4) {
+				return nil, nil, fmt.Errorf(
+					"gateway %s is the address of interface %s itself",
+					gateway,
+					iface.Name,
+				)
+			}
+			return iface, localIP, nil
+		}
+	}
+
+	return nil, nil, fmt.Errorf(
+		"no interface is on the same subnet as gateway %s",
+		gateway,
+	)
 }

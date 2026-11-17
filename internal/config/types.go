@@ -31,6 +31,7 @@ type AppOptions struct {
 	AutoConfigureNetwork bool          `toml:"auto-configure-network"`
 	Mode                 AppModeType   `toml:"mode"`
 	ListenAddr           net.TCPAddr   `toml:"listen-addr"`
+	Gateway              net.IP        `toml:"gateway"`     // nil: discover from the routing table
 	FreebsdFIB           int           `toml:"freebsd-fib"` // FreeBSD only: FIB ID for routing (2-15)
 }
 
@@ -57,6 +58,9 @@ func (o *AppOptions) UnmarshalTOML(data any) (err error) {
 	}
 	if p := findFrom(m, "listen-addr", parseStringFn(checkHostPort), &err); isOk(p, err) {
 		o.ListenAddr = MustParseTCPAddr(*p)
+	}
+	if p := findFrom(m, "gateway", parseStringFn(checkGateway), &err); isOk(p, err) {
+		o.Gateway = MustParseIPv4(*p)
 	}
 	if p := findFrom(
 		m,

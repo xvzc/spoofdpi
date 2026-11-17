@@ -62,6 +62,37 @@ func TestCheckHostPort(t *testing.T) {
 	}
 }
 
+func TestCheckGateway(t *testing.T) {
+	tcs := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"valid private ipv4", "192.168.1.1", false},
+		{"valid public ipv4", "203.0.113.1", false},
+		{"valid link-local ipv4", "169.254.1.1", false},
+		{"ipv6", "fe80::1", true},
+		{"hostname", "router.local", true},
+		{"empty", "", true},
+		{"with port", "192.168.1.1:53", true},
+		{"unspecified", "0.0.0.0", true},
+		{"loopback", "127.0.0.1", true},
+		{"multicast", "224.0.0.1", true},
+		{"broadcast", "255.255.255.255", true},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkGateway(tc.input)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestCheckCIDR(t *testing.T) {
 	tcs := []struct {
 		name    string

@@ -283,10 +283,14 @@ func createServer(
 	var defaultRoute *netutil.Route
 	if cfg.NeedsRoute() {
 		var err error
-		defaultRoute, err = netutil.DiscoverRoute()
+		defaultRoute, err = netutil.DiscoverRoute(cfg.Startup.App.Gateway)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find default route: %w", err)
 		}
+	} else if cfg.Startup.App.Gateway != nil {
+		logger.Warn().
+			Str("gateway", cfg.Startup.App.Gateway.String()).
+			Msg("gateway is ignored; only fake packets and tun mode use it")
 	}
 
 	tcpSniffer, udpSniffer, tcpWriter, udpWriter, err := setupPcapIO(

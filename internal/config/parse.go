@@ -67,6 +67,15 @@ func MustParseTCPAddr(s string) net.TCPAddr {
 	return addr
 }
 
+func MustParseIPv4(s string) net.IP {
+	ip := net.ParseIP(s).To4()
+	if ip == nil {
+		panic(fmt.Sprintf("cannot parse %q to IPv4 address", s))
+	}
+
+	return ip
+}
+
 func MustParseLogLevel(s string) zerolog.Level {
 	level, err := zerolog.ParseLevel(s)
 	if err != nil {
