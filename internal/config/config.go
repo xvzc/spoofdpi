@@ -103,6 +103,13 @@ func (c *Config) NeedsPcap() bool {
 	return c.NeedsPcapTCP() || c.NeedsPcapUDP()
 }
 
+// NeedsRoute reports whether the default route must be discovered at
+// startup: raw packet capture needs the gateway, and TUN mode routes
+// traffic through it.
+func (c *Config) NeedsRoute() bool {
+	return c.NeedsPcap() || c.Startup.App.Mode == AppModeTUN
+}
+
 // Finalize applies defaults that depend on other fields (e.g. ListenAddr
 // per Mode). Called after defaults+TOML+CLI layers are merged, before
 // Validate. Rule resolution is handled separately by Load via
