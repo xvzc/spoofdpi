@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.6](https://github.com/xvzc/spoofdpi/compare/v1.5.5...v1.5.6) (2026-11-17)
+
+
+### Bug Fixes
+
+* discover default route only when required ([3ffd169](https://github.com/xvzc/spoofdpi/commit/3ffd169f312bfeadff85352b3987de68a9edb500)), closes [#412](https://github.com/xvzc/spoofdpi/issues/412)
+
 ## [1.5.5](https://github.com/xvzc/spoofdpi/compare/v1.5.4...v1.5.5) (2026-10-16)
 
 
