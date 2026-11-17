@@ -19,18 +19,11 @@ import (
 	"github.com/xvzc/spoofdpi/internal/session"
 )
 
-// HTTPSystemNetwork handles OS-specific network configuration for HTTP proxy.
-type HTTPSystemNetwork interface {
-	DefaultRoute() *netutil.Route
-	BuildJobs(port uint16, pacURL string) ([]server.NetworkJob, error)
-}
-
 type HTTPProxy struct {
 	logger zerolog.Logger
 
 	httpHandler  *HTTPHandler
 	httpsHandler *HTTPSHandler
-	sysNet       HTTPSystemNetwork
 	dns          *dns.Client
 	ruleSet      *rule.RuleSet
 	listenAddr   net.TCPAddr
@@ -41,7 +34,6 @@ func NewHTTPProxy(
 	logger zerolog.Logger,
 	httpHandler *HTTPHandler,
 	httpsHandler *HTTPSHandler,
-	sysNet HTTPSystemNetwork,
 	dnsClient *dns.Client,
 	ruleSet *rule.RuleSet,
 	listenAddr net.TCPAddr,
@@ -51,7 +43,6 @@ func NewHTTPProxy(
 		logger:       logger,
 		httpHandler:  httpHandler,
 		httpsHandler: httpsHandler,
-		sysNet:       sysNet,
 		dns:          dnsClient,
 		ruleSet:      ruleSet,
 		listenAddr:   listenAddr,
@@ -99,24 +90,13 @@ func (p *HTTPProxy) ListenAndServe(
 }
 
 func (p *HTTPProxy) SetupNetworkJobs(ctx context.Context) (string, error) {
-	pacContent := fmt.Sprintf(
-		"function FindProxyForURL(url, host) {\n    return \"PROXY 127.0.0.1:%d; DIRECT\";\n}",
-		p.listenAddr.Port,
-	)
-	pacURL, pac, err := netutil.RunPACServer(pacContent)
-	if err != nil {
-		return "", fmt.Errorf("error creating pac server: %w", err)
-	}
-	jobs, err := p.sysNet.BuildJobs(uint16(p.listenAddr.Port), pacURL)
-	if err != nil {
-		_ = pac.Close()
+	if err := server.SetupSystemProxy(
+		ctx,
+		fmt.Sprintf("PROXY 127.0.0.1:%d", p.listenAddr.Port),
+		StateFile,
+	); err != nil {
 		return "", err
 	}
-	if err := server.SaveJobs(StateFile, jobs); err != nil {
-		_ = pac.Close()
-		return "", fmt.Errorf("failed to save state: %w", err)
-	}
-	go func() { <-ctx.Done(); _ = pac.Close() }()
 	return StateFile, nil
 }
 
