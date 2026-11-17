@@ -10,7 +10,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
 const StateFile = "/tmp/spoofdpi.socks5.darwin.state"
@@ -22,12 +21,12 @@ type socks5NetworkInfoDarwin struct {
 
 type socks5SystemNetworkDarwin struct {
 	logger       zerolog.Logger
-	defaultRoute *packet.Route
+	defaultRoute *netutil.Route
 }
 
 func NewSOCKS5SystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *packet.Route,
+	defaultRoute *netutil.Route,
 ) SOCKS5SystemNetwork {
 	return &socks5SystemNetworkDarwin{
 		logger:       logger,
@@ -35,7 +34,7 @@ func NewSOCKS5SystemNetwork(
 	}
 }
 
-func (n *socks5SystemNetworkDarwin) DefaultRoute() *packet.Route {
+func (n *socks5SystemNetworkDarwin) DefaultRoute() *netutil.Route {
 	return n.defaultRoute
 }
 
@@ -58,7 +57,7 @@ func getNetworkServiceFromInterface(ifaceName string) (string, error) {
 }
 
 func collectNetworkInfo(
-	defaultRoute *packet.Route, pacURL string,
+	defaultRoute *netutil.Route, pacURL string,
 ) (*socks5NetworkInfoDarwin, error) {
 	service, err := getNetworkServiceFromInterface(defaultRoute.Iface.Name)
 	if err != nil {

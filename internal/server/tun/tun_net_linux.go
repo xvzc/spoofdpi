@@ -12,7 +12,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
@@ -177,14 +176,14 @@ func (n *tunSystemNetworkLinux) BuildJobs() ([]netutil.NetworkJob, error) {
 type tunSystemNetworkLinux struct {
 	logger       zerolog.Logger
 	tunDevice    tun.Device
-	defaultRoute *packet.Route
+	defaultRoute *netutil.Route
 }
 
 // NewTUNSystemNetwork creates a new TUNSystemNetwork for TUN mode on Linux
 // fibID is ignored on Linux (FreeBSD-specific)
 func NewTUNSystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *packet.Route,
+	defaultRoute *netutil.Route,
 	fibID int,
 ) (TUNSystemNetwork, error) {
 	dev, err := createTunDevice()
@@ -203,7 +202,7 @@ func (n *tunSystemNetworkLinux) TunDevice() tun.Device {
 	return n.tunDevice
 }
 
-func (n *tunSystemNetworkLinux) DefaultRoute() *packet.Route {
+func (n *tunSystemNetworkLinux) DefaultRoute() *netutil.Route {
 	return n.defaultRoute
 }
 

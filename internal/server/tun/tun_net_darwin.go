@@ -10,7 +10,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
@@ -114,14 +113,14 @@ func (n *tunSystemNetworkDarwin) BuildJobs() ([]netutil.NetworkJob, error) {
 type tunSystemNetworkDarwin struct {
 	logger       zerolog.Logger
 	tunDevice    tun.Device
-	defaultRoute *packet.Route
+	defaultRoute *netutil.Route
 }
 
 // NewTUNSystemNetwork creates a new TUNSystemNetwork for TUN mode on Darwin
 // fibID is ignored on Darwin (FreeBSD-specific)
 func NewTUNSystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *packet.Route,
+	defaultRoute *netutil.Route,
 	fibID int,
 ) (TUNSystemNetwork, error) {
 	dev, err := createTunDevice()
@@ -140,7 +139,7 @@ func (n *tunSystemNetworkDarwin) TunDevice() tun.Device {
 	return n.tunDevice
 }
 
-func (n *tunSystemNetworkDarwin) DefaultRoute() *packet.Route {
+func (n *tunSystemNetworkDarwin) DefaultRoute() *netutil.Route {
 	return n.defaultRoute
 }
 

@@ -7,7 +7,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
@@ -29,7 +28,7 @@ type tunSystemNetworkStub struct {
 // NewTUNSystemNetwork creates a new TUNSystemNetwork for TUN mode on unsupported platforms
 func NewTUNSystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *packet.Route,
+	defaultRoute *netutil.Route,
 	fibID int,
 ) (TUNSystemNetwork, error) {
 	return &tunSystemNetworkStub{logger: logger}, nil
@@ -39,7 +38,7 @@ func (n *tunSystemNetworkStub) TunDevice() tun.Device {
 	return nil
 }
 
-func (n *tunSystemNetworkStub) DefaultRoute() *packet.Route {
+func (n *tunSystemNetworkStub) DefaultRoute() *netutil.Route {
 	return nil
 }
 

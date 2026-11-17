@@ -13,7 +13,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/rule"
 	"github.com/xvzc/spoofdpi/internal/server"
@@ -22,7 +21,7 @@ import (
 
 // HTTPSystemNetwork handles OS-specific network configuration for HTTP proxy.
 type HTTPSystemNetwork interface {
-	DefaultRoute() *packet.Route
+	DefaultRoute() *netutil.Route
 	BuildJobs(port uint16, pacURL string) ([]netutil.NetworkJob, error)
 }
 

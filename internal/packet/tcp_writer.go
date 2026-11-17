@@ -24,13 +24,14 @@ type TCPWriter struct {
 func NewTCPWriter(
 	logger zerolog.Logger,
 	handle Handle,
-	route *Route,
+	iface *net.Interface,
+	gatewayMAC net.HardwareAddr,
 ) *TCPWriter {
 	return &TCPWriter{
 		logger:     logger,
 		handle:     handle,
-		iface:      &route.Iface,
-		gatewayMAC: route.GatewayMAC,
+		iface:      iface,
+		gatewayMAC: gatewayMAC,
 	}
 }
 

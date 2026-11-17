@@ -8,65 +8,11 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	gw "github.com/jackpal/gateway"
-	"github.com/xvzc/spoofdpi/internal/config"
 )
 
-// DiscoverRoute discovers the default network route.
-// Gateway IP and interface are resolved from the OS routing table.
-// GatewayMAC is resolved via ARP only when cfg.NeedsPcap() is true.
-func DiscoverRoute(ctx context.Context, cfg *config.Config) (*Route, error) {
-	gwIP, err := gw.DiscoverGateway()
-	if err != nil {
-		return nil, fmt.Errorf("discover gateway: %w", err)
-	}
-
-	localIP, err := gw.DiscoverInterface()
-	if err != nil {
-		return nil, fmt.Errorf("discover interface: %w", err)
-	}
-
-	iface, err := findIfaceByIP(localIP)
-	if err != nil {
-		return nil, err
-	}
-
-	route := &Route{
-		Iface:   *iface,
-		Gateway: gwIP,
-	}
-
-	if cfg.NeedsPcap() {
-		route.GatewayMAC, err = resolveGatewayMAC(ctx, iface, localIP, gwIP)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return route, nil
-}
-
-func findIfaceByIP(localIP net.IP) (*net.Interface, error) {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil, fmt.Errorf("net.Interfaces: %w", err)
-	}
-	for i := range ifaces {
-		iface := &ifaces[i]
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.Equal(localIP) {
-				return iface, nil
-			}
-		}
-	}
-	return nil, fmt.Errorf("no interface found for %s", localIP)
-}
-
-func resolveGatewayMAC(
+// ResolveGatewayMAC resolves the MAC address of gwIP via ARP on iface.
+// It opens a temporary pcap handle that is closed before returning.
+func ResolveGatewayMAC(
 	ctx context.Context,
 	iface *net.Interface,
 	localIP, gwIP net.IP,
