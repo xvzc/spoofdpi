@@ -10,6 +10,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
@@ -61,15 +62,15 @@ func collectNetworkInfo(sysNet TUNSystemNetwork) (*tunNetworkInfoDarwin, error) 
 	}, nil
 }
 
-func (n *tunSystemNetworkDarwin) BuildJobs() ([]netutil.NetworkJob, error) {
+func (n *tunSystemNetworkDarwin) BuildJobs() ([]server.NetworkJob, error) {
 	info, err := collectNetworkInfo(n)
 	if err != nil {
 		return nil, err
 	}
 
-	var jobs []netutil.NetworkJob
+	var jobs []server.NetworkJob
 
-	jobs = append(jobs, netutil.NetworkJob{
+	jobs = append(jobs, server.NetworkJob{
 		Description: "configure TUN interface address",
 		Apply: fmt.Sprintf(
 			"ifconfig %s %s %s up",
@@ -80,7 +81,7 @@ func (n *tunSystemNetworkDarwin) BuildJobs() ([]netutil.NetworkJob, error) {
 		Reset: fmt.Sprintf("ifconfig %s destroy", info.TUNName),
 	})
 
-	jobs = append(jobs, netutil.NetworkJob{
+	jobs = append(jobs, server.NetworkJob{
 		Description: "add scoped default route via physical interface",
 		Apply: fmt.Sprintf(
 			"route add -ifscope %s default %s",
@@ -95,7 +96,7 @@ func (n *tunSystemNetworkDarwin) BuildJobs() ([]netutil.NetworkJob, error) {
 	})
 
 	for _, t := range info.RouteTargetCIDRs {
-		jobs = append(jobs, netutil.NetworkJob{
+		jobs = append(jobs, server.NetworkJob{
 			Description: fmt.Sprintf("add CIDR route %s via TUN", t),
 			Apply:       fmt.Sprintf("route -n add -net %s -interface %s", t, info.TUNName),
 			Reset: fmt.Sprintf(

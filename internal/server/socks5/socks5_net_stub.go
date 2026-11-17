@@ -5,6 +5,7 @@ package socks5
 import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/server"
 )
 
 const StateFile = ""
@@ -25,6 +26,6 @@ func (n *socks5SystemNetworkStub) DefaultRoute() *netutil.Route {
 func (n *socks5SystemNetworkStub) BuildJobs(
 	_ uint16,
 	_ string,
-) ([]netutil.NetworkJob, error) {
+) ([]server.NetworkJob, error) {
 	return nil, nil
 }

@@ -39,7 +39,7 @@ type TUNSystemNetwork interface {
 	DefaultRoute() *netutil.Route
 	FIBID() int
 	BindDialer(dialer *net.Dialer, network string, targetIP net.IP) error
-	BuildJobs() ([]netutil.NetworkJob, error)
+	BuildJobs() ([]server.NetworkJob, error)
 }
 
 type TunServer struct {
@@ -385,5 +385,5 @@ func (s *TunServer) SetupNetworkJobs(_ context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return StateFile, netutil.SaveJobs(StateFile, jobs)
+	return StateFile, server.SaveJobs(StateFile, jobs)
 }

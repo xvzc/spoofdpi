@@ -7,12 +7,13 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
 const StateFile = ""
 
-func (n *tunSystemNetworkStub) BuildJobs() ([]netutil.NetworkJob, error) {
+func (n *tunSystemNetworkStub) BuildJobs() ([]server.NetworkJob, error) {
 	return nil, nil
 }
 

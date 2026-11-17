@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
@@ -79,15 +80,15 @@ func collectNetworkInfo(sysNet TUNSystemNetwork) (*tunNetworkInfoFreeBSD, error)
 	}, nil
 }
 
-func (n *tunSystemNetworkFreeBSD) BuildJobs() ([]netutil.NetworkJob, error) {
+func (n *tunSystemNetworkFreeBSD) BuildJobs() ([]server.NetworkJob, error) {
 	info, err := collectNetworkInfo(n)
 	if err != nil {
 		return nil, err
 	}
 
-	var jobs []netutil.NetworkJob
+	var jobs []server.NetworkJob
 
-	jobs = append(jobs, netutil.NetworkJob{
+	jobs = append(jobs, server.NetworkJob{
 		Description: "configure TUN interface address",
 		Apply: fmt.Sprintf(
 			"ifconfig %s %s %s up",
@@ -98,7 +99,7 @@ func (n *tunSystemNetworkFreeBSD) BuildJobs() ([]netutil.NetworkJob, error) {
 		Reset: fmt.Sprintf("ifconfig %s destroy", info.TUNName),
 	})
 
-	jobs = append(jobs, netutil.NetworkJob{
+	jobs = append(jobs, server.NetworkJob{
 		Description: "add FIB subnet route",
 		Apply: fmt.Sprintf(
 			"route add -net %s -iface %s -fib %d",
@@ -114,7 +115,7 @@ func (n *tunSystemNetworkFreeBSD) BuildJobs() ([]netutil.NetworkJob, error) {
 		),
 	})
 
-	jobs = append(jobs, netutil.NetworkJob{
+	jobs = append(jobs, server.NetworkJob{
 		Description: "add FIB default route",
 		Apply: fmt.Sprintf(
 			"route add default %s -fib %d",
@@ -125,7 +126,7 @@ func (n *tunSystemNetworkFreeBSD) BuildJobs() ([]netutil.NetworkJob, error) {
 	})
 
 	for _, t := range info.RouteTargetCIDRs {
-		jobs = append(jobs, netutil.NetworkJob{
+		jobs = append(jobs, server.NetworkJob{
 			Description: fmt.Sprintf("add CIDR route %s via TUN", t),
 			Apply:       fmt.Sprintf("route -n add -net %s -interface %s", t, info.TUNName),
 			Reset: fmt.Sprintf(

@@ -10,6 +10,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/server"
 )
 
 const StateFile = "/tmp/spoofdpi.http.darwin.state"
@@ -73,15 +74,15 @@ func collectNetworkInfo(
 func (n *httpSystemNetworkDarwin) BuildJobs(
 	port uint16,
 	pacURL string,
-) ([]netutil.NetworkJob, error) {
+) ([]server.NetworkJob, error) {
 	info, err := collectNetworkInfo(n.defaultRoute, pacURL)
 	if err != nil {
 		return nil, err
 	}
 
-	var jobs []netutil.NetworkJob
+	var jobs []server.NetworkJob
 
-	jobs = append(jobs, netutil.NetworkJob{
+	jobs = append(jobs, server.NetworkJob{
 		Description: "set auto proxy URL",
 		Apply: fmt.Sprintf(
 			"networksetup -setautoproxyurl %s %s",
@@ -94,7 +95,7 @@ func (n *httpSystemNetworkDarwin) BuildJobs(
 		),
 	})
 
-	jobs = append(jobs, netutil.NetworkJob{
+	jobs = append(jobs, server.NetworkJob{
 		Description: "enable proxy auto discovery",
 		Apply: fmt.Sprintf(
 			"networksetup -setproxyautodiscovery %s on",

@@ -1,4 +1,4 @@
-package netutil
+package server
 
 import (
 	"encoding/json"

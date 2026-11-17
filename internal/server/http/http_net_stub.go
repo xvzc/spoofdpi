@@ -5,6 +5,7 @@ package http
 import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/server"
 )
 
 const StateFile = ""
@@ -25,6 +26,6 @@ func (n *httpSystemNetworkStub) DefaultRoute() *netutil.Route {
 func (n *httpSystemNetworkStub) BuildJobs(
 	_ uint16,
 	_ string,
-) ([]netutil.NetworkJob, error) {
+) ([]server.NetworkJob, error) {
 	return nil, nil
 }
