@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
@@ -87,20 +88,20 @@ func collectNetworkInfo(sysNet TUNSystemNetwork) (*tunNetworkInfoLinux, error) {
 	}, nil
 }
 
-func (n *tunSystemNetworkLinux) BuildJobs() ([]netutil.NetworkJob, error) {
+func (n *tunSystemNetworkLinux) BuildJobs() ([]server.NetworkJob, error) {
 	info, err := collectNetworkInfo(n)
 	if err != nil {
 		return nil, err
 	}
 
-	var jobs []netutil.NetworkJob
+	var jobs []server.NetworkJob
 
-	jobs = append(jobs, netutil.NetworkJob{
+	jobs = append(jobs, server.NetworkJob{
 		Description: "remove TUN interface",
 		Reset:       fmt.Sprintf("ip link delete %s", info.TUNName),
 	})
 
-	jobs = append(jobs, netutil.NetworkJob{
+	jobs = append(jobs, server.NetworkJob{
 		Description: "configure TUN interface address",
 		Apply: fmt.Sprintf(
 			"ip addr add %s peer %s dev %s",
@@ -116,13 +117,13 @@ func (n *tunSystemNetworkLinux) BuildJobs() ([]netutil.NetworkJob, error) {
 		),
 	})
 
-	jobs = append(jobs, netutil.NetworkJob{
+	jobs = append(jobs, server.NetworkJob{
 		Description: "bring TUN interface up",
 		Apply:       fmt.Sprintf("ip link set dev %s up", info.TUNName),
 		Reset:       fmt.Sprintf("ip link set dev %s down", info.TUNName),
 	})
 
-	jobs = append(jobs, netutil.NetworkJob{
+	jobs = append(jobs, server.NetworkJob{
 		Description: "add gateway host route",
 		Apply: fmt.Sprintf(
 			"ip route add %s dev %s",
@@ -136,7 +137,7 @@ func (n *tunSystemNetworkLinux) BuildJobs() ([]netutil.NetworkJob, error) {
 		),
 	})
 
-	jobs = append(jobs, netutil.NetworkJob{
+	jobs = append(jobs, server.NetworkJob{
 		Description: "add default route to routing table",
 		Apply: fmt.Sprintf(
 			"ip route add default via %s dev %s table %d",
@@ -147,7 +148,7 @@ func (n *tunSystemNetworkLinux) BuildJobs() ([]netutil.NetworkJob, error) {
 		Reset: fmt.Sprintf("ip route del default table %d", info.RouteTableID),
 	})
 
-	jobs = append(jobs, netutil.NetworkJob{
+	jobs = append(jobs, server.NetworkJob{
 		Description: "add policy routing rule",
 		Apply: fmt.Sprintf(
 			"ip rule add from %s lookup %d",
@@ -162,7 +163,7 @@ func (n *tunSystemNetworkLinux) BuildJobs() ([]netutil.NetworkJob, error) {
 	})
 
 	for _, t := range info.RouteTargetCIDRs {
-		jobs = append(jobs, netutil.NetworkJob{
+		jobs = append(jobs, server.NetworkJob{
 			Description: fmt.Sprintf("add CIDR route %s via TUN", t),
 			Apply:       fmt.Sprintf("ip route add %s dev %s", t, info.TUNName),
 			Reset:       fmt.Sprintf("ip route del %s dev %s", t, info.TUNName),

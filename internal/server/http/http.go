@@ -22,7 +22,7 @@ import (
 // HTTPSystemNetwork handles OS-specific network configuration for HTTP proxy.
 type HTTPSystemNetwork interface {
 	DefaultRoute() *netutil.Route
-	BuildJobs(port uint16, pacURL string) ([]netutil.NetworkJob, error)
+	BuildJobs(port uint16, pacURL string) ([]server.NetworkJob, error)
 }
 
 type HTTPProxy struct {
@@ -112,7 +112,7 @@ func (p *HTTPProxy) SetupNetworkJobs(ctx context.Context) (string, error) {
 		_ = pac.Close()
 		return "", err
 	}
-	if err := netutil.SaveJobs(StateFile, jobs); err != nil {
+	if err := server.SaveJobs(StateFile, jobs); err != nil {
 		_ = pac.Close()
 		return "", fmt.Errorf("failed to save state: %w", err)
 	}

@@ -25,7 +25,7 @@ import (
 // SOCKS5SystemNetwork handles OS-specific network configuration for SOCKS5 proxy.
 type SOCKS5SystemNetwork interface {
 	DefaultRoute() *netutil.Route
-	BuildJobs(port uint16, pacURL string) ([]netutil.NetworkJob, error)
+	BuildJobs(port uint16, pacURL string) ([]server.NetworkJob, error)
 }
 
 type SOCKS5Proxy struct {
@@ -118,7 +118,7 @@ func (p *SOCKS5Proxy) SetupNetworkJobs(ctx context.Context) (string, error) {
 		_ = pac.Close()
 		return "", err
 	}
-	if err := netutil.SaveJobs(StateFile, jobs); err != nil {
+	if err := server.SaveJobs(StateFile, jobs); err != nil {
 		_ = pac.Close()
 		return "", fmt.Errorf("failed to save state: %w", err)
 	}
