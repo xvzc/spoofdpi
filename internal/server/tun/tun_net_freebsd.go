@@ -32,7 +32,9 @@ func createTunDevice() (tun.Device, error) {
 	return tun.CreateTUN("tun-spoofdpi", 1500)
 }
 
-func collectNetworkInfo(sysNet TUNSystemNetwork) (*tunNetworkInfoFreeBSD, error) {
+func collectNetworkInfo(
+	sysNet *tunSystemNetworkFreeBSD,
+) (*tunNetworkInfoFreeBSD, error) {
 	tunName, err := sysNet.TunDevice().Name()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tunName: %w", err)
@@ -46,7 +48,7 @@ func collectNetworkInfo(sysNet TUNSystemNetwork) (*tunNetworkInfoFreeBSD, error)
 		return nil, fmt.Errorf("FIB %d is already in use", sysNet.FIBID())
 	}
 
-	physIfaceCIDR, err := getInterfaceSubnet(sysNet.DefaultRoute().Iface.Name)
+	physIfaceCIDR, err := getInterfaceSubnet(sysNet.defaultRoute.Iface.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get interface subnet: %w", err)
 	}
@@ -70,8 +72,8 @@ func collectNetworkInfo(sysNet TUNSystemNetwork) (*tunNetworkInfoFreeBSD, error)
 
 	return &tunNetworkInfoFreeBSD{ //exhaustruct:enforce
 		FIBID:            sysNet.FIBID(),
-		GatewayIP:        sysNet.DefaultRoute().Gateway.String(),
-		PhysIfaceName:    sysNet.DefaultRoute().Iface.Name,
+		GatewayIP:        sysNet.defaultRoute.Gateway.String(),
+		PhysIfaceName:    sysNet.defaultRoute.Iface.Name,
 		PhysIfaceCIDR:    physIfaceCIDR,
 		TUNName:          tunName,
 		TunLocalIP:       tunLocalIP,
@@ -167,10 +169,6 @@ func NewTUNSystemNetwork(
 
 func (n *tunSystemNetworkFreeBSD) TunDevice() tun.Device {
 	return n.tunDevice
-}
-
-func (n *tunSystemNetworkFreeBSD) DefaultRoute() *netutil.Route {
-	return n.defaultRoute
 }
 
 func (n *tunSystemNetworkFreeBSD) FIBID() int {

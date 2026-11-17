@@ -38,7 +38,7 @@ func createTunDevice() (tun.Device, error) {
 	return tun.CreateTUN("tun-spoofdpi", 1500)
 }
 
-func collectNetworkInfo(sysNet TUNSystemNetwork) (*tunNetworkInfoLinux, error) {
+func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, error) {
 	tunName, err := sysNet.TunDevice().Name()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tunName: %w", err)
@@ -48,8 +48,8 @@ func collectNetworkInfo(sysNet TUNSystemNetwork) (*tunNetworkInfoLinux, error) {
 		return nil, fmt.Errorf("failed to allocate routing table ID: %w", err)
 	}
 
-	gatewayIP := sysNet.DefaultRoute().Gateway.String()
-	physIfaceName := sysNet.DefaultRoute().Iface.Name
+	gatewayIP := sysNet.defaultRoute.Gateway.String()
+	physIfaceName := sysNet.defaultRoute.Iface.Name
 
 	physIfaceIP, err := getInterfaceIP(physIfaceName)
 	if err != nil {
@@ -201,10 +201,6 @@ func NewTUNSystemNetwork(
 
 func (n *tunSystemNetworkLinux) TunDevice() tun.Device {
 	return n.tunDevice
-}
-
-func (n *tunSystemNetworkLinux) DefaultRoute() *netutil.Route {
-	return n.defaultRoute
 }
 
 func (n *tunSystemNetworkLinux) FIBID() int {

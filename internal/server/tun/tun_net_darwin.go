@@ -29,7 +29,7 @@ func createTunDevice() (tun.Device, error) {
 	return tun.CreateTUN("utun", 1500)
 }
 
-func collectNetworkInfo(sysNet TUNSystemNetwork) (*tunNetworkInfoDarwin, error) {
+func collectNetworkInfo(sysNet *tunSystemNetworkDarwin) (*tunNetworkInfoDarwin, error) {
 	tunName, err := sysNet.TunDevice().Name()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tunName: %w", err)
@@ -53,8 +53,8 @@ func collectNetworkInfo(sysNet TUNSystemNetwork) (*tunNetworkInfoDarwin, error) 
 	routeTargetCIDRs := []string{tunCIDR.String(), "0.0.0.0/1", "128.0.0.0/1"}
 
 	return &tunNetworkInfoDarwin{ //exhaustruct:enforce
-		GatewayIP:        sysNet.DefaultRoute().Gateway.String(),
-		PhysIfaceName:    sysNet.DefaultRoute().Iface.Name,
+		GatewayIP:        sysNet.defaultRoute.Gateway.String(),
+		PhysIfaceName:    sysNet.defaultRoute.Iface.Name,
 		TUNName:          tunName,
 		TunLocalIP:       tunLocalIP,
 		TunRemoteIP:      tunRemoteIP,
@@ -138,10 +138,6 @@ func NewTUNSystemNetwork(
 
 func (n *tunSystemNetworkDarwin) TunDevice() tun.Device {
 	return n.tunDevice
-}
-
-func (n *tunSystemNetworkDarwin) DefaultRoute() *netutil.Route {
-	return n.defaultRoute
 }
 
 func (n *tunSystemNetworkDarwin) FIBID() int {
