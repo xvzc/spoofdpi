@@ -39,10 +39,6 @@ func (n *tunSystemNetworkStub) TunDevice() tun.Device {
 	return nil
 }
 
-func (n *tunSystemNetworkStub) DefaultRoute() *netutil.Route {
-	return nil
-}
-
 func (n *tunSystemNetworkStub) FIBID() int {
 	return 1
 }
