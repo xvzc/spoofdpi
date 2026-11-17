@@ -280,9 +280,13 @@ func createServer(
 	server.ResetJobs(logger, http.StateFile)
 	server.ResetJobs(logger, socks5.StateFile)
 
-	defaultRoute, err := netutil.DiscoverRoute()
-	if err != nil {
-		return nil, fmt.Errorf("failed to find default route: %w", err)
+	var defaultRoute *netutil.Route
+	if cfg.NeedsRoute() {
+		var err error
+		defaultRoute, err = netutil.DiscoverRoute()
+		if err != nil {
+			return nil, fmt.Errorf("failed to find default route: %w", err)
+		}
 	}
 
 	tcpSniffer, udpSniffer, tcpWriter, udpWriter, err := setupPcapIO(

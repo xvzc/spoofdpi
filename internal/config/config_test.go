@@ -182,6 +182,149 @@ func TestConfig_NeedsPcapUDP(t *testing.T) {
 	}
 }
 
+func TestConfig_NeedsRoute(t *testing.T) {
+	tcs := []struct {
+		name   string
+		config Config
+		expect bool
+	}{
+		{
+			name: "http without fake packets",
+			config: Config{
+				Startup: StartupConfig{App: AppOptions{Mode: AppModeHTTP}},
+			},
+			expect: false,
+		},
+		{
+			name: "http with https fake count > 0",
+			config: Config{
+				Startup: StartupConfig{App: AppOptions{Mode: AppModeHTTP}},
+				Runtime: RuntimeConfig{
+					HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+				},
+			},
+			expect: true,
+		},
+		{
+			name: "http with udp fake count > 0",
+			config: Config{
+				Startup: StartupConfig{App: AppOptions{Mode: AppModeHTTP}},
+				Runtime: RuntimeConfig{
+					UDP: UDPOptions{FakeCount: uint8(1)},
+				},
+			},
+			expect: true,
+		},
+		{
+			name: "http with rule https fake count > 0",
+			config: Config{
+				Startup: StartupConfig{
+					App: AppOptions{Mode: AppModeHTTP},
+					Rules: []Rule{
+						{
+							Config: RuntimeConfig{
+								HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+							},
+						},
+					},
+				},
+			},
+			expect: true,
+		},
+		{
+			name: "socks5 without fake packets",
+			config: Config{
+				Startup: StartupConfig{App: AppOptions{Mode: AppModeSOCKS5}},
+			},
+			expect: false,
+		},
+		{
+			name: "socks5 with https fake count > 0",
+			config: Config{
+				Startup: StartupConfig{App: AppOptions{Mode: AppModeSOCKS5}},
+				Runtime: RuntimeConfig{
+					HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+				},
+			},
+			expect: true,
+		},
+		{
+			name: "socks5 with udp fake count > 0",
+			config: Config{
+				Startup: StartupConfig{App: AppOptions{Mode: AppModeSOCKS5}},
+				Runtime: RuntimeConfig{
+					UDP: UDPOptions{FakeCount: uint8(1)},
+				},
+			},
+			expect: true,
+		},
+		{
+			name: "socks5 with rule https fake count > 0",
+			config: Config{
+				Startup: StartupConfig{
+					App: AppOptions{Mode: AppModeSOCKS5},
+					Rules: []Rule{
+						{
+							Config: RuntimeConfig{
+								HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+							},
+						},
+					},
+				},
+			},
+			expect: true,
+		},
+		{
+			name: "tun without fake packets",
+			config: Config{
+				Startup: StartupConfig{App: AppOptions{Mode: AppModeTUN}},
+			},
+			expect: true,
+		},
+		{
+			name: "tun with https fake count > 0",
+			config: Config{
+				Startup: StartupConfig{App: AppOptions{Mode: AppModeTUN}},
+				Runtime: RuntimeConfig{
+					HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+				},
+			},
+			expect: true,
+		},
+		{
+			name: "tun with udp fake count > 0",
+			config: Config{
+				Startup: StartupConfig{App: AppOptions{Mode: AppModeTUN}},
+				Runtime: RuntimeConfig{
+					UDP: UDPOptions{FakeCount: uint8(1)},
+				},
+			},
+			expect: true,
+		},
+		{
+			name: "tun with rule https fake count > 0",
+			config: Config{
+				Startup: StartupConfig{
+					App: AppOptions{Mode: AppModeTUN},
+					Rules: []Rule{
+						{
+							Config: RuntimeConfig{
+								HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+							},
+						},
+					},
+				},
+			},
+			expect: true,
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expect, tc.config.NeedsRoute())
+		})
+	}
+}
+
 func TestConfig_Validate_rejectsRuleWithoutMatch(t *testing.T) {
 	c := DefaultConfig()
 	c.Startup.Rules = []Rule{
