@@ -1,9 +1,6 @@
 { pkgs, multiverse, ... }:
 
 {
-  env = {
-    name = "devenv:spoofdpi";
-  };
   enterShell = # sh
     ''
       export name="devenv:spoofdpi"
