@@ -32,6 +32,7 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 				AutoConfigureNetwork: false,
 				Mode:                 AppModeHTTP,
 				ListenAddr:           net.TCPAddr{},
+				Gateway:              nil,
 				FreebsdFIB:           1,
 			},
 			Rules: nil,
@@ -452,6 +453,22 @@ func CreateCommand(
 					addr := MustParseTCPAddr(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
 						cfg.Startup.App.ListenAddr = addr
+					})
+					return nil
+				},
+			},
+
+			&cli.StringFlag{
+				Name: "gateway",
+				Usage: `
+				IPv4 address of the default gateway, skipping automatic discovery.
+				Only used with fake packets or tun mode (default: auto-detect)`,
+				OnlyOnce:  true,
+				Validator: checkGateway,
+				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+					gateway := MustParseIPv4(v)
+					cliOverrides = append(cliOverrides, func(cfg *Config) {
+						cfg.Startup.App.Gateway = gateway
 					})
 					return nil
 				},

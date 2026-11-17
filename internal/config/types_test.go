@@ -29,6 +29,7 @@ func TestAppOptions_UnmarshalTOML(t *testing.T) {
 				"no-tui":                 true,
 				"auto-configure-network": true,
 				"mode":                   "socks5",
+				"gateway":                "192.168.1.1",
 			},
 			wantErr: false,
 			assert: func(t *testing.T, o AppOptions) {
@@ -36,11 +37,17 @@ func TestAppOptions_UnmarshalTOML(t *testing.T) {
 				assert.True(t, o.NoTUI)
 				assert.True(t, o.AutoConfigureNetwork)
 				assert.Equal(t, AppModeSOCKS5, o.Mode)
+				assert.Equal(t, net.IPv4(192, 168, 1, 1).To4(), o.Gateway)
 			},
 		},
 		{
 			name:    "invalid type",
 			input:   "invalid",
+			wantErr: true,
+		},
+		{
+			name:    "invalid gateway",
+			input:   map[string]any{"gateway": "fe80::1"},
 			wantErr: true,
 		},
 	}

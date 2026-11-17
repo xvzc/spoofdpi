@@ -95,6 +95,21 @@ func checkHostPort(v string) error {
 	return checkUint16(int64(portInt))
 }
 
+// checkGateway accepts an IPv4 unicast address. The gateway MAC is resolved
+// via ARP, so IPv6 gateways are not supported.
+func checkGateway(v string) error {
+	ip := net.ParseIP(v).To4()
+	if ip == nil {
+		return fmt.Errorf("value '%s' is not an IPv4 address", v)
+	}
+
+	if !ip.IsGlobalUnicast() && !ip.IsLinkLocalUnicast() {
+		return fmt.Errorf("value '%s' is not a unicast address", v)
+	}
+
+	return nil
+}
+
 func checkCIDR(v string) error {
 	_, _, err := net.ParseCIDR(v)
 	if err != nil {

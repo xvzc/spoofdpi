@@ -30,6 +30,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				assert.False(t, cfg.Startup.App.NoTUI)
 				assert.False(t, cfg.Startup.App.AutoConfigureNetwork)
 				assert.Equal(t, "127.0.0.1:8080", cfg.Startup.App.ListenAddr.String())
+				assert.Nil(t, cfg.Startup.App.Gateway)
 				assert.Equal(t, uint8(8), cfg.Runtime.Conn.DefaultFakeTTL)
 				assert.Equal(t, int64(5000), cfg.Runtime.Conn.DNSTimeout.Milliseconds())
 				assert.Equal(t, int64(10000), cfg.Runtime.Conn.TCPTimeout.Milliseconds())
@@ -57,6 +58,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				"--no-tui",
 				"--auto-configure-network",
 				"--listen-addr", "127.0.0.1:9090",
+				"--gateway", "192.168.1.1",
 				"--default-fake-ttl", "128",
 				"--dns-timeout", "5000",
 				"--tcp-timeout", "5000",
@@ -83,6 +85,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 
 				// Server
 				assert.Equal(t, "127.0.0.1:9090", cfg.Startup.App.ListenAddr.String())
+				assert.Equal(t, net.IPv4(192, 168, 1, 1).To4(), cfg.Startup.App.Gateway)
 				assert.Equal(t, uint8(128), cfg.Runtime.Conn.DefaultFakeTTL)
 				assert.Equal(t, 5000*time.Millisecond, cfg.Runtime.Conn.DNSTimeout)
 				assert.Equal(t, 5000*time.Millisecond, cfg.Runtime.Conn.TCPTimeout)

@@ -106,6 +106,32 @@ func TestMustParseTCPAddr(t *testing.T) {
 	}
 }
 
+func TestMustParseIPv4(t *testing.T) {
+	tcs := []struct {
+		name      string
+		input     string
+		wantPanic bool
+	}{
+		{"valid ipv4", "192.168.1.1", false},
+		{"panic on ipv6", "fe80::1", true},
+		{"panic on invalid", "invalid", true},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.wantPanic {
+				assert.Panics(t, func() {
+					MustParseIPv4(tc.input)
+				})
+			} else {
+				ip := MustParseIPv4(tc.input)
+				assert.Len(t, ip, net.IPv4len)
+				assert.Equal(t, tc.input, ip.String())
+			}
+		})
+	}
+}
+
 func TestMustParseLogLevel(t *testing.T) {
 	tcs := []struct {
 		name      string
