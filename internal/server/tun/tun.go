@@ -15,7 +15,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"github.com/xvzc/spoofdpi/internal/session"
 	"golang.zx2c4.com/wireguard/tun"
@@ -37,7 +36,7 @@ var _ tcpip.NetworkProtocolNumber = ipv4.ProtocolNumber
 // TUNSystemNetwork handles OS-specific network configuration for TUN mode.
 type TUNSystemNetwork interface {
 	TunDevice() tun.Device
-	DefaultRoute() *packet.Route
+	DefaultRoute() *netutil.Route
 	FIBID() int
 	BindDialer(dialer *net.Dialer, network string, targetIP net.IP) error
 	BuildJobs() ([]netutil.NetworkJob, error)

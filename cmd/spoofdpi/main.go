@@ -195,11 +195,25 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 }
 
 func setupPcapIO(
+	ctx context.Context,
 	logger zerolog.Logger,
-	route *packet.Route,
+	route *netutil.Route,
 	cfg *config.Config,
 ) (tcpSniffer, udpSniffer packet.Sniffer, tcpWriter, udpWriter packet.Writer, err error) {
 	if !cfg.NeedsPcap() {
+		return
+	}
+
+	resolveCtx, resolveCancel := context.WithTimeout(ctx, 10*time.Second)
+	gatewayMAC, rErr := packet.ResolveGatewayMAC(
+		resolveCtx,
+		&route.Iface,
+		route.LocalIP,
+		route.Gateway,
+	)
+	resolveCancel()
+	if rErr != nil {
+		err = rErr
 		return
 	}
 
@@ -212,7 +226,7 @@ func setupPcapIO(
 		Str("mac", route.Iface.HardwareAddr.String()).
 		Msg(" interface")
 	logger.Info().
-		Str("mac", route.GatewayMAC.String()).
+		Str("mac", gatewayMAC.String()).
 		Msg(" gateway")
 
 	if cfg.NeedsPcapTCP() {
@@ -222,7 +236,7 @@ func setupPcapIO(
 			return
 		}
 		tcpSniffer = packet.NewTCPSniffer(pktLogger, tcpHandle, hopCache, &cfg.Runtime)
-		tcpWriter = packet.NewTCPWriter(pktLogger, tcpHandle, route)
+		tcpWriter = packet.NewTCPWriter(pktLogger, tcpHandle, &route.Iface, gatewayMAC)
 		tcpSniffer.StartCapturing()
 	}
 
@@ -233,7 +247,7 @@ func setupPcapIO(
 			return
 		}
 		udpSniffer = packet.NewUDPSniffer(pktLogger, udpHandle, hopCache, &cfg.Runtime)
-		udpWriter = packet.NewUDPWriter(pktLogger, udpHandle, route)
+		udpWriter = packet.NewUDPWriter(pktLogger, udpHandle, &route.Iface, gatewayMAC)
 		udpSniffer.StartCapturing()
 	}
 
@@ -266,14 +280,13 @@ func createServer(
 	netutil.ResetJobs(logger, http.StateFile)
 	netutil.ResetJobs(logger, socks5.StateFile)
 
-	discoverCtx, discoverCancel := context.WithTimeout(appctx, 10*time.Second)
-	defaultRoute, err := packet.DiscoverRoute(discoverCtx, cfg)
-	discoverCancel()
+	defaultRoute, err := netutil.DiscoverRoute()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find default route: %w", err)
 	}
 
 	tcpSniffer, udpSniffer, tcpWriter, udpWriter, err := setupPcapIO(
+		appctx,
 		logger,
 		defaultRoute,
 		cfg,
