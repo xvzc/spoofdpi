@@ -22,19 +22,12 @@ import (
 	"github.com/xvzc/spoofdpi/internal/session"
 )
 
-// SOCKS5SystemNetwork handles OS-specific network configuration for SOCKS5 proxy.
-type SOCKS5SystemNetwork interface {
-	DefaultRoute() *netutil.Route
-	BuildJobs(port uint16, pacURL string) ([]server.NetworkJob, error)
-}
-
 type SOCKS5Proxy struct {
 	logger zerolog.Logger
 
 	connectHandler      *ConnectHandler
 	bindHandler         *BindHandler
 	udpAssociateHandler *UdpAssociateHandler
-	sysNet              SOCKS5SystemNetwork
 	dns                 *dns.Client
 	ruleSet             *rule.RuleSet
 	listenAddr          net.TCPAddr
@@ -46,7 +39,6 @@ func NewSOCKS5Proxy(
 	connectHandler *ConnectHandler,
 	bindHandler *BindHandler,
 	udpAssociateHandler *UdpAssociateHandler,
-	sysNet SOCKS5SystemNetwork,
 	dnsClient *dns.Client,
 	ruleSet *rule.RuleSet,
 	listenAddr net.TCPAddr,
@@ -57,7 +49,6 @@ func NewSOCKS5Proxy(
 		connectHandler:      connectHandler,
 		bindHandler:         bindHandler,
 		udpAssociateHandler: udpAssociateHandler,
-		sysNet:              sysNet,
 		dns:                 dnsClient,
 		ruleSet:             ruleSet,
 		listenAddr:          listenAddr,
@@ -105,24 +96,13 @@ func (p *SOCKS5Proxy) ListenAndServe(
 }
 
 func (p *SOCKS5Proxy) SetupNetworkJobs(ctx context.Context) (string, error) {
-	pacContent := fmt.Sprintf(
-		"function FindProxyForURL(url, host) {\n    return \"SOCKS5 127.0.0.1:%d; DIRECT\";\n}",
-		p.listenAddr.Port,
-	)
-	pacURL, pac, err := netutil.RunPACServer(pacContent)
-	if err != nil {
-		return "", fmt.Errorf("error creating pac server: %w", err)
-	}
-	jobs, err := p.sysNet.BuildJobs(uint16(p.listenAddr.Port), pacURL)
-	if err != nil {
-		_ = pac.Close()
+	if err := server.SetupSystemProxy(
+		ctx,
+		fmt.Sprintf("SOCKS5 127.0.0.1:%d", p.listenAddr.Port),
+		StateFile,
+	); err != nil {
 		return "", err
 	}
-	if err := server.SaveJobs(StateFile, jobs); err != nil {
-		_ = pac.Close()
-		return "", fmt.Errorf("failed to save state: %w", err)
-	}
-	go func() { <-ctx.Done(); _ = pac.Close() }()
 	return StateFile, nil
 }
 
