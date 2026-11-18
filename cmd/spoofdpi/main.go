@@ -81,7 +81,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 
 	var writer io.Writer
 	// Channel to capture critical TUI execution failures
-	if !cfg.Startup.App.NoTUI {
+	if !cfg.App.NoTUI {
 		if err := startTUI(cancel); err != nil {
 			return fmt.Errorf("failed to start tui: %w", err)
 		}
@@ -96,7 +96,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	}
 	sw := &SwitchableWriter{target: dw}
 
-	logging.SetGlobalLogger(appctx, cfg.Startup.App.LogLevel, sw)
+	logging.SetGlobalLogger(appctx, cfg.App.LogLevel, sw)
 	logger := log.Logger.With().Ctx(appctx).Logger()
 
 	// In TUI mode the alt-screen has already been claimed by startTUI.
@@ -112,7 +112,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	// to main, which prints "application failed to start" to stderr and
 	// exits with status 1.
 	defer func() {
-		if err == nil || cfg.Startup.App.NoTUI {
+		if err == nil || cfg.App.NoTUI {
 			return
 		}
 		logger.Error().Err(err).Msg("application failed to start")
@@ -136,7 +136,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 		logger.Warn().Msg(m)
 	}
 
-	logger.Info().Str("mode", cfg.Startup.App.Mode.String()).Msgf("app")
+	logger.Info().Str("mode", cfg.App.Mode.String()).Msgf("app")
 
 	srv, err := createServer(appctx, logger, cfg)
 	if err != nil {
@@ -145,28 +145,28 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 
 	logger.Info().Msg("https info")
 	logger.Info().
-		Str("split-mode", cfg.Runtime.HTTPS.SplitMode.String()).
-		Uint8("chunk-size", uint8(cfg.Runtime.HTTPS.ChunkSize)).
-		Bool("disorder", cfg.Runtime.HTTPS.Disorder).
+		Str("split-mode", cfg.HTTPS.SplitMode.String()).
+		Uint8("chunk-size", uint8(cfg.HTTPS.ChunkSize)).
+		Bool("disorder", cfg.HTTPS.Disorder).
 		Msg(" split")
 
 	logger.Info().
-		Uint8("count", uint8(cfg.Runtime.HTTPS.FakeCount)).
+		Uint8("count", uint8(cfg.HTTPS.FakeCount)).
 		Msg(" fake")
 
-	if cfg.Runtime.Conn.DNSTimeout > 0 {
+	if cfg.Conn.DNSTimeout > 0 {
 		logger.Info().
-			Str("value", fmt.Sprintf("%dms", cfg.Runtime.Conn.DNSTimeout.Milliseconds())).
+			Str("value", fmt.Sprintf("%dms", cfg.Conn.DNSTimeout.Milliseconds())).
 			Msgf("dns connection timeout")
 	}
-	if cfg.Runtime.Conn.TCPTimeout > 0 {
+	if cfg.Conn.TCPTimeout > 0 {
 		logger.Info().
-			Str("value", fmt.Sprintf("%dms", cfg.Runtime.Conn.TCPTimeout.Milliseconds())).
+			Str("value", fmt.Sprintf("%dms", cfg.Conn.TCPTimeout.Milliseconds())).
 			Msgf("tcp connection timeout")
 	}
-	if cfg.Runtime.Conn.UDPIdleTimeout > 0 {
+	if cfg.Conn.UDPIdleTimeout > 0 {
 		logger.Info().
-			Str("value", fmt.Sprintf("%dms", cfg.Runtime.Conn.UDPIdleTimeout.Milliseconds())).
+			Str("value", fmt.Sprintf("%dms", cfg.Conn.UDPIdleTimeout.Milliseconds())).
 			Msgf("udp idle timeout")
 	}
 
@@ -175,7 +175,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 		return fmt.Errorf("listen and serve: %w", err)
 	}
 	logger.Info().Msgf("server started on %s", srv.Addr())
-	if cfg.Startup.App.AutoConfigureNetwork {
+	if cfg.App.AutoConfigureNetwork {
 		if stateFile, acErr := srv.SetupNetworkJobs(appctx); acErr != nil {
 			// Non-fatal: server is running, just couldn't auto-set
 			// system proxy. Log and continue rather than tearing down.
@@ -235,7 +235,12 @@ func setupPcapIO(
 			err = fmt.Errorf("tcp pcap handle on %s: %w", route.Iface.Name, hErr)
 			return
 		}
-		tcpSniffer = packet.NewTCPSniffer(pktLogger, tcpHandle, hopCache, &cfg.Runtime)
+		tcpSniffer = packet.NewTCPSniffer(
+			pktLogger,
+			tcpHandle,
+			hopCache,
+			&cfg.RuntimeConfig,
+		)
 		tcpWriter = packet.NewTCPWriter(pktLogger, tcpHandle, &route.Iface, gatewayMAC)
 		tcpSniffer.StartCapturing()
 	}
@@ -246,7 +251,12 @@ func setupPcapIO(
 			err = fmt.Errorf("udp pcap handle on %s: %w", route.Iface.Name, hErr)
 			return
 		}
-		udpSniffer = packet.NewUDPSniffer(pktLogger, udpHandle, hopCache, &cfg.Runtime)
+		udpSniffer = packet.NewUDPSniffer(
+			pktLogger,
+			udpHandle,
+			hopCache,
+			&cfg.RuntimeConfig,
+		)
 		udpWriter = packet.NewUDPWriter(pktLogger, udpHandle, &route.Iface, gatewayMAC)
 		udpSniffer.StartCapturing()
 	}
@@ -261,7 +271,7 @@ func createServer(
 ) (server.Server, error) {
 	// --- Rule set ---
 	ruleSet := rule.NewRuleSet()
-	for _, r := range cfg.Startup.Rules {
+	for _, r := range cfg.Rules {
 		if err := ruleSet.Add(&r); err != nil {
 			return nil, err
 		}
@@ -270,7 +280,7 @@ func createServer(
 	// --- DNS resolver ---
 	resolver := dns.NewClient(
 		logging.WithScope(logger, "dns"),
-		&cfg.Runtime,
+		&cfg.RuntimeConfig,
 	)
 
 	// Clean up stale network state before route discovery so a crashed TUN
@@ -283,13 +293,13 @@ func createServer(
 	var defaultRoute *netutil.Route
 	if cfg.NeedsRoute() {
 		var err error
-		defaultRoute, err = netutil.DiscoverRoute(cfg.Startup.App.Gateway)
+		defaultRoute, err = netutil.DiscoverRoute(cfg.App.Gateway)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find default route: %w", err)
 		}
-	} else if cfg.Startup.App.Gateway != nil {
+	} else if cfg.App.Gateway != nil {
 		logger.Warn().
-			Str("gateway", cfg.Startup.App.Gateway.String()).
+			Str("gateway", cfg.App.Gateway.String()).
 			Msg("gateway is ignored; only fake packets and tun mode use it")
 	}
 
@@ -314,16 +324,20 @@ func createServer(
 		udpSniffer,
 	)
 
-	switch cfg.Startup.App.Mode {
+	switch cfg.App.Mode {
 	case config.AppModeHTTP:
 		return http.NewHTTPProxy(
 			logging.WithScope(logger, "srv"),
 			http.NewHTTPHandler(logging.WithScope(logger, "hnd")),
-			http.NewHTTPSHandler(logging.WithScope(logger, "hnd"), tlsDesyncer, &cfg.Runtime),
+			http.NewHTTPSHandler(
+				logging.WithScope(logger, "hnd"),
+				tlsDesyncer,
+				&cfg.RuntimeConfig,
+			),
 			resolver,
 			ruleSet,
-			cfg.Startup.App.ListenAddr,
-			&cfg.Runtime,
+			cfg.App.ListenAddr,
+			&cfg.RuntimeConfig,
 		), nil
 
 	case config.AppModeSOCKS5:
@@ -334,20 +348,20 @@ func createServer(
 			socks5.NewConnectHandler(
 				logging.WithScope(logger, "hnd"),
 				tlsDesyncer,
-				cfg.Startup.App.ListenAddr,
-				&cfg.Runtime,
+				cfg.App.ListenAddr,
+				&cfg.RuntimeConfig,
 			),
 			socks5.NewBindHandler(logging.WithScope(logger, "hnd")),
 			socks5.NewUdpAssociateHandler(
 				logging.WithScope(logger, "hnd"),
 				udpPool,
 				udpDesyncer,
-				&cfg.Runtime,
+				&cfg.RuntimeConfig,
 			),
 			resolver,
 			ruleSet,
-			cfg.Startup.App.ListenAddr,
-			&cfg.Runtime,
+			cfg.App.ListenAddr,
+			&cfg.RuntimeConfig,
 		), nil
 
 	case config.AppModeTUN:
@@ -358,7 +372,7 @@ func createServer(
 		sysNet, err := tun.NewTUNSystemNetwork(
 			logging.WithScope(logger, "sys"),
 			defaultRoute,
-			cfg.Startup.App.FreebsdFIB,
+			cfg.App.FreebsdFIB,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create sysnet: %w", err)
@@ -369,18 +383,18 @@ func createServer(
 				logging.WithScope(logger, "hnd"),
 				tlsDesyncer,
 				ruleSet,
-				&cfg.Runtime,
+				&cfg.RuntimeConfig,
 			),
 			tun.NewUDPHandler(
 				logging.WithScope(logger, "hnd"),
 				udpDesyncer,
 				ruleSet,
-				&cfg.Runtime,
+				&cfg.RuntimeConfig,
 			),
 			sysNet,
 		), nil
 
 	default:
-		return nil, fmt.Errorf("unknown server mode: %s", cfg.Startup.App.Mode)
+		return nil, fmt.Errorf("unknown server mode: %s", cfg.App.Mode)
 	}
 }

@@ -572,7 +572,7 @@ func TestUDPOptions_MarshalJSON_omitsFakePacketBytes(t *testing.T) {
 
 func TestRule_JSON_includesBlockAndConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	rCfg := cfg.Runtime
+	rCfg := cfg.RuntimeConfig
 	rCfg.HTTPS.SplitMode = HTTPSSplitModeChunk
 	rCfg.HTTPS.ChunkSize = 8
 

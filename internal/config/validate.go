@@ -169,7 +169,7 @@ func checkMatchAttrs(m MatchAttrs) error {
 // can only be detected once defaults+TOML+CLI are merged and rules are
 // eager-resolved.
 func (c *Config) Validate() error {
-	for i, rule := range c.Startup.Rules {
+	for i, rule := range c.Rules {
 		if err := checkRule(rule); err != nil {
 			return fmt.Errorf("rules[%d]: %w", i, err)
 		}

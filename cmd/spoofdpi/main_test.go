@@ -20,13 +20,13 @@ func TestCreateProxy_NoPcap(t *testing.T) {
 	cfg := &config.Config{}
 
 	// App Config
-	cfg.Startup.App = config.AppOptions{
+	cfg.App = config.AppOptions{
 		Mode:       config.AppModeHTTP,
 		ListenAddr: net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0},
 	}
 
 	// Conn Config
-	cfg.Runtime.Conn = config.ConnOptions{
+	cfg.Conn = config.ConnOptions{
 		DefaultFakeTTL: uint8(64),
 		DNSTimeout:     time.Duration(0),
 		TCPTimeout:     time.Duration(0),
@@ -34,7 +34,7 @@ func TestCreateProxy_NoPcap(t *testing.T) {
 	}
 
 	// HTTPS Config (Ensure FakeCount is 0 to disable PCAP)
-	cfg.Runtime.HTTPS = config.HTTPSOptions{
+	cfg.HTTPS = config.HTTPSOptions{
 		Disorder:   false,
 		FakeCount:  uint8(0),
 		FakePacket: proto.NewFakeTLSMessage([]byte{}),
@@ -44,10 +44,10 @@ func TestCreateProxy_NoPcap(t *testing.T) {
 	}
 
 	// Rules
-	cfg.Startup.Rules = nil
+	cfg.Rules = nil
 
 	// DNS Config
-	cfg.Runtime.DNS = config.DNSOptions{
+	cfg.DNS = config.DNSOptions{
 		Mode:     config.DNSModeUDP,
 		Addr:     net.TCPAddr{IP: net.ParseIP("8.8.8.8"), Port: 53},
 		HTTPSURL: "https://dns.google/dns-query",
@@ -65,13 +65,13 @@ func TestCreateProxy_WithPolicy(t *testing.T) {
 	cfg := &config.Config{}
 
 	// App Config
-	cfg.Startup.App = config.AppOptions{
+	cfg.App = config.AppOptions{
 		Mode:       config.AppModeHTTP,
 		ListenAddr: net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0},
 	}
 
 	// Conn Config
-	cfg.Runtime.Conn = config.ConnOptions{
+	cfg.Conn = config.ConnOptions{
 		DefaultFakeTTL: uint8(64),
 		DNSTimeout:     time.Duration(0),
 		TCPTimeout:     time.Duration(0),
@@ -79,12 +79,12 @@ func TestCreateProxy_WithPolicy(t *testing.T) {
 	}
 
 	// HTTPS Config
-	cfg.Runtime.HTTPS = config.HTTPSOptions{
+	cfg.HTTPS = config.HTTPSOptions{
 		FakeCount: uint8(0),
 	}
 
 	// One rule
-	cfg.Startup.Rules = []config.Rule{
+	cfg.Rules = []config.Rule{
 		{
 			Name: "test-rule",
 			Match: &config.MatchAttrs{
@@ -102,7 +102,7 @@ func TestCreateProxy_WithPolicy(t *testing.T) {
 	}
 
 	// DNS Config
-	cfg.Runtime.DNS = config.DNSOptions{
+	cfg.DNS = config.DNSOptions{
 		Mode:     config.DNSModeUDP,
 		Addr:     net.TCPAddr{IP: net.ParseIP("8.8.8.8"), Port: 53},
 		HTTPSURL: "https://dns.google/dns-query",

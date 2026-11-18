@@ -44,11 +44,11 @@ func Load(cmd *cli.Command, cliOverrides []func(*Config)) (*Config, string, erro
 		}
 	}
 
-	rules, err := resolveRules(rawRules, cfg.Runtime)
+	rules, err := resolveRules(rawRules, cfg.RuntimeConfig)
 	if err != nil {
 		return nil, "", err
 	}
-	cfg.Startup.Rules = rules
+	cfg.Rules = rules
 
 	if err := cfg.Validate(); err != nil {
 		return nil, "", err

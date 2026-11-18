@@ -485,33 +485,33 @@ func TestFromTomlFile(t *testing.T) {
 		// handled separately below via resolveRules.
 		assert.NoError(t, cfg.Finalize())
 
-		assert.Equal(t, "127.0.0.1:8080", cfg.Startup.App.ListenAddr.String())
-		assert.Equal(t, time.Duration(1000*time.Millisecond), cfg.Runtime.Conn.DNSTimeout)
-		assert.Equal(t, time.Duration(1000*time.Millisecond), cfg.Runtime.Conn.TCPTimeout)
+		assert.Equal(t, "127.0.0.1:8080", cfg.App.ListenAddr.String())
+		assert.Equal(t, time.Duration(1000*time.Millisecond), cfg.Conn.DNSTimeout)
+		assert.Equal(t, time.Duration(1000*time.Millisecond), cfg.Conn.TCPTimeout)
 		assert.Equal(
 			t,
 			time.Duration(1000*time.Millisecond),
-			cfg.Runtime.Conn.UDPIdleTimeout,
+			cfg.Conn.UDPIdleTimeout,
 		)
-		assert.Equal(t, zerolog.DebugLevel, cfg.Startup.App.LogLevel)
-		assert.True(t, cfg.Startup.App.NoTUI)
-		assert.True(t, cfg.Startup.App.AutoConfigureNetwork)
-		assert.Equal(t, AppModeSOCKS5, cfg.Startup.App.Mode)
-		assert.Equal(t, "8.8.8.8:53", cfg.Runtime.DNS.Addr.String())
-		assert.True(t, cfg.Runtime.DNS.Cache)
-		assert.Equal(t, DNSModeHTTPS, cfg.Runtime.DNS.Mode)
-		assert.Equal(t, "https://1.1.1.1/dns-query", cfg.Runtime.DNS.HTTPSURL)
-		assert.Equal(t, DNSQueryIPv4, cfg.Runtime.DNS.QType)
-		assert.Equal(t, uint8(100), cfg.Runtime.Conn.DefaultFakeTTL)
-		assert.True(t, cfg.Runtime.HTTPS.Disorder)
-		assert.Equal(t, uint8(5), cfg.Runtime.HTTPS.FakeCount)
-		assert.Equal(t, []byte{0x01, 0x02, 0x03}, cfg.Runtime.HTTPS.FakePacket.Raw())
-		assert.Equal(t, HTTPSSplitModeChunk, cfg.Runtime.HTTPS.SplitMode)
-		assert.Equal(t, uint8(20), cfg.Runtime.HTTPS.ChunkSize)
-		assert.True(t, cfg.Runtime.HTTPS.Skip)
+		assert.Equal(t, zerolog.DebugLevel, cfg.App.LogLevel)
+		assert.True(t, cfg.App.NoTUI)
+		assert.True(t, cfg.App.AutoConfigureNetwork)
+		assert.Equal(t, AppModeSOCKS5, cfg.App.Mode)
+		assert.Equal(t, "8.8.8.8:53", cfg.DNS.Addr.String())
+		assert.True(t, cfg.DNS.Cache)
+		assert.Equal(t, DNSModeHTTPS, cfg.DNS.Mode)
+		assert.Equal(t, "https://1.1.1.1/dns-query", cfg.DNS.HTTPSURL)
+		assert.Equal(t, DNSQueryIPv4, cfg.DNS.QType)
+		assert.Equal(t, uint8(100), cfg.Conn.DefaultFakeTTL)
+		assert.True(t, cfg.HTTPS.Disorder)
+		assert.Equal(t, uint8(5), cfg.HTTPS.FakeCount)
+		assert.Equal(t, []byte{0x01, 0x02, 0x03}, cfg.HTTPS.FakePacket.Raw())
+		assert.Equal(t, HTTPSSplitModeChunk, cfg.HTTPS.SplitMode)
+		assert.Equal(t, uint8(20), cfg.HTTPS.ChunkSize)
+		assert.True(t, cfg.HTTPS.Skip)
 
 		// Resolve rules on top of the finalized base RuntimeConfig.
-		rules, err := resolveRules(rulesFromMap(m), cfg.Runtime)
+		rules, err := resolveRules(rulesFromMap(m), cfg.RuntimeConfig)
 		assert.NoError(t, err)
 		assert.Len(t, rules, 1)
 
