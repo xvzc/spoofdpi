@@ -60,10 +60,10 @@ func Load(cmd *cli.Command, cliOverrides []func(*Config)) (*Config, string, erro
 // loadTOML resolves the TOML config path (custom --config flag, env var,
 // or one of the default locations), then decodes it onto cfg if found.
 // The decode-into-defaults trick preserves cfg's pre-populated values
-// for any TOML key that's absent. Raw [[rules]] / [[policy.overrides]]
-// entries are extracted from the same decoded map so no second file read
-// is needed. Returns the path of the decoded file (or "" if none was
-// loaded) and the captured raw rules.
+// for any TOML key that's absent. Raw [[rules]] entries are extracted
+// from the same decoded map so no second file read is needed. Returns the
+// path of the decoded file (or "" if none was loaded) and the captured raw
+// rules.
 func loadTOML(cmd *cli.Command, cfg *Config) (string, []map[string]any, error) {
 	if cmd.Bool("clean") {
 		return "", nil, nil
@@ -92,20 +92,10 @@ func loadTOML(cmd *cli.Command, cfg *Config) (string, []map[string]any, error) {
 	return configPath, rulesFromMap(m), nil
 }
 
-// rulesFromMap extracts raw [[rules]] and deprecated [[policy.overrides]]
-// entries from an already-decoded TOML map. Using the deprecated key emits
-// a warning.
+// rulesFromMap extracts raw [[rules]] entries from an already-decoded TOML
+// map.
 func rulesFromMap(m map[string]any) []map[string]any {
-	var rules []map[string]any
-	if r, ok := m["rules"].([]map[string]any); ok {
-		rules = append(rules, r...)
-	}
-	if policy, ok := m["policy"].(map[string]any); ok {
-		if overrides, ok := policy["overrides"].([]map[string]any); ok {
-			AddWarnMsg("'[[policy.overrides]]' is deprecated; rename to '[[rules]]'")
-			rules = append(rules, overrides...)
-		}
-	}
+	rules, _ := m["rules"].([]map[string]any)
 	return rules
 }
 

@@ -54,11 +54,6 @@ func (c *Config) UnmarshalTOML(data any) (err error) {
 	if v, ok := m["udp"]; ok && err == nil {
 		err = c.UDP.UnmarshalTOML(v)
 	}
-	if policyMap, ok := m["policy"].(map[string]any); ok {
-		if _, hasTemplate := policyMap["template"]; hasTemplate {
-			AddWarnMsg("'policy.template' is deprecated and ignored")
-		}
-	}
 
 	return
 }

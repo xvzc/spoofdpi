@@ -64,8 +64,6 @@ nav:
       - 'UDP': user-guide/udp.md
       - 'Rules': user-guide/rules.md
     - 'Configuration Examples': user-guide/examples.md
-    # - 'Geographical Recipes': 
-    #   - 'South Korea': user-guide/configuration-recipes/south-korea.md
   - 'Developer Guide':
     - 'Agent Setup': developer-guide/agent-setup.md
     - 'Build and Run': developer-guide/build-and-run.md

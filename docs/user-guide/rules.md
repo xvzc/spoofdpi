@@ -109,15 +109,3 @@ priority = 100
 match = { domains = ["ads.example.com"] }
 block = true
 ```
-
-## Deprecated: `[[policy.overrides]]`
-
-Earlier versions used `[[policy.overrides]]` instead of `[[rules]]`. The old key is still accepted for backward compatibility but emits a deprecation warning at startup. Migrate to the top-level `[[rules]]` form — it removes the `[policy]` indirection that no longer carries any other configuration.
-
-```toml
-# Deprecated form — still works, prints a warning
-[[policy.overrides]]
-name = "allow youtube"
-match = { domains = ["*.youtube.com"] }
-https = { fake-count = 7 }
-```

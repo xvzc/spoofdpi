@@ -61,7 +61,7 @@ func TestCreateProxy_NoPcap(t *testing.T) {
 	assert.NotNil(t, p)
 }
 
-func TestCreateProxy_WithPolicy(t *testing.T) {
+func TestCreateProxy_WithRules(t *testing.T) {
 	cfg := &config.Config{}
 
 	// App Config

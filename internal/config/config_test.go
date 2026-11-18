@@ -23,19 +23,6 @@ func TestConfig_UnmarshalTOML(t *testing.T) {
 				"dns": map[string]any{
 					"addr": "1.1.1.1:53",
 				},
-				"policy": map[string]any{
-					"overrides": []map[string]any{
-						{
-							"name": "test",
-							"match": map[string]any{
-								"domains": []any{"example.com"},
-							},
-							"dns": map[string]any{
-								"route": "doh",
-							},
-						},
-					},
-				},
 			},
 			wantErr: false,
 			assert: func(t *testing.T, c Config) {
@@ -381,7 +368,7 @@ func TestResolveRules_inheritsFromBase(t *testing.T) {
 }
 
 // TestResolveRules_skipNotInheritedFromBase pins the rule that
-// https.skip is NEVER inherited from base into a policy override:
+// https.skip is NEVER inherited from base into a rule:
 // the override starts at skip=false regardless of what the static
 // config or CLI set, and only the rule's own TOML can flip it back
 // on. This keeps a global https.skip=true from silently turning
@@ -448,6 +435,55 @@ func TestResolveRules_skipNotInheritedFromBase(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, rules, 1)
 			assert.Equal(t, tc.wantSkip, rules[0].Config.HTTPS.Skip)
+		})
+	}
+}
+
+// TestRulesFromMap pins that only [[rules]] is read: the removed [policy]
+// table (including [[policy.overrides]]) is ignored without a warning.
+func TestRulesFromMap(t *testing.T) {
+	rule := map[string]any{
+		"name":  "r",
+		"match": map[string]any{"domains": []any{"a.com"}},
+	}
+	override := map[string]any{
+		"name":  "old",
+		"match": map[string]any{"domains": []any{"b.com"}},
+	}
+
+	tcs := []struct {
+		name  string
+		input map[string]any
+		want  []map[string]any
+	}{
+		{"no rules", map[string]any{}, nil},
+		{"rules", map[string]any{"rules": []map[string]any{rule}}, []map[string]any{rule}},
+		{
+			"policy overrides are ignored",
+			map[string]any{"policy": map[string]any{"overrides": []map[string]any{override}}},
+			nil,
+		},
+		{
+			"only rules are kept alongside policy",
+			map[string]any{
+				"rules":  []map[string]any{rule},
+				"policy": map[string]any{"overrides": []map[string]any{override}},
+			},
+			[]map[string]any{rule},
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			warnMu.Lock()
+			WarnMsgs = nil
+			warnMu.Unlock()
+
+			assert.Equal(t, tc.want, rulesFromMap(tc.input))
+
+			warnMu.Lock()
+			assert.Empty(t, WarnMsgs)
+			warnMu.Unlock()
 		})
 	}
 }
