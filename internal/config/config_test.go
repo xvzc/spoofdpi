@@ -341,8 +341,8 @@ func TestResolveRules_inheritsFromBase(t *testing.T) {
 			"match": map[string]any{
 				"domains": []any{"example.com"},
 			},
-			"https": map[string]any{
-				// Only override fake-count; other HTTPS fields should
+			"tls": map[string]any{
+				// Only override fake-count; other TLS fields should
 				// inherit from the base RuntimeConfig (eager-resolve at load).
 				"fake-count": int64(2),
 			},
@@ -368,10 +368,10 @@ func TestResolveRules_inheritsFromBase(t *testing.T) {
 }
 
 // TestResolveRules_skipNotInheritedFromBase pins the rule that
-// https.skip is NEVER inherited from base into a rule:
+// tls.skip is NEVER inherited from base into a rule:
 // the override starts at skip=false regardless of what the static
 // config or CLI set, and only the rule's own TOML can flip it back
-// on. This keeps a global https.skip=true from silently turning
+// on. This keeps a global tls.skip=true from silently turning
 // otherwise-tuned override rules into no-ops.
 func TestResolveRules_skipNotInheritedFromBase(t *testing.T) {
 	tcs := []struct {

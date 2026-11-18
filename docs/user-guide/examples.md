@@ -17,7 +17,7 @@ https-url = "https://dns.google/dns-query"
 If the default settings are not enough, you can try more aggressive settings. This configuration uses multiple fake packets and disorders the Client Hello.
 
 ```toml
-[https]
+[tls]
 fake-count = 5
 fake-packet = [0x16, 0x03, 0x01] # Simple fake Client Hello prefix
 disorder = true
@@ -40,11 +40,11 @@ block = true
 [[rules]]
 name = "unblock site"
 match = { domains = ["blocked-site.com"] }
-https = { fake-count = 2, disorder = true }
+tls = { fake-count = 2, disorder = true }
 
 # Use local network directly (no processing)
 [[rules]]
 name = "local bypass"
 match = { cidrs = ["192.168.0.0/16"] }
-https = { skip = true }
+tls = { skip = true }
 ```

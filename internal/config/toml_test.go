@@ -433,7 +433,7 @@ func TestFromTomlFile(t *testing.T) {
 				https-url = "https://1.1.1.1/dns-query"
 				qtype = "ipv4"
 
-			[https]
+			[tls]
 				disorder = true
 				fake-count = 5
 				fake-packet = [0x01, 0x02, 0x03]
@@ -457,7 +457,7 @@ func TestFromTomlFile(t *testing.T) {
 					block = true,
 					cache = false,
 				}
-				https = {
+				tls = {
 					disorder = false,
 					fake-count = 2,
 					fake-packet = [0xAA, 0xBB],

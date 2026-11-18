@@ -68,12 +68,12 @@ func TestCreateCommand_Flags(t *testing.T) {
 				"--dns-https-url", "https://cloudflare-dns.com/dns-query",
 				"--dns-qtype", "ipv6",
 				"--dns-cache",
-				"--https-fake-count", "10",
-				"--https-fake-packet", "0x16, 0x03",
-				"--https-disorder",
-				"--https-split-mode", "chunk",
-				"--https-chunk-size", "50",
-				"--https-skip",
+				"--tls-fake-count", "10",
+				"--tls-fake-packet", "0x16, 0x03",
+				"--tls-disorder",
+				"--tls-split-mode", "chunk",
+				"--tls-chunk-size", "50",
+				"--tls-skip",
 				"--udp-fake-count", "5",
 				"--udp-fake-packet", "0x01, 0x02",
 			},
@@ -123,7 +123,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				"--log-level", "error",
 				"--dns-mode", "system",
 				"--dns-qtype", "all",
-				"--https-split-mode", "random",
+				"--tls-split-mode", "random",
 			},
 			assert: func(t *testing.T, cfg *Config) {
 				assert.Equal(t, zerolog.ErrorLevel, cfg.App.LogLevel)
@@ -203,7 +203,7 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
     https-url = "https://1.1.1.1/dns-query"
     qtype = "ipv4"
 
-[https]
+[tls]
     disorder = true
     fake-count = 5
     fake-packet = [0x01, 0x02, 0x03]
@@ -227,7 +227,7 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
         block = true,
         cache = false,
     }
-    https = {
+    tls = {
         disorder = false,
         fake-count = 2,
         fake-packet = [0xAA, 0xBB],
@@ -265,12 +265,12 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
 		"--dns-mode", "udp",
 		"--dns-https-url", "https://8.8.8.8/dns-query",
 		"--dns-qtype", "ipv6",
-		"--https-disorder=false",
-		"--https-fake-count", "10",
-		"--https-fake-packet", "0xff,0xff",
-		"--https-split-mode", "sni",
-		"--https-chunk-size", "10",
-		"--https-skip=false",
+		"--tls-disorder=false",
+		"--tls-fake-count", "10",
+		"--tls-fake-packet", "0xff,0xff",
+		"--tls-split-mode", "sni",
+		"--tls-chunk-size", "10",
+		"--tls-skip=false",
 		"--udp-fake-count", "20",
 		"--udp-fake-packet", "0xcc,0xdd",
 	}
@@ -328,14 +328,14 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
 // so a regression that broke base→rule plumbing could slip through.
 func TestLoad_RuleInheritsFromCLIAndTOML(t *testing.T) {
 	tomlContent := `
-[https]
+[tls]
     split-mode = "chunk"
     chunk-size = 20
 
 [[rules]]
     name = "partial-rule"
     match = { domains = ["example.com"] }
-    https = { chunk-size = 50, skip = true }
+    tls = { chunk-size = 50, skip = true }
 `
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "spoofdpi.toml")
@@ -354,7 +354,7 @@ func TestLoad_RuleInheritsFromCLIAndTOML(t *testing.T) {
 		"spoofdpi",
 		"--config", configPath,
 		// CLI sets a key the TOML and the rule both leave alone:
-		"--https-fake-count", "10",
+		"--tls-fake-count", "10",
 	}
 	require.NoError(t, cmd.Run(context.Background(), args))
 	require.NotNil(t, capturedCfg)
@@ -382,7 +382,8 @@ func TestLoad_RuleInheritsFromCLIAndTOML(t *testing.T) {
 // TestCreateCommand_EnumUsageMatchesValidator guards the enum flags' help text
 // against drifting away from the values their validators actually accept.
 // Regression test: --dns-mode advertised <'udp'|'doh'|'sys'> while only
-// "udp", "https" and "system" were accepted, and --https-split-mode listed
+// "udp", "https" and "system" were accepted, and --tls-split-mode (then
+// --https-split-mode) listed
 // "sni" twice while omitting "first-byte".
 func TestCreateCommand_EnumUsageMatchesValidator(t *testing.T) {
 	tcs := []struct {
@@ -392,7 +393,7 @@ func TestCreateCommand_EnumUsageMatchesValidator(t *testing.T) {
 		{flag: "app-mode", values: availableAppModeValues},
 		{flag: "dns-mode", values: availableDNSModeValues},
 		{flag: "dns-qtype", values: availableDNSQueryValues},
-		{flag: "https-split-mode", values: availableHTTPSModeValues},
+		{flag: "tls-split-mode", values: availableHTTPSModeValues},
 	}
 
 	runFunc := func(ctx context.Context, configDir string, cfg *Config) error {

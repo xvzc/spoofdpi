@@ -117,10 +117,10 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 			Config:   base,
 		}
 
-		// Override semantics: https.skip is intentionally NOT inherited
+		// Override semantics: tls.skip is intentionally NOT inherited
 		// from base. Rules always start with skip=false; only the
 		// rule's own TOML can set it to true. This way a global
-		// https.skip=true on the static config can leave non-matched
+		// tls.skip=true on the static config can leave non-matched
 		// traffic alone without silently turning rules into no-ops.
 		// The rule's HTTPS UnmarshalTOML below will overwrite this
 		// only if the rule explicitly sets skip.
@@ -151,7 +151,21 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 				return nil, fmt.Errorf("rule %d: dns: %w", i, err)
 			}
 		}
-		if v, ok := item["https"]; ok {
+		// 'https' is the deprecated name of 'tls'. When 'tls' is present,
+		// 'https' is ignored entirely.
+		if v, ok := item["tls"]; ok {
+			if _, dup := item["https"]; dup {
+				AddWarnMsg(fmt.Sprintf(
+					"rule %d: 'https' is ignored because 'tls' is set", i,
+				))
+			}
+			if err := r.Config.HTTPS.UnmarshalTOML(v); err != nil {
+				return nil, fmt.Errorf("rule %d: tls: %w", i, err)
+			}
+		} else if v, ok := item["https"]; ok {
+			AddWarnMsg(fmt.Sprintf(
+				"rule %d: 'https' is deprecated; rename to 'tls'", i,
+			))
 			if err := r.Config.HTTPS.UnmarshalTOML(v); err != nil {
 				return nil, fmt.Errorf("rule %d: https: %w", i, err)
 			}

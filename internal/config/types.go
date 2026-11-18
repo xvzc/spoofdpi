@@ -466,7 +466,7 @@ func fakePacketLen(m *proto.TLSMessage) int {
 func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
 	m, ok := data.(map[string]any)
 	if !ok {
-		return fmt.Errorf("'https' must be table type")
+		return fmt.Errorf("'tls' must be table type")
 	}
 
 	if p := findFrom(m, "disorder", parseBoolFn(), &err); isOk(p, err) {
@@ -642,7 +642,7 @@ type Rule struct {
 }
 
 // UnmarshalTOML decodes the standalone fields of a Rule. The per-section
-// config overrides (dns/https/udp/connection) are NOT decoded here —
+// config overrides (dns/tls/udp/connection) are NOT decoded here —
 // resolveRules in load.go handles them so it can pre-fill from the
 // finalized base RuntimeConfig before overlaying the rule's TOML.
 func (r *Rule) UnmarshalTOML(data any) (err error) {

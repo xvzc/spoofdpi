@@ -22,7 +22,7 @@ This project utilizes `CGO` for low-level networking capabilities, requiring spe
 To run the application without building an executable, use the standard `Go` command. Command-line arguments can be passed directly after the package path.
 
 ```console
-$ go run ./cmd/spoofdpi --https-chunk-size 1
+$ go run ./cmd/spoofdpi --tls-chunk-size 1
 ```
 
 ## Building an Executable

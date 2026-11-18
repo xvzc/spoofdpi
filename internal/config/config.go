@@ -48,7 +48,15 @@ func (c *Config) UnmarshalTOML(data any) (err error) {
 	if v, ok := m["dns"]; ok && err == nil {
 		err = c.DNS.UnmarshalTOML(v)
 	}
-	if v, ok := m["https"]; ok && err == nil {
+	// [https] is the deprecated name of [tls]. When [tls] is present,
+	// [https] is ignored entirely.
+	if v, ok := m["tls"]; ok && err == nil {
+		if _, dup := m["https"]; dup {
+			AddWarnMsg("'[https]' is ignored because '[tls]' is set")
+		}
+		err = c.HTTPS.UnmarshalTOML(v)
+	} else if v, ok := m["https"]; ok && err == nil {
+		AddWarnMsg("'[https]' is deprecated; rename to '[tls]'")
 		err = c.HTTPS.UnmarshalTOML(v)
 	}
 	if v, ok := m["udp"]; ok && err == nil {

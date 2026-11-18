@@ -143,7 +143,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 		return fmt.Errorf("create server: %w", err)
 	}
 
-	logger.Info().Msg("https info")
+	logger.Info().Msg("tls info")
 	logger.Info().
 		Str("split-mode", cfg.HTTPS.SplitMode.String()).
 		Uint8("chunk-size", uint8(cfg.HTTPS.ChunkSize)).

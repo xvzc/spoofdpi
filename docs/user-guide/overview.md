@@ -32,7 +32,7 @@ The configuration is organized into six main categories. Click on each category 
 | **[App](app.md)** | Application-level options (mode, address, logging, etc.). |
 | **[Connection](connection.md)** | Connection timeout and packet TTL settings. |
 | **[DNS](dns.md)** | DNS resolution options. |
-| **[HTTPS](https.md)** | HTTPS/TLS packet manipulation options. |
+| **[TLS](tls.md)** | TLS packet manipulation options. |
 | **[UDP](udp.md)** | UDP packet manipulation options. |
 | **[Rules](rules.md)** | Rule-based routing and automatic bypass policies. |
 
@@ -45,7 +45,7 @@ The following two methods will achieve the exact same configuration.
 All settings are passed directly via flags.
 
 ```console
-$ spoofdpi --app-mode socks5 --dns-mode https --https-disorder
+$ spoofdpi --app-mode socks5 --dns-mode https --tls-disorder
 ```
 
 ### Method 2: Using a TOML Config File
@@ -59,7 +59,7 @@ mode = "socks5"
 [dns]
 mode = "https"
 
-[https]
+[tls]
 disorder = true
 ```
 

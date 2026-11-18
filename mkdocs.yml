@@ -60,7 +60,7 @@ nav:
       - 'App': user-guide/app.md
       - 'Connection': user-guide/connection.md
       - 'DNS': user-guide/dns.md
-      - 'HTTPS': user-guide/https.md
+      - 'TLS': user-guide/tls.md
       - 'UDP': user-guide/udp.md
       - 'Rules': user-guide/rules.md
     - 'Configuration Examples': user-guide/examples.md

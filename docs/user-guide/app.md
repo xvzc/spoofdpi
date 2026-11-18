@@ -187,7 +187,7 @@ $ spoofdpi --clean
 
 Specifies the IPv4 address of the default gateway instead of discovering it automatically. `(default: auto-detect)`
 
-The gateway is only used for fake packets ([`https.fake-count`](https.md#fake-count) or [`udp.fake-count`](udp.md#fake-count) above 0) and for TUN mode. When this option is set, spoofdpi skips automatic discovery and uses the network interface whose subnet contains the gateway. This helps when automatic discovery fails or picks the wrong route, for example on machines with multiple interfaces or a VPN.
+The gateway is only used for fake packets ([`tls.fake-count`](tls.md#fake-count) or [`udp.fake-count`](udp.md#fake-count) above 0) and for TUN mode. When this option is set, spoofdpi skips automatic discovery and uses the network interface whose subnet contains the gateway. This helps when automatic discovery fails or picks the wrong route, for example on machines with multiple interfaces or a VPN.
 
 Only IPv4 addresses are supported. If no interface is on the same subnet as the gateway, spoofdpi fails to start. If neither fake packets nor TUN mode is enabled, this option is ignored with a warning.
 

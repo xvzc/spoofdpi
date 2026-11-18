@@ -1,6 +1,9 @@
-# HTTPS Configuration
+# TLS Configuration
 
-Settings for manipulating HTTPS/TLS packets to bypass DPI.
+Settings for manipulating TLS packets (such as HTTPS) to bypass DPI.
+
+!!! note
+    This section was previously named `[https]`, with `--https-*` flags. The old names still work but print a deprecation warning. If both `[https]` and `[tls]` are set, `[https]` is ignored. On the command line, a `--tls-*` flag takes precedence over the same `--https-*` flag.
 
 ## `split-mode`
 
@@ -14,7 +17,7 @@ Specifies the default packet fragmentation strategy to use for the Client Hello 
 
 - `sni`: Splits the packet right after the SNI extension.
 - `random`: Splits the packet at a random position.
-- `chunk`: Splits the packet into fixed-size chunks (controlled by `https-chunk-size`).
+- `chunk`: Splits the packet into fixed-size chunks (controlled by `tls-chunk-size`).
 - `first-byte`: Splits only the first byte of the packet.
 - `custom`: Uses custom segment plans (TOML only).
 - `none`: Disables fragmentation.
@@ -23,12 +26,12 @@ Specifies the default packet fragmentation strategy to use for the Client Hello 
 
 **Command-Line Flag**
 ```console
-$ spoofdpi --https-split-mode sni
+$ spoofdpi --tls-split-mode sni
 ```
 
 **TOML Config**
 ```toml
-[https]
+[tls]
 split-mode = "sni"
 ```
 
@@ -42,19 +45,19 @@ split-mode = "sni"
 
 Specifies the chunk size in bytes for packet fragmentation. `(default: 35, max: 255)`
 
-This value is only applied when `https-split-mode` is set to `chunk`.
+This value is only applied when `tls-split-mode` is set to `chunk`.
 Try lower values if the default fails to bypass the DPI.
 
 ### Usage
 
 **Command-Line Flag**
 ```console
-$ spoofdpi --https-chunk-size 1
+$ spoofdpi --tls-chunk-size 1
 ```
 
 **TOML Config**
 ```toml
-[https]
+[tls]
 chunk-size = 1
 ```
 
@@ -77,12 +80,12 @@ When enabled, this option varies the TTL of fragmented Client Hello packets, pot
 
 **Command-Line Flag**
 ```console
-$ spoofdpi --https-disorder
+$ spoofdpi --tls-disorder
 ```
 
 **TOML Config**
 ```toml
-[https]
+[tls]
 disorder = true
 ```
 
@@ -97,7 +100,7 @@ disorder = true
 Specifies the number of fake packets to be sent before the actual Client Hello. `(default: 0)`
 
 Sending fake packets can trick DPI systems into inspecting invalid traffic, allowing the real Client Hello to pass through.
-If `https-chunk-size` is greater than 0, each fake packet will also be fragmented.
+If `tls-chunk-size` is greater than 0, each fake packet will also be fragmented.
 
 Fake packets carry the connection's real TCP sequence numbers, learned from the server's SYN/ACK, so they overlap the real Client Hello. This applies to IPv4 servers with public addresses. For IPv6 or private addresses, or if the sequence numbers cannot be learned in time (100ms), random ones are used instead.
 
@@ -108,12 +111,12 @@ Fake packets carry the connection's real TCP sequence numbers, learned from the 
 
 **Command-Line Flag**
 ```console
-$ spoofdpi --https-fake-count 7
+$ spoofdpi --tls-fake-count 7
 ```
 
 **TOML Config**
 ```toml
-[https]
+[tls]
 fake-count = 7
 ```
 
@@ -125,7 +128,7 @@ fake-count = 7
 
 ### Description
 
-Customizes the content of the fake packets used by `https-fake-count`. `(default: built-in fake packet)`
+Customizes the content of the fake packets used by `tls-fake-count`. `(default: built-in fake packet)`
 
 The value should be a sequence of bytes representing a valid (or semi-valid) TLS Client Hello or other protocol data.
 
@@ -135,14 +138,14 @@ The value should be a sequence of bytes representing a valid (or semi-valid) TLS
 Provide a comma-separated string of hexadecimal bytes (e.g., `0x16, 0x03, 0x01, ...`).
 
 ```console
-$ spoofdpi --https-fake-packet "0x16, 0x03, 0x01, 0x00, 0xa1, ..."
+$ spoofdpi --tls-fake-packet "0x16, 0x03, 0x01, 0x00, 0xa1, ..."
 ```
 
 **TOML Config**
 Provide an array of integers (bytes).
 
 ```toml
-[https]
+[tls]
 fake-packet = [0x16, 0x03, 0x01, 0x00]
 ```
 
@@ -154,18 +157,18 @@ fake-packet = [0x16, 0x03, 0x01, 0x00]
 
 ### Description
 
-If set to `true`, HTTPS traffic will be processed without any DPI bypass techniques (fragmentation, disordering, etc.). It effectively treats the connection as a standard HTTPS proxy connection.
+If set to `true`, TLS traffic will be processed without any DPI bypass techniques (fragmentation, disordering, etc.). It effectively treats the connection as a standard proxy connection.
 
 ### Usage
 
 **Command-Line Flag**
 ```console
-$ spoofdpi --https-skip
+$ spoofdpi --tls-skip
 ```
 
 **TOML Config**
 ```toml
-[https]
+[tls]
 skip = true
 ```
 
@@ -201,7 +204,7 @@ Each segment plan specifies where to split the packet relative to a reference po
 **TOML Config**
 
 ```toml
-[https]
+[tls]
 split-mode = "custom"
 custom-segments = [
     { from = "head", at = 2 },                    # Split 2 bytes from start

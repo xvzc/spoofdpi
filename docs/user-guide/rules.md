@@ -34,7 +34,7 @@ Both `domains` and `cidrs` accept items with a `file:` prefix. The path after th
 [[rules]]
 name = "streaming"
 match = { domains = ["file:assets/streaming-domains.txt", "*.youtube.com"] }
-https = { fake-count = 5 }
+tls = { fake-count = 5 }
 ```
 
 **Path resolution**
@@ -72,9 +72,9 @@ Customize how domain names are resolved for matched traffic. The available field
 | `qtype`     | String | Query type: `"ipv4"`, `"ipv6"`, or `"all"`.      |
 | `cache`     | Bool   | If `true`, enables caching for this rule.        |
 
-## HTTPS Override (`https`)
+## TLS Override (`tls`)
 
-Customize how HTTPS connections are established. The available fields mirror the global [HTTPS Configuration](https.md).
+Customize how TLS connections are established. The available fields mirror the global [TLS Configuration](tls.md). The previous name `https` still works but prints a deprecation warning; if a rule sets both, `https` is ignored.
 
 | Field         | Type   | Description                                           |
 | :------------ | :----- | :---------------------------------------------------- |
@@ -93,14 +93,14 @@ Customize how HTTPS connections are established. The available fields mirror the
 name = "allow youtube"
 priority = 50
 match = { domains = ["*.youtube.com"] }
-https = { disorder = true, fake-count = 7 }
+tls = { disorder = true, fake-count = 7 }
 
 # Example B: Bypass DPI for local network traffic (Standard Connection)
 [[rules]]
 name = "skip local"
 priority = 51
 match = { cidrs = ["192.168.0.0/24"] }
-https = { skip = true }
+tls = { skip = true }
 
 # Example C: Block a specific domain
 [[rules]]
