@@ -80,7 +80,7 @@ func (tw *TCPWriter) WriteCraftedPacket(
 			srcMAC,
 			dstMAC,
 			srcTCP.IP,
-			srcTCP.IP,
+			dstTCP.IP,
 			srcPort,
 			dstPort,
 			ttl,
