@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+    {{ super() }}
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+    
+        .md-header {
+            position: initial;
+            box-shadow: none;
+        }
+
+        .md-header__button {
+            display: none;
+        }
+
+        /* Rules provided by user */
+        .md-main__inner {
+            margin: 0;
+        }
+
+        .md-tabs {
+            display: none;
+            box-shadow: none;
+        }
+
+        .md-content {
+            /* Hide the default markdown content */
+            display: none; 
+        }
+        
+        /* [NEW] Hide the default footer */
+        .md-footer {
+            display: none;
+        }
+
+        /* Base page styles */
+        body, html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            /* Corrected syntax error (removed quotes) and used color from previous context */
+            background-color: hsl(230, 13%, 9%); 
+            position: relative;
+            height: 100vh;
+        }
+
+        /* Canvas (background) */
+        canvas#matrix {
+            display: block;
+            position: fixed; 
+            top: 0;
+            left: 0;
+            z-index: 0; 
+        }
+
+        /* [MODIFIED] Center container for both image and button */
+        .center-container {
+            position: fixed;
+            max-width: 100%;
+            max-height: 100%;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            display: flex;
+            flex-direction: column; /* Image above button */
+            align-items: center; /* Center horizontally */
+            gap: 20px; /* Space between image and button */
+            z-index: 1; 
+        }
+
+        /* Centered image style */
+        #center-image {
+            /* [FIXED] 'transform' removed. Centering is handled by the flex container. */
+            z-index: 0; 
+            object-fit: contain;
+
+            /* Responsive sizing (Default for desktops) */
+            /* Using vw/vh (viewport width/height) is more robust here */
+            max-width: 60vw;
+            max-height: 60vh;
+        }
+
+
+
+        /* Get Started Button Style */
+        #get-started-button {
+            display: inline-block;
+            padding: 12px 28px;
+            font-family: 'Chakra Petch', monospace;
+
+
+            font-size: 3.2em;
+            font-weight: bold;
+            color: #0F0; /* Neon green text */
+            background-color: rgba(0, 255, 0, 0.1); /* Slightly transparent green background */
+            border: 2px solid #0F0;
+            border-radius: 8px;
+            text-decoration: none; /* Remove underline for links */
+            cursor: pointer;
+            transition: all 0.3s ease; /* Smooth hover effects */
+            box-shadow: 0 0 15px rgba(0, 255, 0, 0.4);
+        }
+
+        #get-started-button:hover {
+            background-color: #0F0; /* Solid green background on hover */
+            color: #14151a; /* Dark background color for text on hover */
+            box-shadow: 0 0 25px rgba(0, 255, 0, 0.8);
+            transform: scale(1.05); /* Slightly enlarge on hover */
+        }
+        
+        /* [MODIFIED] Media queries should only adjust size, not position. */
+        @media (max-width: 1150px) {
+            #center-image {
+                /* top: 330px; (Removed) */
+                max-width: 90vw;
+                max-height: 90vh;
+            }
+        }
+
+        @media (max-width: 800px) {
+            #center-image {
+                /* top: 280px; (Removed) */
+            }
+            .center-container {
+                top: 40%;
+            }
+        }
+
+        @media (max-width: 600px) {
+            #center-image {
+                /* top: 200px; (Removed) */
+                max-width: 95vw; /* Make it even wider on small mobile */
+            }
+            .center-container {
+                top: 30%;
+            }
+        }
+    </style>
+{% endblock %}
+
+{% block tabs %}
+    {{ super() }}
+    <canvas id="matrix"></canvas>
+    
+    <div class="center-container">
+        <img 
+            id="center-image" 
+            src="./static/demo.png" 
+            alt="Center Image"
+        >
+        <a id="get-started-button" href="{{ 'getting-started/introduction/' | url }}"> Get Started</a>
+
+    </div>
+    <script src="./matrix.js"></script>
+{% endblock %}
+
+{% block content %}
+{% endblock %}
+
+{% block footer %}
+{% endblock %}
