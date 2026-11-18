@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.6.0](https://github.com/xvzc/spoofdpi/compare/v1.5.6...v1.6.0) (2026-11-18)
+
+
+### Features
+
+* add --gateway option to override gateway discovery ([e77eca8](https://github.com/xvzc/spoofdpi/commit/e77eca848e57d8bfa963c6826fe5174dc7d2e1f2)), closes [#411](https://github.com/xvzc/spoofdpi/issues/411)
+
+
+### Bug Fixes
+
+* **packet:** use destination IP for IPv6 fake TCP packets ([f5c913d](https://github.com/xvzc/spoofdpi/commit/f5c913dc2541277825367cb329284971e069e08c))
+
 ## [1.5.6](https://github.com/xvzc/spoofdpi/compare/v1.5.5...v1.5.6) (2026-11-17)
 
 
