@@ -11,7 +11,7 @@ import (
 	"github.com/rs/zerolog"
 )
 
-var _ Writer = (*TCPWriter)(nil)
+var _ TCPSeqWriter = (*TCPWriter)(nil)
 
 type TCPWriter struct {
 	logger zerolog.Logger
@@ -37,7 +37,8 @@ func NewTCPWriter(
 
 // --- Injector Methods ---
 
-// WriteCraftedPacket crafts and injects a full TCP packet from a payload.
+// WriteCraftedPacket crafts and injects a full TCP packet from a payload,
+// with random sequence numbers.
 // It uses the pre-configured gateway MAC address.
 func (tw *TCPWriter) WriteCraftedPacket(
 	ctx context.Context,
@@ -45,6 +46,32 @@ func (tw *TCPWriter) WriteCraftedPacket(
 	dst net.Addr,
 	ttl uint8,
 	payload []byte,
+) (int, error) {
+	return tw.writeCrafted(src, dst, ttl, payload, TCPSeq{
+		Seq: rand.Uint32(),
+		Ack: rand.Uint32(),
+	})
+}
+
+// WriteCraftedPacketWithSeq is like WriteCraftedPacket, but the packet
+// carries the given sequence numbers.
+func (tw *TCPWriter) WriteCraftedPacketWithSeq(
+	ctx context.Context,
+	src net.Addr,
+	dst net.Addr,
+	ttl uint8,
+	payload []byte,
+	seq TCPSeq,
+) (int, error) {
+	return tw.writeCrafted(src, dst, ttl, payload, seq)
+}
+
+func (tw *TCPWriter) writeCrafted(
+	src net.Addr,
+	dst net.Addr,
+	ttl uint8,
+	payload []byte,
+	seq TCPSeq,
 ) (int, error) {
 	// set variables for src/dst
 	srcMAC := tw.iface.HardwareAddr
@@ -74,6 +101,7 @@ func (tw *TCPWriter) WriteCraftedPacket(
 			srcPort,
 			dstPort,
 			ttl,
+			seq,
 		)
 	} else {
 		packetLayers, err = tw.createIPv6Layers(
@@ -84,6 +112,7 @@ func (tw *TCPWriter) WriteCraftedPacket(
 			srcPort,
 			dstPort,
 			ttl,
+			seq,
 		)
 	}
 
@@ -121,6 +150,7 @@ func (tw *TCPWriter) createIPv4Layers(
 	srcPort int,
 	dstPort int,
 	ttl uint8,
+	seq TCPSeq,
 ) ([]gopacket.SerializableLayer, error) {
 	var packetLayers []gopacket.SerializableLayer
 
@@ -147,10 +177,10 @@ func (tw *TCPWriter) createIPv4Layers(
 	tcpLayer := &layers.TCP{
 		SrcPort: layers.TCPPort(srcPort), // Use a random high port
 		DstPort: layers.TCPPort(dstPort),
-		Seq:     rand.Uint32(), // A random sequence number
-		PSH:     true,          // Push the payload
-		ACK:     true,          // Assuming this is part of an established flow
-		Ack:     rand.Uint32(),
+		Seq:     seq.Seq,
+		PSH:     true, // Push the payload
+		ACK:     true, // Assuming this is part of an established flow
+		Ack:     seq.Ack,
 		Window:  12345,
 	}
 	packetLayers = append(packetLayers, tcpLayer)
@@ -170,6 +200,7 @@ func (tw *TCPWriter) createIPv6Layers(
 	srcPort int,
 	dstPort int,
 	ttl uint8,
+	seq TCPSeq,
 ) ([]gopacket.SerializableLayer, error) {
 	var packetLayers []gopacket.SerializableLayer
 
@@ -194,10 +225,10 @@ func (tw *TCPWriter) createIPv6Layers(
 	tcpLayer := &layers.TCP{
 		SrcPort: layers.TCPPort(srcPort),
 		DstPort: layers.TCPPort(dstPort),
-		Seq:     rand.Uint32(),
+		Seq:     seq.Seq,
 		PSH:     true,
 		ACK:     true,
-		Ack:     rand.Uint32(),
+		Ack:     seq.Ack,
 		Window:  12345,
 	}
 	packetLayers = append(packetLayers, tcpLayer)

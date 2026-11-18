@@ -99,6 +99,8 @@ Specifies the number of fake packets to be sent before the actual Client Hello. 
 Sending fake packets can trick DPI systems into inspecting invalid traffic, allowing the real Client Hello to pass through.
 If `https-chunk-size` is greater than 0, each fake packet will also be fragmented.
 
+Fake packets carry the connection's real TCP sequence numbers, learned from the server's SYN/ACK, so they overlap the real Client Hello. This applies to IPv4 servers with public addresses. For IPv6 or private addresses, or if the sequence numbers cannot be learned in time (100ms), random ones are used instead.
+
 !!! note
     spoofdpi must be run with root privileges to use this option effectively on some systems or configurations requiring raw socket access (though usually not required for standard usage, verify if this note from old docs is still accurate - kept for safety).
 

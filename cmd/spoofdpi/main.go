@@ -199,7 +199,13 @@ func setupPcapIO(
 	logger zerolog.Logger,
 	route *netutil.Route,
 	cfg *config.Config,
-) (tcpSniffer, udpSniffer packet.Sniffer, tcpWriter, udpWriter packet.Writer, err error) {
+) (
+	tcpSniffer, udpSniffer packet.Sniffer,
+	tcpWriter packet.TCPSeqWriter,
+	udpWriter packet.Writer,
+	seqs *packet.SeqTracker,
+	err error,
+) {
 	if !cfg.NeedsPcap() {
 		return
 	}
@@ -235,10 +241,12 @@ func setupPcapIO(
 			err = fmt.Errorf("tcp pcap handle on %s: %w", route.Iface.Name, hErr)
 			return
 		}
+		seqs = packet.NewSeqTracker(5 * time.Second)
 		tcpSniffer = packet.NewTCPSniffer(
 			pktLogger,
 			tcpHandle,
 			hopCache,
+			seqs,
 			&cfg.RuntimeConfig,
 		)
 		tcpWriter = packet.NewTCPWriter(pktLogger, tcpHandle, &route.Iface, gatewayMAC)
@@ -303,7 +311,7 @@ func createServer(
 			Msg("gateway is ignored; only fake packets and tun mode use it")
 	}
 
-	tcpSniffer, udpSniffer, tcpWriter, udpWriter, err := setupPcapIO(
+	tcpSniffer, udpSniffer, tcpWriter, udpWriter, seqs, err := setupPcapIO(
 		appctx,
 		logger,
 		defaultRoute,
@@ -317,6 +325,7 @@ func createServer(
 		logging.WithScope(logger, "dsn"),
 		tcpWriter,
 		tcpSniffer,
+		seqs,
 	)
 	udpDesyncer := desync.NewUDPDesyncer(
 		logging.WithScope(logger, "dsn"),

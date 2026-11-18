@@ -21,6 +21,7 @@ type TCPSniffer struct {
 
 	nhopCache  cache.Cache[netutil.IPKey, uint8]
 	defaultTTL uint8
+	seqs       *SeqTracker
 
 	handle Handle
 }
@@ -29,6 +30,7 @@ func NewTCPSniffer(
 	logger zerolog.Logger,
 	handle Handle,
 	cache cache.Cache[netutil.IPKey, uint8],
+	seqs *SeqTracker,
 	cfg *config.RuntimeConfig,
 ) *TCPSniffer {
 	return &TCPSniffer{
@@ -36,6 +38,7 @@ func NewTCPSniffer(
 		handle:     handle,
 		nhopCache:  cache,
 		defaultTTL: uint8(cfg.Conn.DefaultFakeTTL),
+		seqs:       seqs,
 	}
 }
 
@@ -76,7 +79,8 @@ func (ts *TCPSniffer) GetOptimalTTL(key netutil.IPKey) uint8 {
 	return max(hopCount, 2) - 1
 }
 
-// processPacket analyzes a single packet to find SYN/ACKs and store hop counts.
+// processPacket analyzes a single packet to find SYN/ACKs and store hop
+// counts and the connection's sequence numbers.
 func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	logger := logging.WithLocalScope(ctx, ts.logger, "sniff")
 
@@ -90,7 +94,7 @@ func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 		return
 	}
 
-	var srcIP []byte
+	var srcIP, dstIP net.IP
 	var ttlLeft uint8
 
 	if ipLayer := p.Layer(layers.LayerTypeIPv4); ipLayer != nil {
@@ -100,10 +104,12 @@ func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 		}
 
 		srcIP = ip.SrcIP
+		dstIP = ip.DstIP
 		ttlLeft = ip.TTL
 	} else if ipLayer := p.Layer(layers.LayerTypeIPv6); ipLayer != nil {
 		ip, _ := ipLayer.(*layers.IPv6)
 		srcIP = ip.SrcIP
+		dstIP = ip.DstIP
 		ttlLeft = ip.HopLimit
 	} else {
 		return
@@ -118,6 +124,15 @@ func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	}
 
 	ts.nhopCache.Set(key, nhops, nil)
+
+	// The SYN/ACK's Ack is the client's next sequence number, and the
+	// client acknowledges the server's SYN with Seq+1.
+	if ts.seqs != nil {
+		ts.seqs.Put(
+			netutil.NewNATKey(dstIP, int(tcp.DstPort), srcIP, int(tcp.SrcPort)),
+			TCPSeq{Seq: tcp.Ack, Ack: tcp.Seq + 1},
+		)
+	}
 	if nhops != prev {
 		logger.Trace().
 			Str("from", key.String()).

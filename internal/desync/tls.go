@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"slices"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -16,6 +17,11 @@ import (
 	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
+
+// seqWaitTimeout bounds how long Desync waits for the sniffer to learn a
+// connection's sequence numbers from its SYN/ACK before falling back to
+// random ones.
+const seqWaitTimeout = 100 * time.Millisecond
 
 type Segment struct {
 	Packet []byte
@@ -26,16 +32,18 @@ type Segment struct {
 // disorders packets by manipulating TTL.
 type TLSDesyncer struct {
 	logger  zerolog.Logger
-	writer  packet.Writer
+	writer  packet.TCPSeqWriter
 	sniffer packet.Sniffer
+	seqs    *packet.SeqTracker
 }
 
 func NewTLSDesyncer(
 	logger zerolog.Logger,
-	writer packet.Writer,
+	writer packet.TCPSeqWriter,
 	sniffer packet.Sniffer,
+	seqs *packet.SeqTracker,
 ) *TLSDesyncer {
-	return &TLSDesyncer{logger: logger, writer: writer, sniffer: sniffer}
+	return &TLSDesyncer{logger: logger, writer: writer, sniffer: sniffer, seqs: seqs}
 }
 
 // PrepareHopTrack registers addrs with the sniffer for hop-count learning,
@@ -57,14 +65,20 @@ func (d *TLSDesyncer) Desync(
 
 	if httpsOpts.Skip {
 		logger.Trace().Msg("skip desync for this request")
-		return d.sendSegments(conn, logger, []Segment{{Packet: msg.Raw()}})
+		return d.sendSegments(conn, logger, []Segment{{Packet: msg.Raw()}}, nil)
 	}
 
+	// seq tracks the connection's next sequence number while segments are
+	// sent. It is nil when the sequence numbers are unknown.
+	var seq *packet.TCPSeq
 	if httpsOpts.FakeCount > 0 && d.sniffer != nil && d.writer != nil {
+		// Wait for the sequence numbers first: the sniffer learns the hop
+		// count from the same SYN/ACK, so the TTL read after it is fresher.
+		seq = d.lookupSeq(ctx, logger, conn)
 		oTTL := d.sniffer.GetOptimalTTL(
 			netutil.NewIPKey(conn.RemoteAddr().(*net.TCPAddr).IP),
 		)
-		n, err := d.sendFakePackets(ctx, logger, conn, oTTL, httpsOpts)
+		n, err := d.sendFakePackets(ctx, logger, conn, oTTL, httpsOpts, seq)
 		if err != nil {
 			logger.Warn().Err(err).Msg("failed to send fake packets")
 		} else {
@@ -74,14 +88,55 @@ func (d *TLSDesyncer) Desync(
 
 	segments := split(logger, msg, httpsOpts)
 
-	return d.sendSegments(conn, logger, segments)
+	return d.sendSegments(conn, logger, segments, seq)
 }
 
-// sendSegments sends the segmented Client Hello sequentially.
+// lookupSeq returns the connection's next sequence numbers learned from its
+// SYN/ACK, or nil if they are not learned within seqWaitTimeout.
+func (d *TLSDesyncer) lookupSeq(
+	ctx context.Context,
+	logger zerolog.Logger,
+	conn net.Conn,
+) *packet.TCPSeq {
+	if d.seqs == nil {
+		return nil
+	}
+
+	local, lok := conn.LocalAddr().(*net.TCPAddr)
+	remote, rok := conn.RemoteAddr().(*net.TCPAddr)
+	if !lok || !rok {
+		return nil
+	}
+
+	if !packet.CanLearnSeq(remote.IP) {
+		logger.Trace().
+			Msg("sequence numbers cannot be learned for this address, using random ones")
+		return nil
+	}
+
+	seq, ok := d.seqs.Wait(ctx, packet.SeqKey(local, remote), seqWaitTimeout)
+	if !ok {
+		logger.Debug().
+			Msg("sequence numbers not learned, using random ones for fake packets")
+		return nil
+	}
+
+	logger.Trace().
+		Uint32("seq", seq.Seq).
+		Uint32("ack", seq.Ack).
+		Msg("sequence numbers learned")
+
+	return &seq
+}
+
+// sendSegments sends the segmented Client Hello sequentially. If seq is not
+// nil, it is advanced by every byte written so that it always holds the
+// connection's next sequence number.
 func (d *TLSDesyncer) sendSegments(
 	conn net.Conn,
 	logger zerolog.Logger,
 	segments []Segment,
+	seq *packet.TCPSeq,
 ) (int, error) {
 	var isIPv4 bool
 	if tcpAddr, ok := conn.LocalAddr().(*net.TCPAddr); ok {
@@ -106,6 +161,9 @@ func (d *TLSDesyncer) sendSegments(
 
 		n, err := conn.Write(chunk.Packet)
 		total += n
+		if seq != nil {
+			seq.Seq += uint32(n)
+		}
 		if err != nil {
 			return total, err
 		}
@@ -292,19 +350,42 @@ func (d *TLSDesyncer) sendFakePackets(
 	conn net.Conn,
 	oTTL uint8,
 	opts *config.HTTPSOptions,
+	seq *packet.TCPSeq,
 ) (int, error) {
 	var totalSent int
 	segments := split(logger, opts.FakePacket, opts)
 
 	for range opts.FakeCount {
+		// Every fake copy overlaps the real Client Hello, which starts at
+		// seq. Fakes do not consume sequence space, so seq itself is not
+		// advanced.
+		var cur packet.TCPSeq
+		if seq != nil {
+			cur = *seq
+		}
+
 		for _, v := range segments {
-			n, err := d.writer.WriteCraftedPacket(
-				ctx,
-				conn.LocalAddr(),
-				conn.RemoteAddr(),
-				oTTL,
-				v.Packet,
-			)
+			var n int
+			var err error
+			if seq != nil {
+				n, err = d.writer.WriteCraftedPacketWithSeq(
+					ctx,
+					conn.LocalAddr(),
+					conn.RemoteAddr(),
+					oTTL,
+					v.Packet,
+					cur,
+				)
+				cur.Seq += uint32(len(v.Packet))
+			} else {
+				n, err = d.writer.WriteCraftedPacket(
+					ctx,
+					conn.LocalAddr(),
+					conn.RemoteAddr(),
+					oTTL,
+					v.Packet,
+				)
+			}
 			if err != nil {
 				return totalSent, err
 			}
