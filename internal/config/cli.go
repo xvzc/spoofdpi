@@ -21,23 +21,21 @@ import (
 // every field. Used as the starting point of the load pipeline
 // (defaults → TOML → CLI → Finalize → Validate). Tests that need a
 // single section (e.g. base RuntimeConfig for resolveRules) reach in
-// via DefaultConfig().Runtime / .Startup.
+// via DefaultConfig().RuntimeConfig / .App.
 func DefaultConfig() *Config { //exhaustruct:enforce
 	return &Config{
-		Startup: StartupConfig{ //exhaustruct:enforce
-			App: AppOptions{ //exhaustruct:enforce
-				NoTUI:                false,
-				LogLevel:             zerolog.InfoLevel,
-				Silent:               false,
-				AutoConfigureNetwork: false,
-				Mode:                 AppModeHTTP,
-				ListenAddr:           net.TCPAddr{},
-				Gateway:              nil,
-				FreebsdFIB:           1,
-			},
-			Rules: nil,
+		App: AppOptions{ //exhaustruct:enforce
+			NoTUI:                false,
+			LogLevel:             zerolog.InfoLevel,
+			Silent:               false,
+			AutoConfigureNetwork: false,
+			Mode:                 AppModeHTTP,
+			ListenAddr:           net.TCPAddr{},
+			Gateway:              nil,
+			FreebsdFIB:           1,
 		},
-		Runtime: RuntimeConfig{ //exhaustruct:enforce
+		Rules: nil,
+		RuntimeConfig: RuntimeConfig{ //exhaustruct:enforce
 			Conn: ConnOptions{ //exhaustruct:enforce
 				DefaultFakeTTL: 8,
 				DNSTimeout:     5000 * time.Millisecond,
@@ -98,14 +96,14 @@ func CreateCommand(
 				Note that 'socks5' and 'tun' modes are currently experimental.
 				(default: %q)`,
 					enumUsage(availableAppModeValues),
-					defaultCfg.Startup.App.Mode.String(),
+					defaultCfg.App.Mode.String(),
 				),
 				OnlyOnce:  true,
 				Validator: checkAppMode,
 				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 					mode := MustParseServerModeType(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Startup.App.Mode = mode
+						cfg.App.Mode = mode
 					})
 					return nil
 				},
@@ -132,14 +130,14 @@ func CreateCommand(
 				Name: "default-fake-ttl",
 				Usage: fmt.Sprintf(`
 				Default TTL value for fake packets. (default: %v)`,
-					defaultCfg.Runtime.Conn.DefaultFakeTTL,
+					defaultCfg.Conn.DefaultFakeTTL,
 				),
 				OnlyOnce:  true,
 				Validator: checkUint8NonZero,
 				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
 					ttl := uint8(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.Conn.DefaultFakeTTL = ttl
+						cfg.Conn.DefaultFakeTTL = ttl
 					})
 					return nil
 				},
@@ -149,14 +147,14 @@ func CreateCommand(
 				Name: "dns-addr",
 				Usage: fmt.Sprintf(`<ip:port>
 				Upstream DNS server address for standard UDP queries. (default: %v)`,
-					defaultCfg.Runtime.DNS.Addr.String(),
+					defaultCfg.DNS.Addr.String(),
 				),
 				OnlyOnce:  true,
 				Validator: checkHostPort,
 				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 					addr := MustParseTCPAddr(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.DNS.Addr = addr
+						cfg.DNS.Addr = addr
 					})
 					return nil
 				},
@@ -166,14 +164,14 @@ func CreateCommand(
 				Name: "dns-cache",
 				Usage: fmt.Sprintf(`
 				If set, DNS records will be cached. (default: %v)`,
-					defaultCfg.Runtime.DNS.Cache,
+					defaultCfg.DNS.Cache,
 				),
 				Value:    false,
 				OnlyOnce: true,
 				Action: func(ctx context.Context, cmd *cli.Command, v bool) error {
 					cache := v
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.DNS.Cache = cache
+						cfg.DNS.Cache = cache
 					})
 					return nil
 				},
@@ -185,7 +183,7 @@ func CreateCommand(
 				Default resolution mode for domains that do not match any specific rule.
 				(default: %q)`,
 					enumUsage(availableDNSModeValues),
-					defaultCfg.Runtime.DNS.Mode.String(),
+					defaultCfg.DNS.Mode.String(),
 				),
 				Value:     "udp",
 				OnlyOnce:  true,
@@ -193,7 +191,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 					mode := MustParseDNSModeType(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.DNS.Mode = mode
+						cfg.DNS.Mode = mode
 					})
 					return nil
 				},
@@ -204,7 +202,7 @@ func CreateCommand(
 				Usage: fmt.Sprintf(`<https_url>
 				Endpoint URL for DNS over HTTPS (DoH) queries. 
 				(default: %q)`,
-					defaultCfg.Runtime.DNS.HTTPSURL,
+					defaultCfg.DNS.HTTPSURL,
 				),
 				Value:     "https://dns.google/dns-query",
 				OnlyOnce:  true,
@@ -212,7 +210,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 					url := v
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.DNS.HTTPSURL = url
+						cfg.DNS.HTTPSURL = url
 					})
 					return nil
 				},
@@ -224,7 +222,7 @@ func CreateCommand(
 				Filters DNS queries by record type (A for IPv4, AAAA for IPv6).
 				(default: %q)`,
 					enumUsage(availableDNSQueryValues),
-					defaultCfg.Runtime.DNS.QType.String(),
+					defaultCfg.DNS.QType.String(),
 				),
 				Value:     "ipv4",
 				OnlyOnce:  true,
@@ -232,7 +230,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 					qtype := MustParseDNSQueryType(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.DNS.QType = qtype
+						cfg.DNS.QType = qtype
 					})
 					return nil
 				},
@@ -243,7 +241,7 @@ func CreateCommand(
 				Usage: fmt.Sprintf(`
 				Timeout for dns connection in milliseconds. 
 				No effect when the value is 0 (default: %v, max: %v)`,
-					defaultCfg.Runtime.Conn.DNSTimeout.Milliseconds(),
+					defaultCfg.Conn.DNSTimeout.Milliseconds(),
 					math.MaxUint16,
 				),
 				Value:     0,
@@ -252,7 +250,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
 					dur := time.Duration(v * int64(time.Millisecond))
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.Conn.DNSTimeout = dur
+						cfg.Conn.DNSTimeout = dur
 					})
 					return nil
 				},
@@ -263,7 +261,7 @@ func CreateCommand(
 				Usage: fmt.Sprintf(`
 				Number of fake packets to be sent before the Client Hello.
 				Requires 'https-chunk-size' > 0 for fragmentation. (default: %v)`,
-					defaultCfg.Runtime.HTTPS.FakeCount,
+					defaultCfg.HTTPS.FakeCount,
 				),
 				Value:     0,
 				OnlyOnce:  true,
@@ -271,7 +269,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
 					n := uint8(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.HTTPS.FakeCount = n
+						cfg.HTTPS.FakeCount = n
 					})
 					return nil
 				},
@@ -288,7 +286,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 					pkt := proto.NewFakeTLSMessage(MustParseBytes(v))
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.HTTPS.FakePacket = pkt
+						cfg.HTTPS.FakePacket = pkt
 					})
 					return nil
 				},
@@ -298,13 +296,13 @@ func CreateCommand(
 				Name: "https-disorder",
 				Usage: fmt.Sprintf(`
 				If set, sends fragmented Client Hello packets out-of-order. (default: %v)`,
-					defaultCfg.Runtime.HTTPS.Disorder,
+					defaultCfg.HTTPS.Disorder,
 				),
 				OnlyOnce: true,
 				Action: func(ctx context.Context, cmd *cli.Command, v bool) error {
 					disorder := v
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.HTTPS.Disorder = disorder
+						cfg.HTTPS.Disorder = disorder
 					})
 					return nil
 				},
@@ -315,7 +313,7 @@ func CreateCommand(
 				Usage: fmt.Sprintf(`%s
 				Specifies the default packet fragmentation strategy to use. (default: %q)`,
 					enumUsage(availableHTTPSModeValues),
-					defaultCfg.Runtime.HTTPS.SplitMode.String(),
+					defaultCfg.HTTPS.SplitMode.String(),
 				),
 				Value:     "chunk",
 				OnlyOnce:  true,
@@ -323,7 +321,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 					mode := mustParseHTTPSSplitModeType(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.HTTPS.SplitMode = mode
+						cfg.HTTPS.SplitMode = mode
 					})
 					return nil
 				},
@@ -334,13 +332,13 @@ func CreateCommand(
 				Usage: fmt.Sprintf(`
 				If set, HTTPS traffic will be processed without any DPI bypass techniques. 
 				(default: %v)`,
-					defaultCfg.Runtime.HTTPS.Skip,
+					defaultCfg.HTTPS.Skip,
 				),
 				OnlyOnce: true,
 				Action: func(ctx context.Context, cmd *cli.Command, v bool) error {
 					skip := v
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.HTTPS.Skip = skip
+						cfg.HTTPS.Skip = skip
 					})
 					return nil
 				},
@@ -354,7 +352,7 @@ func CreateCommand(
 				disables fragmentation (to avoid division-by-zero errors), you should set 
 				'https-split-mode' to 'none' to disable the feature cleanly.
 				(default: %v, max: %v)`,
-					defaultCfg.Runtime.HTTPS.ChunkSize,
+					defaultCfg.HTTPS.ChunkSize,
 					math.MaxUint8,
 				),
 				OnlyOnce:  true,
@@ -362,7 +360,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
 					sz := uint8(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.HTTPS.ChunkSize = sz
+						cfg.HTTPS.ChunkSize = sz
 					})
 					return nil
 				},
@@ -372,7 +370,7 @@ func CreateCommand(
 				Name: "udp-fake-count",
 				Usage: fmt.Sprintf(`
 				Number of fake packets to be sent. (default: %v)`,
-					defaultCfg.Runtime.UDP.FakeCount,
+					defaultCfg.UDP.FakeCount,
 				),
 				Value:     0,
 				OnlyOnce:  true,
@@ -380,7 +378,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
 					n := uint8(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.UDP.FakeCount = n
+						cfg.UDP.FakeCount = n
 					})
 					return nil
 				},
@@ -391,13 +389,13 @@ func CreateCommand(
 				Usage: `<byte_array>
 				Comma-separated hexadecimal byte array used for fake packet. 
 				(default: built-in fake packet)`,
-				Value:     MustParseHexCSV(defaultCfg.Runtime.UDP.FakePacket),
+				Value:     MustParseHexCSV(defaultCfg.UDP.FakePacket),
 				OnlyOnce:  true,
 				Validator: checkHexBytesStr,
 				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 					pkt := MustParseBytes(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.UDP.FakePacket = pkt
+						cfg.UDP.FakePacket = pkt
 					})
 					return nil
 				},
@@ -408,13 +406,13 @@ func CreateCommand(
 				Usage: fmt.Sprintf(`
 				If set, UDP traffic will be processed without any DPI bypass techniques.
 				(default: %v)`,
-					defaultCfg.Runtime.UDP.Skip,
+					defaultCfg.UDP.Skip,
 				),
 				OnlyOnce: true,
 				Action: func(ctx context.Context, cmd *cli.Command, v bool) error {
 					skip := v
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.UDP.Skip = skip
+						cfg.UDP.Skip = skip
 					})
 					return nil
 				},
@@ -425,7 +423,7 @@ func CreateCommand(
 				Usage: fmt.Sprintf(`
 				Idle timeout for udp connection in milliseconds. 
 				No effect when the value is 0 (default: %v, max: %v)`,
-					defaultCfg.Runtime.Conn.UDPIdleTimeout.Milliseconds(),
+					defaultCfg.Conn.UDPIdleTimeout.Milliseconds(),
 					math.MaxUint16,
 				),
 				Value:     0,
@@ -434,7 +432,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
 					dur := time.Duration(v * int64(time.Millisecond))
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.Conn.UDPIdleTimeout = dur
+						cfg.Conn.UDPIdleTimeout = dur
 					})
 					return nil
 				},
@@ -452,7 +450,7 @@ func CreateCommand(
 					}
 					addr := MustParseTCPAddr(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Startup.App.ListenAddr = addr
+						cfg.App.ListenAddr = addr
 					})
 					return nil
 				},
@@ -468,7 +466,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 					gateway := MustParseIPv4(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Startup.App.Gateway = gateway
+						cfg.App.Gateway = gateway
 					})
 					return nil
 				},
@@ -483,7 +481,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
 					level := MustParseLogLevel(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Startup.App.LogLevel = level
+						cfg.App.LogLevel = level
 					})
 					return nil
 				},
@@ -493,13 +491,13 @@ func CreateCommand(
 				Name: "no-tui",
 				Usage: fmt.Sprintf(`
 				Disable TUI and run in headless mode. (default: %v)`,
-					defaultCfg.Startup.App.NoTUI,
+					defaultCfg.App.NoTUI,
 				),
 				OnlyOnce: true,
 				Action: func(ctx context.Context, cmd *cli.Command, v bool) error {
 					noTUI := v
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Startup.App.NoTUI = noTUI
+						cfg.App.NoTUI = noTUI
 					})
 					return nil
 				},
@@ -509,13 +507,13 @@ func CreateCommand(
 				Name: "auto-configure-network",
 				Usage: fmt.Sprintf(`
 				Automatically set system-wide proxy configuration (default: %v)`,
-					defaultCfg.Startup.App.AutoConfigureNetwork,
+					defaultCfg.App.AutoConfigureNetwork,
 				),
 				OnlyOnce: true,
 				Action: func(ctx context.Context, cmd *cli.Command, v bool) error {
 					auto := v
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Startup.App.AutoConfigureNetwork = auto
+						cfg.App.AutoConfigureNetwork = auto
 					})
 					return nil
 				},
@@ -526,7 +524,7 @@ func CreateCommand(
 				Usage: fmt.Sprintf(`
 				Timeout for tcp connection in milliseconds. 
 				No effect when the value is 0 (default: %v, max: %v)`,
-					defaultCfg.Runtime.Conn.TCPTimeout.Milliseconds(),
+					defaultCfg.Conn.TCPTimeout.Milliseconds(),
 					math.MaxUint16,
 				),
 				Value:     0,
@@ -535,7 +533,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
 					dur := time.Duration(v * int64(time.Millisecond))
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Runtime.Conn.TCPTimeout = dur
+						cfg.Conn.TCPTimeout = dur
 					})
 					return nil
 				},
@@ -553,7 +551,7 @@ func CreateCommand(
 				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
 					fib := int(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Startup.App.FreebsdFIB = fib
+						cfg.App.FreebsdFIB = fib
 					})
 					return nil
 				},
