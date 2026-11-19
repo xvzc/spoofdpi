@@ -22,11 +22,11 @@ func TestSeqTracker_PutThenWait(t *testing.T) {
 	addrs := testAddrs(50000)
 	key := SeqKey(addrs[0], addrs[1])
 
-	tr.Put(key, TCPSeq{Seq: 100, Ack: 200})
+	tr.Put(key, SeqAck{Seq: 100, Ack: 200})
 
 	seq, ok := tr.Wait(context.Background(), key, time.Second)
 	assert.True(t, ok)
-	assert.Equal(t, TCPSeq{Seq: 100, Ack: 200}, seq)
+	assert.Equal(t, SeqAck{Seq: 100, Ack: 200}, seq)
 	assert.Equal(t, 0, tr.Len(), "entry is removed once consumed")
 
 	_, ok = tr.Wait(context.Background(), key, 10*time.Millisecond)
@@ -39,7 +39,7 @@ func TestSeqTracker_WaitThenPut(t *testing.T) {
 	key := SeqKey(addrs[0], addrs[1])
 
 	type result struct {
-		seq TCPSeq
+		seq SeqAck
 		ok  bool
 	}
 	done := make(chan result, 1)
@@ -57,12 +57,12 @@ func TestSeqTracker_WaitThenPut(t *testing.T) {
 	)
 
 	start := time.Now()
-	tr.Put(key, TCPSeq{Seq: 1, Ack: 2})
+	tr.Put(key, SeqAck{Seq: 1, Ack: 2})
 
 	select {
 	case r := <-done:
 		assert.True(t, r.ok)
-		assert.Equal(t, TCPSeq{Seq: 1, Ack: 2}, r.seq)
+		assert.Equal(t, SeqAck{Seq: 1, Ack: 2}, r.seq)
 		assert.Less(
 			t,
 			time.Since(start),
@@ -107,8 +107,8 @@ func TestSeqTracker_KeysAreDistinctPerConnection(t *testing.T) {
 	a := testAddrs(50000)
 	b := testAddrs(50001)
 
-	tr.Put(SeqKey(a[0], a[1]), TCPSeq{Seq: 1})
-	tr.Put(SeqKey(b[0], b[1]), TCPSeq{Seq: 2})
+	tr.Put(SeqKey(a[0], a[1]), SeqAck{Seq: 1})
+	tr.Put(SeqKey(b[0], b[1]), SeqAck{Seq: 2})
 
 	seqA, okA := tr.Wait(context.Background(), SeqKey(a[0], a[1]), time.Second)
 	seqB, okB := tr.Wait(context.Background(), SeqKey(b[0], b[1]), time.Second)
@@ -131,11 +131,11 @@ func TestSeqTracker_ExpiresUnconsumedEntries(t *testing.T) {
 	a := testAddrs(50000)
 	b := testAddrs(50001)
 
-	tr.Put(SeqKey(a[0], a[1]), TCPSeq{Seq: 1})
+	tr.Put(SeqKey(a[0], a[1]), SeqAck{Seq: 1})
 	time.Sleep(30 * time.Millisecond)
 
 	// Any later call sweeps expired entries.
-	tr.Put(SeqKey(b[0], b[1]), TCPSeq{Seq: 2})
+	tr.Put(SeqKey(b[0], b[1]), SeqAck{Seq: 2})
 	assert.Equal(t, 1, tr.Len())
 
 	_, ok := tr.Wait(context.Background(), SeqKey(a[0], a[1]), 10*time.Millisecond)
@@ -164,8 +164,8 @@ func TestSeqTracker_WaitSurvivesSweepWithShortTTL(t *testing.T) {
 
 	// Let ttl pass, then trigger a sweep through another key.
 	time.Sleep(20 * time.Millisecond)
-	tr.Put(SeqKey(b[0], b[1]), TCPSeq{Seq: 9})
-	tr.Put(key, TCPSeq{Seq: 1})
+	tr.Put(SeqKey(b[0], b[1]), SeqAck{Seq: 9})
+	tr.Put(key, SeqAck{Seq: 1})
 
 	select {
 	case ok := <-done:

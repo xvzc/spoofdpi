@@ -102,7 +102,7 @@ Specifies the number of fake packets to be sent before the actual Client Hello. 
 Sending fake packets can trick DPI systems into inspecting invalid traffic, allowing the real Client Hello to pass through.
 If `tls-chunk-size` is greater than 0, each fake packet will also be fragmented.
 
-Fake packets carry the connection's real TCP sequence numbers, learned from the server's SYN/ACK, so they overlap the real Client Hello. This applies to IPv4 servers with public addresses. For IPv6 or private addresses, or if the sequence numbers cannot be learned in time (100ms), random ones are used instead.
+By default, fake packets carry the connection's real TCP sequence and acknowledgment numbers, learned from the server's SYN/ACK, so they overlap the real Client Hello. See [`fake-seq`](#fake-seq), [`fake-ack`](#fake-ack) and [`syn-ack-timeout`](#syn-ack-timeout) to change this.
 
 !!! note
     spoofdpi must be run with root privileges to use this option effectively on some systems or configurations requiring raw socket access (though usually not required for standard usage, verify if this note from old docs is still accurate - kept for safety).
@@ -147,6 +147,106 @@ Provide an array of integers (bytes).
 ```toml
 [tls]
 fake-packet = [0x16, 0x03, 0x01, 0x00]
+```
+
+---
+
+## `fake-seq`
+
+`type: string`
+
+### Description
+
+Sets the TCP sequence number of fake packets. `(default: "offset:0")`
+
+- `offset:N`: the connection's real sequence number plus `N` (mod 2^32). `N` may be negative.
+- `rand`: a random number, chosen once per connection.
+
+With the default `offset:0`, each fake overlaps the real Client Hello, which works against DPI that tracks the TCP window. If a fake outlives its TTL and reaches the server, though, the server accepts it as data and the connection breaks.
+
+The server drops a fake that reaches it only if the fake lies entirely before the data it has already received, that is, when the offset is at most minus the length of the fake packet. For example, `offset:-10000`. spoofdpi warns at startup if a negative offset is smaller than the fake packet, since the fakes would then overlap real data.
+
+DPI that checks the TCP window strictly may ignore such fakes too. Which offsets a DPI accepts varies by network, so test them on yours. To make fakes safe for the server while keeping the sequence number DPI expects, see [`fake-ack`](#fake-ack).
+
+If the real number cannot be learned (see [`syn-ack-timeout`](#syn-ack-timeout)), a random number chosen once per connection is used in its place.
+
+### Usage
+
+**Command-Line Flag**
+```console
+$ spoofdpi --tls-fake-count 2 --tls-fake-seq offset:-10000
+```
+
+**TOML Config**
+```toml
+[tls]
+fake-count = 2
+fake-seq = "offset:-10000"
+```
+
+---
+
+## `fake-ack`
+
+`type: string`
+
+### Description
+
+Sets the TCP acknowledgment number of fake packets, with the same values as [`fake-seq`](#fake-seq). `(default: "offset:0")`
+
+Changing only the acknowledgment number keeps the sequence number DPI expects, while a server that receives the fake drops it if the number is out of range. Following [RFC 793](https://www.rfc-editor.org/rfc/rfc793) and [RFC 5961](https://www.rfc-editor.org/rfc/rfc5961), as Linux does, a server drops a segment whose acknowledgment number:
+
+- acknowledges data it has not sent yet: an offset from `1` to `2147483647`; or
+- is older than any receive window the client can advertise (65535 × 2^14 bytes): an offset from `-1073725441` down to `-2147483647`.
+
+Offsets in between, from `-1073725440` to `0`, may be accepted depending on the window, and offsets beyond ±2^31 wrap around to the other side.
+
+Some DPI ignores fakes that acknowledge data the server has not sent, so the recommended value is `offset:-1073741824` (-2^30). Servers on other operating systems may behave differently, and which offsets a DPI accepts varies by network, so test them on yours.
+
+### Usage
+
+**Command-Line Flag**
+```console
+$ spoofdpi --tls-fake-count 2 --tls-fake-ack offset:-1073741824
+```
+
+**TOML Config**
+```toml
+[tls]
+fake-count = 2
+fake-ack = "offset:-1073741824"
+```
+
+---
+
+## `syn-ack-timeout`
+
+`type: uint16`
+
+### Description
+
+The maximum time in milliseconds to wait, before sending fake packets, for the server's SYN/ACK to be captured. `(default: 100)`
+
+The SYN/ACK gives the connection's real sequence numbers and the number of hops to the server, which sets the TTL of fake packets. spoofdpi waits only when needed:
+
+- when [`fake-seq`](#fake-seq) or [`fake-ack`](#fake-ack) uses an offset, for every connection;
+- when both are `rand`, only until the hop count for the server has been learned.
+
+The wait ends as soon as the SYN/ACK is processed. If it is not processed in time, random sequence numbers and the default TTL are used. `0` disables waiting: only numbers already learned are used.
+
+Only IPv4 servers with public addresses are learned; spoofdpi does not wait for others.
+
+### Usage
+
+**Command-Line Flag**
+```console
+$ spoofdpi --tls-syn-ack-timeout 50
+```
+
+**TOML Config**
+```toml
+[tls]
+syn-ack-timeout = 50
 ```
 
 ---

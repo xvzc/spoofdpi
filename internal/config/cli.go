@@ -54,6 +54,9 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 				Disorder:           false,
 				FakeCount:          0,
 				FakePacket:         proto.NewFakeTLSMessage([]byte(FakeClientHello)),
+				FakeSeq:            SeqMode{Random: false, Offset: 0},
+				FakeAck:            SeqMode{Random: false, Offset: 0},
+				SynAckTimeout:      100 * time.Millisecond,
 				SplitMode:          HTTPSSplitModeSNI,
 				ChunkSize:          35,
 				CustomSegmentPlans: nil,
@@ -560,7 +563,7 @@ func tlsFlags(
 		*overrides = append(*overrides, fn)
 	}
 
-	return []cli.Flag{
+	flags := []cli.Flag{
 		&cli.Int64Flag{
 			Name:   prefix + "fake-count",
 			Hidden: deprecated,
@@ -677,4 +680,68 @@ func tlsFlags(
 			},
 		},
 	}
+
+	// Options added after the rename have no deprecated --https-* name.
+	if deprecated {
+		return flags
+	}
+
+	return append(flags,
+		&cli.StringFlag{
+			Name: prefix + "fake-seq",
+			Usage: fmt.Sprintf(`<"rand"|"offset:N">
+				Sequence number of fake packets. 'offset:N' adds N to the
+				connection's real number; 'rand' picks one per connection.
+				(default: %q)`,
+				defaultCfg.HTTPS.FakeSeq.String(),
+			),
+			OnlyOnce:  true,
+			Validator: checkSeqMode,
+			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+				mode := mustParseSeqMode(v)
+				add(prefix+"fake-seq", func(cfg *Config) {
+					cfg.HTTPS.FakeSeq = mode
+				})
+				return nil
+			},
+		},
+
+		&cli.StringFlag{
+			Name: prefix + "fake-ack",
+			Usage: fmt.Sprintf(`<"rand"|"offset:N">
+				Acknowledgment number of fake packets, set like 'tls-fake-seq'.
+				(default: %q)`,
+				defaultCfg.HTTPS.FakeAck.String(),
+			),
+			OnlyOnce:  true,
+			Validator: checkSeqMode,
+			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+				mode := mustParseSeqMode(v)
+				add(prefix+"fake-ack", func(cfg *Config) {
+					cfg.HTTPS.FakeAck = mode
+				})
+				return nil
+			},
+		},
+
+		&cli.Int64Flag{
+			Name: prefix + "syn-ack-timeout",
+			Usage: fmt.Sprintf(`
+				Maximum time in milliseconds to wait for the server's SYN/ACK
+				to learn sequence numbers and the hop count before sending
+				fake packets. 0 disables waiting. (default: %v, max: %v)`,
+				defaultCfg.HTTPS.SynAckTimeout.Milliseconds(),
+				math.MaxUint16,
+			),
+			OnlyOnce:  true,
+			Validator: checkUint16,
+			Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
+				dur := time.Duration(v) * time.Millisecond
+				add(prefix+"syn-ack-timeout", func(cfg *Config) {
+					cfg.HTTPS.SynAckTimeout = dur
+				})
+				return nil
+			},
+		},
+	)
 }

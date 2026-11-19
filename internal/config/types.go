@@ -418,10 +418,29 @@ func (s *SegmentPlan) UnmarshalTOML(data any) (err error) {
 	return err
 }
 
+// SeqMode sets the sequence or acknowledgment number of fake TCP packets.
+// The zero value is "offset:0": the connection's real number.
+type SeqMode struct {
+	// Random uses a random number, chosen once per connection.
+	Random bool
+	// Offset is added (mod 2^32) to the connection's real number.
+	Offset int64
+}
+
+func (m SeqMode) String() string {
+	if m.Random {
+		return "rand"
+	}
+	return fmt.Sprintf("offset:%d", m.Offset)
+}
+
 type HTTPSOptions struct {
 	Disorder           bool               `toml:"disorder"`
 	FakeCount          uint8              `toml:"fake-count"`
 	FakePacket         *proto.TLSMessage  `toml:"fake-packet"`
+	FakeSeq            SeqMode            `toml:"fake-seq"`
+	FakeAck            SeqMode            `toml:"fake-ack"`
+	SynAckTimeout      time.Duration      `toml:"syn-ack-timeout"`
 	SplitMode          HTTPSSplitModeType `toml:"split-mode"`
 	ChunkSize          uint8              `toml:"chunk-size"`
 	Skip               bool               `toml:"skip"`
@@ -438,6 +457,9 @@ func (o HTTPSOptions) MarshalJSON() ([]byte, error) {
 		Disorder       bool               `json:"disorder"`
 		FakeCount      uint8              `json:"fake-count"`
 		FakePacketLen  int                `json:"fake-packet-len,omitempty"`
+		FakeSeq        string             `json:"fake-seq"`
+		FakeAck        string             `json:"fake-ack"`
+		SynAckTimeout  string             `json:"syn-ack-timeout"`
 		SplitMode      HTTPSSplitModeType `json:"split-mode"`
 		ChunkSize      uint8              `json:"chunk-size"`
 		Skip           bool               `json:"skip"`
@@ -446,6 +468,9 @@ func (o HTTPSOptions) MarshalJSON() ([]byte, error) {
 		Disorder:      o.Disorder,
 		FakeCount:     o.FakeCount,
 		FakePacketLen: fakePacketLen(o.FakePacket),
+		FakeSeq:       o.FakeSeq.String(),
+		FakeAck:       o.FakeAck.String(),
+		SynAckTimeout: o.SynAckTimeout.String(),
 		SplitMode:     o.SplitMode,
 		ChunkSize:     o.ChunkSize,
 		Skip:          o.Skip,
@@ -483,6 +508,21 @@ func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
 		&err,
 	); fakePacket != nil {
 		o.FakePacket = proto.NewFakeTLSMessage(fakePacket)
+	}
+
+	if p := findFrom(m, "fake-seq", parseStringFn(checkSeqMode), &err); isOk(p, err) {
+		o.FakeSeq = mustParseSeqMode(*p)
+	}
+	if p := findFrom(m, "fake-ack", parseStringFn(checkSeqMode), &err); isOk(p, err) {
+		o.FakeAck = mustParseSeqMode(*p)
+	}
+	if p := findFrom(
+		m,
+		"syn-ack-timeout",
+		parseIntFn[uint16](checkUint16),
+		&err,
+	); isOk(p, err) {
+		o.SynAckTimeout = time.Duration(*p) * time.Millisecond
 	}
 
 	if p := findFrom(

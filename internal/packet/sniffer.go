@@ -10,6 +10,15 @@ type Sniffer interface {
 	StartCapturing()
 	Register(addrs []net.IP)
 	GetOptimalTTL(key netutil.IPKey) uint8
+	// HopLearned reports whether the hop count for key has been learned
+	// from a captured packet, rather than being the registered default.
+	HopLearned(key netutil.IPKey) bool
+}
+
+// HopEntry is a hop-count cache entry.
+type HopEntry struct {
+	Hops    uint8
+	Learned bool // learned from a captured packet, not the default
 }
 
 // estimateHops estimates the number of hops based on TTL.

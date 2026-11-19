@@ -19,7 +19,7 @@ var _ Sniffer = (*UDPSniffer)(nil)
 type UDPSniffer struct {
 	logger zerolog.Logger
 
-	nhopCache  cache.Cache[netutil.IPKey, uint8]
+	nhopCache  cache.Cache[netutil.IPKey, HopEntry]
 	defaultTTL uint8
 
 	handle Handle
@@ -28,7 +28,7 @@ type UDPSniffer struct {
 func NewUDPSniffer(
 	logger zerolog.Logger,
 	handle Handle,
-	cache cache.Cache[netutil.IPKey, uint8],
+	cache cache.Cache[netutil.IPKey, HopEntry],
 	cfg *config.RuntimeConfig,
 ) *UDPSniffer {
 	return &UDPSniffer{
@@ -60,7 +60,7 @@ func (us *UDPSniffer) Register(addrs []net.IP) {
 	for _, v := range addrs {
 		us.nhopCache.Set(
 			netutil.NewIPKey(v),
-			us.defaultTTL,
+			HopEntry{Hops: us.defaultTTL, Learned: false},
 			cache.Options().WithSkipExisting(true),
 		)
 	}
@@ -69,11 +69,18 @@ func (us *UDPSniffer) Register(addrs []net.IP) {
 // GetOptimalTTL retrieves the estimated hop count for a given key from the cache.
 func (us *UDPSniffer) GetOptimalTTL(key netutil.IPKey) uint8 {
 	hopCount := uint8(255)
-	if oTTL, ok := us.nhopCache.Get(key); ok {
-		hopCount = oTTL
+	if e, ok := us.nhopCache.Get(key); ok {
+		hopCount = e.Hops
 	}
 
 	return max(hopCount, 2) - 1
+}
+
+// HopLearned reports whether the hop count for key was learned from a
+// captured packet.
+func (us *UDPSniffer) HopLearned(key netutil.IPKey) bool {
+	e, ok := us.nhopCache.Get(key)
+	return ok && e.Learned
 }
 
 // processPacket analyzes a single packet to store hop counts.
@@ -116,8 +123,8 @@ func (us *UDPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 		return
 	}
 
-	us.nhopCache.Set(key, nhops, nil)
-	if nhops != prev {
+	us.nhopCache.Set(key, HopEntry{Hops: nhops, Learned: true}, nil)
+	if nhops != prev.Hops {
 		logger.Trace().
 			Str("from", key.String()).
 			Uint8("nhops", nhops).

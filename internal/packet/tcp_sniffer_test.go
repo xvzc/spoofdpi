@@ -56,7 +56,7 @@ func synAck(
 func newTestSniffer(seqs *SeqTracker) *TCPSniffer {
 	return &TCPSniffer{
 		logger:     zerolog.Nop(),
-		nhopCache:  cache.NewLRUCache[netutil.IPKey, uint8](1, 16, nil),
+		nhopCache:  cache.NewLRUCache[netutil.IPKey, HopEntry](1, 16, nil),
 		defaultTTL: 8,
 		seqs:       seqs,
 	}
@@ -76,7 +76,7 @@ func TestTCPSniffer_RecordsSeqFromSynAck(t *testing.T) {
 	// one the sniffer builds from the SYN/ACK.
 	seq, ok := seqs.Wait(context.Background(), SeqKey(local, remote), 10*time.Millisecond)
 	require.True(t, ok)
-	assert.Equal(t, TCPSeq{Seq: 1001, Ack: 7001}, seq)
+	assert.Equal(t, SeqAck{Seq: 1001, Ack: 7001}, seq)
 }
 
 func TestTCPSniffer_IgnoresUnregisteredServer(t *testing.T) {
@@ -110,4 +110,23 @@ func TestCanLearnSeq(t *testing.T) {
 			assert.Equal(t, tc.want, CanLearnSeq(net.ParseIP(tc.ip)))
 		})
 	}
+}
+
+func TestTCPSniffer_HopLearned(t *testing.T) {
+	local := &net.TCPAddr{IP: net.ParseIP("192.168.1.11"), Port: 50000}
+	remote := &net.TCPAddr{IP: net.ParseIP("203.0.113.1"), Port: 443}
+	key := netutil.NewIPKey(remote.IP)
+
+	ts := newTestSniffer(nil)
+	assert.False(t, ts.HopLearned(key), "unknown server")
+
+	ts.Register([]net.IP{remote.IP})
+	assert.False(t, ts.HopLearned(key), "registered default is not learned")
+	assert.Equal(t, uint8(7), ts.GetOptimalTTL(key), "default TTL is used until learned")
+
+	ts.processPacket(context.Background(), synAck(t, remote, local, 7000, 1001))
+	assert.True(t, ts.HopLearned(key))
+
+	ts.Register([]net.IP{remote.IP})
+	assert.True(t, ts.HopLearned(key), "registering again keeps the learned value")
 }

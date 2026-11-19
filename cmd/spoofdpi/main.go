@@ -152,6 +152,9 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 
 	logger.Info().
 		Uint8("count", uint8(cfg.HTTPS.FakeCount)).
+		Str("seq", cfg.HTTPS.FakeSeq.String()).
+		Str("ack", cfg.HTTPS.FakeAck.String()).
+		Str("syn-ack-timeout", fmt.Sprintf("%dms", cfg.HTTPS.SynAckTimeout.Milliseconds())).
 		Msg(" fake")
 
 	if cfg.Conn.DNSTimeout > 0 {
@@ -224,7 +227,7 @@ func setupPcapIO(
 	}
 
 	pktLogger := logging.WithScope(logger, "pkt")
-	hopCache := cache.NewLRUCache[netutil.IPKey, uint8](16, 8192, nil)
+	hopCache := cache.NewLRUCache[netutil.IPKey, packet.HopEntry](16, 8192, nil)
 
 	logger.Info().Msg("network info")
 	logger.Info().

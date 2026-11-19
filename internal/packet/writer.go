@@ -25,6 +25,6 @@ type TCPSeqWriter interface {
 		dst net.Addr,
 		ttl uint8,
 		payload []byte,
-		seq TCPSeq,
+		seq SeqAck,
 	) (int, error)
 }

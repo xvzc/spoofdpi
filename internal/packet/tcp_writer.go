@@ -47,7 +47,7 @@ func (tw *TCPWriter) WriteCraftedPacket(
 	ttl uint8,
 	payload []byte,
 ) (int, error) {
-	return tw.writeCrafted(src, dst, ttl, payload, TCPSeq{
+	return tw.writeCrafted(src, dst, ttl, payload, SeqAck{
 		Seq: rand.Uint32(),
 		Ack: rand.Uint32(),
 	})
@@ -61,7 +61,7 @@ func (tw *TCPWriter) WriteCraftedPacketWithSeq(
 	dst net.Addr,
 	ttl uint8,
 	payload []byte,
-	seq TCPSeq,
+	seq SeqAck,
 ) (int, error) {
 	return tw.writeCrafted(src, dst, ttl, payload, seq)
 }
@@ -71,7 +71,7 @@ func (tw *TCPWriter) writeCrafted(
 	dst net.Addr,
 	ttl uint8,
 	payload []byte,
-	seq TCPSeq,
+	seq SeqAck,
 ) (int, error) {
 	// set variables for src/dst
 	srcMAC := tw.iface.HardwareAddr
@@ -150,7 +150,7 @@ func (tw *TCPWriter) createIPv4Layers(
 	srcPort int,
 	dstPort int,
 	ttl uint8,
-	seq TCPSeq,
+	seq SeqAck,
 ) ([]gopacket.SerializableLayer, error) {
 	var packetLayers []gopacket.SerializableLayer
 
@@ -200,7 +200,7 @@ func (tw *TCPWriter) createIPv6Layers(
 	srcPort int,
 	dstPort int,
 	ttl uint8,
-	seq TCPSeq,
+	seq SeqAck,
 ) ([]gopacket.SerializableLayer, error) {
 	var packetLayers []gopacket.SerializableLayer
 

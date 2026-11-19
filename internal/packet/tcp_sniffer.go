@@ -19,7 +19,7 @@ var _ Sniffer = (*TCPSniffer)(nil)
 type TCPSniffer struct {
 	logger zerolog.Logger
 
-	nhopCache  cache.Cache[netutil.IPKey, uint8]
+	nhopCache  cache.Cache[netutil.IPKey, HopEntry]
 	defaultTTL uint8
 	seqs       *SeqTracker
 
@@ -29,7 +29,7 @@ type TCPSniffer struct {
 func NewTCPSniffer(
 	logger zerolog.Logger,
 	handle Handle,
-	cache cache.Cache[netutil.IPKey, uint8],
+	cache cache.Cache[netutil.IPKey, HopEntry],
 	seqs *SeqTracker,
 	cfg *config.RuntimeConfig,
 ) *TCPSniffer {
@@ -63,7 +63,7 @@ func (ts *TCPSniffer) Register(addrs []net.IP) {
 	for _, v := range addrs {
 		ts.nhopCache.Set(
 			netutil.NewIPKey(v),
-			ts.defaultTTL,
+			HopEntry{Hops: ts.defaultTTL, Learned: false},
 			cache.Options().WithSkipExisting(true),
 		)
 	}
@@ -72,11 +72,18 @@ func (ts *TCPSniffer) Register(addrs []net.IP) {
 // GetOptimalTTL retrieves the estimated hop count for a given key from the cache.
 func (ts *TCPSniffer) GetOptimalTTL(key netutil.IPKey) uint8 {
 	hopCount := uint8(255)
-	if oTTL, ok := ts.nhopCache.Get(key); ok {
-		hopCount = oTTL
+	if e, ok := ts.nhopCache.Get(key); ok {
+		hopCount = e.Hops
 	}
 
 	return max(hopCount, 2) - 1
+}
+
+// HopLearned reports whether the hop count for key was learned from a
+// captured packet.
+func (ts *TCPSniffer) HopLearned(key netutil.IPKey) bool {
+	e, ok := ts.nhopCache.Get(key)
+	return ok && e.Learned
 }
 
 // processPacket analyzes a single packet to find SYN/ACKs and store hop
@@ -123,17 +130,17 @@ func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 		return
 	}
 
-	ts.nhopCache.Set(key, nhops, nil)
+	ts.nhopCache.Set(key, HopEntry{Hops: nhops, Learned: true}, nil)
 
 	// The SYN/ACK's Ack is the client's next sequence number, and the
 	// client acknowledges the server's SYN with Seq+1.
 	if ts.seqs != nil {
 		ts.seqs.Put(
 			netutil.NewNATKey(dstIP, int(tcp.DstPort), srcIP, int(tcp.SrcPort)),
-			TCPSeq{Seq: tcp.Ack, Ack: tcp.Seq + 1},
+			SeqAck{Seq: tcp.Ack, Ack: tcp.Seq + 1},
 		)
 	}
-	if nhops != prev {
+	if nhops != prev.Hops {
 		logger.Trace().
 			Str("from", key.String()).
 			Uint8("nhops", nhops).

@@ -9,15 +9,15 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
-// TCPSeq holds the sequence and acknowledgment numbers the local host uses
+// SeqAck holds the sequence and acknowledgment numbers the local host uses
 // for its next segment on a TCP connection.
-type TCPSeq struct {
+type SeqAck struct {
 	Seq uint32
 	Ack uint32
 }
 
 type seqEntry struct {
-	seq       TCPSeq
+	seq       SeqAck
 	filled    bool
 	ready     chan struct{} // closed once seq is filled
 	expiresAt time.Time
@@ -62,7 +62,7 @@ func SeqKey(local, remote *net.TCPAddr) netutil.NATKey {
 
 // Put records seq for the connection identified by key and wakes up any
 // pending Wait for it.
-func (t *SeqTracker) Put(key netutil.NATKey, seq TCPSeq) {
+func (t *SeqTracker) Put(key netutil.NATKey, seq SeqAck) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -90,7 +90,7 @@ func (t *SeqTracker) Wait(
 	ctx context.Context,
 	key netutil.NATKey,
 	timeout time.Duration,
-) (seq TCPSeq, ok bool) {
+) (seq SeqAck, ok bool) {
 	t.mu.Lock()
 	now := time.Now()
 	t.sweepLocked(now)
@@ -127,7 +127,7 @@ func (t *SeqTracker) Wait(
 		delete(t.entries, key)
 	}
 	if !e.filled {
-		return TCPSeq{}, false
+		return SeqAck{}, false
 	}
 
 	return e.seq, true
