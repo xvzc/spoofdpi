@@ -47,23 +47,22 @@ func (tw *TCPWriter) WriteCraftedPacket(
 	ttl uint8,
 	payload []byte,
 ) (int, error) {
-	return tw.writeCrafted(src, dst, ttl, payload, SeqAck{
-		Seq: rand.Uint32(),
-		Ack: rand.Uint32(),
+	return tw.writeCrafted(src, dst, ttl, payload, TCPFake{
+		SeqAck: SeqAck{Seq: rand.Uint32(), Ack: rand.Uint32()},
 	})
 }
 
 // WriteCraftedPacketWithSeq is like WriteCraftedPacket, but the packet
-// carries the given sequence numbers.
+// carries the sequence numbers and options in fake.
 func (tw *TCPWriter) WriteCraftedPacketWithSeq(
 	ctx context.Context,
 	src net.Addr,
 	dst net.Addr,
 	ttl uint8,
 	payload []byte,
-	seq SeqAck,
+	fake TCPFake,
 ) (int, error) {
-	return tw.writeCrafted(src, dst, ttl, payload, seq)
+	return tw.writeCrafted(src, dst, ttl, payload, fake)
 }
 
 func (tw *TCPWriter) writeCrafted(
@@ -71,7 +70,7 @@ func (tw *TCPWriter) writeCrafted(
 	dst net.Addr,
 	ttl uint8,
 	payload []byte,
-	seq SeqAck,
+	fake TCPFake,
 ) (int, error) {
 	// set variables for src/dst
 	srcMAC := tw.iface.HardwareAddr
@@ -101,7 +100,7 @@ func (tw *TCPWriter) writeCrafted(
 			srcPort,
 			dstPort,
 			ttl,
-			seq,
+			fake,
 		)
 	} else {
 		packetLayers, err = tw.createIPv6Layers(
@@ -112,7 +111,7 @@ func (tw *TCPWriter) writeCrafted(
 			srcPort,
 			dstPort,
 			ttl,
-			seq,
+			fake,
 		)
 	}
 
@@ -150,7 +149,7 @@ func (tw *TCPWriter) createIPv4Layers(
 	srcPort int,
 	dstPort int,
 	ttl uint8,
-	seq SeqAck,
+	fake TCPFake,
 ) ([]gopacket.SerializableLayer, error) {
 	var packetLayers []gopacket.SerializableLayer
 
@@ -177,11 +176,12 @@ func (tw *TCPWriter) createIPv4Layers(
 	tcpLayer := &layers.TCP{
 		SrcPort: layers.TCPPort(srcPort), // Use a random high port
 		DstPort: layers.TCPPort(dstPort),
-		Seq:     seq.Seq,
+		Seq:     fake.Seq,
 		PSH:     true, // Push the payload
 		ACK:     true, // Assuming this is part of an established flow
-		Ack:     seq.Ack,
+		Ack:     fake.Ack,
 		Window:  12345,
+		Options: tcpFakeOptions(fake),
 	}
 	packetLayers = append(packetLayers, tcpLayer)
 
@@ -200,7 +200,7 @@ func (tw *TCPWriter) createIPv6Layers(
 	srcPort int,
 	dstPort int,
 	ttl uint8,
-	seq SeqAck,
+	fake TCPFake,
 ) ([]gopacket.SerializableLayer, error) {
 	var packetLayers []gopacket.SerializableLayer
 
@@ -225,11 +225,12 @@ func (tw *TCPWriter) createIPv6Layers(
 	tcpLayer := &layers.TCP{
 		SrcPort: layers.TCPPort(srcPort),
 		DstPort: layers.TCPPort(dstPort),
-		Seq:     seq.Seq,
+		Seq:     fake.Seq,
 		PSH:     true,
 		ACK:     true,
-		Ack:     seq.Ack,
+		Ack:     fake.Ack,
 		Window:  12345,
+		Options: tcpFakeOptions(fake),
 	}
 	packetLayers = append(packetLayers, tcpLayer)
 
@@ -239,3 +240,25 @@ func (tw *TCPWriter) createIPv6Layers(
 
 	return packetLayers, nil
 }
+
+// tcpFakeOptions returns the TCP options of a fake packet.
+func tcpFakeOptions(fake TCPFake) []layers.TCPOption {
+	if !fake.BadMD5Sig {
+		return nil
+	}
+
+	digest := make([]byte, 16)
+	for i := range digest {
+		digest[i] = byte(rand.Uint32())
+	}
+
+	return []layers.TCPOption{
+		{OptionType: layers.TCPOptionKindNop},
+		{OptionType: layers.TCPOptionKindNop},
+		{OptionType: tcpOptionKindMD5Sig, OptionLength: 18, OptionData: digest},
+	}
+}
+
+// tcpOptionKindMD5Sig is the TCP MD5 signature option (RFC 2385), which
+// gopacket does not name.
+const tcpOptionKindMD5Sig layers.TCPOptionKind = 19

@@ -20,6 +20,7 @@ import (
 type event struct {
 	fake    bool
 	seq     packet.SeqAck // fakes only
+	md5     bool          // fakes only
 	payload []byte
 }
 
@@ -40,7 +41,7 @@ func (w eventWriter) WriteCraftedPacket(
 }
 
 func (w eventWriter) WriteCraftedPacketWithSeq(
-	_ context.Context, _, _ net.Addr, _ uint8, payload []byte, seq packet.SeqAck,
+	_ context.Context, _, _ net.Addr, _ uint8, payload []byte, fake packet.TCPFake,
 ) (int, error) {
 	if w.failAt > 0 {
 		*w.sent++
@@ -48,7 +49,9 @@ func (w eventWriter) WriteCraftedPacketWithSeq(
 			return 0, errors.New("injected writer failure")
 		}
 	}
-	w.log.events = append(w.log.events, event{fake: true, seq: seq, payload: payload})
+	w.log.events = append(w.log.events, event{
+		fake: true, seq: fake.SeqAck, md5: fake.BadMD5Sig, payload: payload,
+	})
 	return len(payload), nil
 }
 
@@ -358,5 +361,38 @@ func TestConnMSS(t *testing.T) {
 		mss := connMSS(conn)
 		assert.Positive(t, mss)
 		assert.NotEqual(t, fallbackMSS, mss, "read from the socket")
+	})
+}
+
+func TestFakeSender_BadMD5Sig(t *testing.T) {
+	t.Run("every fake carries the option", func(t *testing.T) {
+		events, _ := stutterRun(t, func(o *config.HTTPSOptions) {
+			o.FakePreflight = 1
+			o.FakeStutter = 1
+			o.FakeBadMD5Sig = true
+		})
+		var fakes int
+		for _, e := range events {
+			if e.fake {
+				fakes++
+				assert.True(t, e.md5)
+			}
+		}
+		assert.Positive(t, fakes)
+	})
+
+	t.Run("off by default", func(t *testing.T) {
+		events, _ := stutterRun(t, func(o *config.HTTPSOptions) { o.FakeStutter = 1 })
+		for _, e := range events {
+			assert.False(t, e.md5)
+		}
+	})
+
+	t.Run("pieces leave room for the option", func(t *testing.T) {
+		opts := tlsOpts(0, 100)
+		assert.Equal(t, fallbackMSS, fakeMSS(newStubConn("203.0.113.1"), opts))
+		opts.FakeBadMD5Sig = true
+		assert.Equal(t, fallbackMSS-packet.MD5SigOptionLen,
+			fakeMSS(newStubConn("203.0.113.1"), opts))
 	})
 }

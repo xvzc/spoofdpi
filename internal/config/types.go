@@ -489,6 +489,7 @@ type HTTPSOptions struct {
 	FakePacket    *proto.TLSMessage  `toml:"fake-packet"`
 	FakeSeqOffset int64              `toml:"fake-seq-offset"`
 	FakeAckOffset int64              `toml:"fake-ack-offset"`
+	FakeBadMD5Sig bool               `toml:"fake-bad-md5sig"`
 	SynAckTimeout time.Duration      `toml:"syn-ack-timeout"`
 	SplitMode     HTTPSSplitModeType `toml:"split-mode"`
 	ChunkSize     uint8              `toml:"-"`
@@ -515,6 +516,7 @@ func (o HTTPSOptions) MarshalJSON() ([]byte, error) {
 		FakePacketLen int                `json:"fake-packet-len,omitempty"`
 		FakeSeqOffset int64              `json:"fake-seq-offset"`
 		FakeAckOffset int64              `json:"fake-ack-offset"`
+		FakeBadMD5Sig bool               `json:"fake-bad-md5sig"`
 		SynAckTimeout string             `json:"syn-ack-timeout"`
 		SplitMode     HTTPSSplitModeType `json:"split-mode"`
 		ChunkSize     uint8              `json:"chunk-size"`
@@ -527,6 +529,7 @@ func (o HTTPSOptions) MarshalJSON() ([]byte, error) {
 		FakePacketLen: fakePacketLen(o.FakePacket),
 		FakeSeqOffset: o.FakeSeqOffset,
 		FakeAckOffset: o.FakeAckOffset,
+		FakeBadMD5Sig: o.FakeBadMD5Sig,
 		SynAckTimeout: o.SynAckTimeout.String(),
 		SplitMode:     o.SplitMode,
 		ChunkSize:     o.ChunkSize,
@@ -608,6 +611,9 @@ func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
 		err,
 	) {
 		o.FakeAckOffset = *p
+	}
+	if p := findFrom(m, "fake-bad-md5sig", parseBoolFn(), &err); isOk(p, err) {
+		o.FakeBadMD5Sig = *p
 	}
 	if p := findFrom(
 		m,

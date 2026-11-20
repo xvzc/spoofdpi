@@ -25,14 +25,30 @@ type fakeSender struct {
 	fakeStart packet.SeqAck
 
 	// mss is the largest payload of one fake packet: the connection's MSS,
-	// so that fakes are split where the kernel splits the real data and no
-	// fake exceeds the path MTU.
+	// less the room for the options fakes carry, so that no fake exceeds
+	// the path MTU. Without options, fakes are split where the kernel
+	// splits the real data.
 	mss int
 }
 
 // fallbackMSS is used when the connection's MSS cannot be read. It is low
 // enough for paths with a reduced MTU, such as VPNs and PPPoE.
 const fallbackMSS = 1200
+
+// minFakeMSS is the smallest payload of one fake packet.
+const minFakeMSS = 64
+
+// fakeMSS returns the largest payload of one fake packet on conn: its MSS,
+// less the room for the TCP options fakes carry.
+func fakeMSS(conn net.Conn, opts *config.HTTPSOptions) int {
+	mss := connMSS(conn)
+	if opts.FakeBadMD5Sig {
+		mss -= packet.MD5SigOptionLen
+	}
+	// Real kernels report MSS values far above this, but write must always
+	// make progress.
+	return max(mss, minFakeMSS)
+}
 
 // connMSS returns conn's MSS, or fallbackMSS if it cannot be read.
 func connMSS(conn net.Conn) int {
@@ -57,7 +73,7 @@ func newFakeSender(
 		opts:      opts,
 		realStart: real,
 		fakeStart: fakeSeqAck(real, opts),
-		mss:       connMSS(conn),
+		mss:       fakeMSS(conn, opts),
 	}
 }
 
@@ -77,7 +93,7 @@ func (f *fakeSender) write(
 			f.conn.RemoteAddr(),
 			f.ttl,
 			piece,
-			sa,
+			packet.TCPFake{SeqAck: sa, BadMD5Sig: f.opts.FakeBadMD5Sig},
 		)
 		total += n
 		if err != nil {

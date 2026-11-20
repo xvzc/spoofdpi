@@ -114,9 +114,9 @@ Specifies the number of fake segments to be sent before each segment of the Clie
 
 Each fake segment covers the same bytes as the real segment that follows it: it has the same length and sequence number, and its content is the [`fake-packet`](#fake-packet) bytes at the same position, padded with zeros past its end. So DPI that reassembles the stream sees a fake at every position before the real data. Fake segments use the same TTL as other fake packets and can be combined with [`fake-preflight`](#fake-preflight).
 
-[`fake-seq-offset`](#fake-seq-offset) and [`fake-ack-offset`](#fake-ack-offset) apply to fake segments too. Keep `fake-seq-offset` at the default `0`, so that each fake covers exactly the position of its real segment; any other value moves the fakes away from it. To keep fakes that reach the server (for example when the hop count is wrong) from breaking the connection, adjust `fake-ack-offset` instead, such as `fake-ack-offset = -1073741824`: the server drops such fakes, while their position is unchanged.
+[`fake-seq-offset`](#fake-seq-offset) and [`fake-ack-offset`](#fake-ack-offset) apply to fake segments too. Keep `fake-seq-offset` at the default `0`, so that each fake covers exactly the position of its real segment; any other value moves the fakes away from it. To keep fakes that reach the server (for example when the hop count is wrong) from breaking the connection, adjust `fake-ack-offset` instead, such as `fake-ack-offset = -1073741824`: the server drops such fakes, while their position is unchanged. [`fake-bad-md5sig`](#fake-bad-md5sig) is an alternative that leaves the numbers unchanged; see its caveats.
 
-A fake segment longer than the connection's MSS is sent in MSS-sized pieces, as the kernel sends the real data, so no fake exceeds the path MTU.
+A fake segment longer than the connection's MSS is sent in MSS-sized pieces, as the kernel sends the real data, so no fake exceeds the path MTU. With [`fake-bad-md5sig`](#fake-bad-md5sig), the pieces are 20 bytes smaller to leave room for the option.
 
 The number of packets grows to the number of segments times (N + 1), so a [`split-mode`](#split-mode) that makes many segments, such as a small `chunk:N`, sends many packets.
 
@@ -206,16 +206,27 @@ fake-seq-offset = -10000
 
 ### Description
 
-Adds an offset (mod 2^32) to the connection's real TCP acknowledgment number in fake packets, both [`fake-preflight`](#fake-preflight) and [`fake-stutter`](#fake-stutter), with the same range as [`fake-seq-offset`](#fake-seq-offset). This is the way to make [`fake-stutter`](#fake-stutter) fakes safe for the server. `(default: 0)`
+Adds an offset (mod 2^32) to the connection's real TCP acknowledgment number in fake packets, both [`fake-preflight`](#fake-preflight) and [`fake-stutter`](#fake-stutter), with the same range as [`fake-seq-offset`](#fake-seq-offset). This is one way to make [`fake-stutter`](#fake-stutter) fakes safe for the server; [`fake-bad-md5sig`](#fake-bad-md5sig) is another. `(default: 0)`
 
-Changing only the acknowledgment number keeps the sequence number DPI expects, while a server that receives the fake drops it if the number is out of range. Following [RFC 793](https://www.rfc-editor.org/rfc/rfc793) and [RFC 5961](https://www.rfc-editor.org/rfc/rfc5961), as Linux does, a server drops a segment whose acknowledgment number:
+Changing only the acknowledgment number keeps the sequence number DPI expects, while a server that receives the fake should drop it if the number is out of range. Following [RFC 793](https://www.rfc-editor.org/rfc/rfc793) and [RFC 5961](https://www.rfc-editor.org/rfc/rfc5961), as Linux does, a server drops a segment whose acknowledgment number:
 
 - acknowledges data it has not sent yet: an offset from `1` to `2147483647`; or
 - is older than any receive window the client can advertise (65535 × 2^14 bytes): an offset from `-1073725441` down to `-2147483647`.
 
 Offsets in between, from `-1073725440` to `0`, may be accepted depending on the window, and offsets beyond ±2^31 wrap around to the other side.
 
-Some DPI ignores fakes that acknowledge data the server has not sent, so the recommended value is `-1073741824` (-2^30). Servers on other operating systems may behave differently, and which offsets a DPI accepts varies by network, so test them on yours.
+Some DPI ignores fakes that acknowledge data the server has not sent, so the recommended value is `-1073741824` (-2^30).
+
+Services handle such fakes differently, though: some drop them, while others accept them and the connection breaks. So it is recommended to set this option per service with a [rule](rules.md), rather than globally:
+
+```toml
+[[rules]]
+name = "fake-ack-offset for example.com"
+match = { domains = ["example.com", "*.example.com"] }
+tls = { fake-ack-offset = -1073741824 }
+```
+
+Which offsets a DPI accepts also varies by network, so test them on yours.
 
 ### Usage
 
@@ -229,6 +240,46 @@ $ spoofdpi --tls-fake-preflight 2 --tls-fake-ack-offset -1073741824
 [tls]
 fake-preflight = 2
 fake-ack-offset = -1073741824
+```
+
+---
+
+## `fake-bad-md5sig`
+
+`type: boolean`
+
+### Description
+
+If set to `true`, fake packets, both [`fake-preflight`](#fake-preflight) and [`fake-stutter`](#fake-stutter), carry a TCP MD5 signature option ([RFC 2385](https://www.rfc-editor.org/rfc/rfc2385)) with a random digest. `(default: false)`
+
+The option is meant to make a fake that outlives its TTL and reaches the server harmless: a server that has no MD5 key for the connection should drop such a packet before reading its data, while DPI, which usually does not check the option, still sees the fake. Unlike [`fake-ack-offset`](#fake-ack-offset), the sequence and acknowledgment numbers stay exactly as DPI expects.
+
+Services handle the MD5 signature option differently, though: some drop such fakes, while others break the connection entirely. So it is recommended to enable this option per service with a [rule](rules.md), rather than globally:
+
+```toml
+[[rules]]
+name = "md5sig for example.com"
+match = { domains = ["example.com", "*.example.com"] }
+tls = { fake-bad-md5sig = true }
+```
+
+Fakes normally expire before the server anyway; this option only matters when the hop count is wrong. Also note:
+
+- Some middleboxes drop packets that carry this option. If one sits between you and the DPI, the fakes never reach the DPI.
+- The option adds 20 bytes to each fake. Fakes are split so that they still fit the connection's MSS.
+
+### Usage
+
+**Command-Line Flag**
+```console
+$ spoofdpi --tls-fake-stutter 1 --tls-fake-bad-md5sig
+```
+
+**TOML Config**
+```toml
+[tls]
+fake-stutter = 1
+fake-bad-md5sig = true
 ```
 
 ---

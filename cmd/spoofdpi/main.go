@@ -155,6 +155,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 		Uint8("stutter", uint8(cfg.HTTPS.FakeStutter)).
 		Int64("seq-offset", cfg.HTTPS.FakeSeqOffset).
 		Int64("ack-offset", cfg.HTTPS.FakeAckOffset).
+		Bool("bad-md5sig", cfg.HTTPS.FakeBadMD5Sig).
 		Str("syn-ack-timeout", fmt.Sprintf("%dms", cfg.HTTPS.SynAckTimeout.Milliseconds())).
 		Msg(" fake")
 

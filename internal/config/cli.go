@@ -60,6 +60,7 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 				FakePacket:    proto.NewFakeTLSMessage([]byte(FakeClientHello)),
 				FakeSeqOffset: 0,
 				FakeAckOffset: 0,
+				FakeBadMD5Sig: false,
 				SynAckTimeout: 100 * time.Millisecond,
 				SplitMode:     HTTPSSplitModeSNI,
 				ChunkSize:     DefaultChunkSize,
@@ -861,6 +862,23 @@ func tlsFlags(
 			Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
 				add(prefix+"fake-ack-offset", func(cfg *Config) {
 					cfg.HTTPS.FakeAckOffset = v
+				})
+				return nil
+			},
+		},
+
+		&cli.BoolFlag{
+			Name: prefix + "fake-bad-md5sig",
+			Usage: fmt.Sprintf(`
+				If set, fake packets carry a TCP MD5 signature option with a
+				random digest, so that a server they reach may drop them.
+				(default: %v)`,
+				defaultCfg.HTTPS.FakeBadMD5Sig,
+			),
+			OnlyOnce: true,
+			Action: func(ctx context.Context, cmd *cli.Command, v bool) error {
+				add(prefix+"fake-bad-md5sig", func(cfg *Config) {
+					cfg.HTTPS.FakeBadMD5Sig = v
 				})
 				return nil
 			},

@@ -18,6 +18,7 @@ import (
 type writtenPacket struct {
 	payload []byte
 	seq     packet.SeqAck
+	md5     bool
 }
 
 type recordingWriter struct {
@@ -31,9 +32,12 @@ func (w *recordingWriter) WriteCraftedPacket(
 }
 
 func (w *recordingWriter) WriteCraftedPacketWithSeq(
-	_ context.Context, _, _ net.Addr, _ uint8, payload []byte, seq packet.SeqAck,
+	_ context.Context, _, _ net.Addr, _ uint8, payload []byte, fake packet.TCPFake,
 ) (int, error) {
-	w.packets = append(w.packets, writtenPacket{payload: payload, seq: seq})
+	w.packets = append(
+		w.packets,
+		writtenPacket{payload: payload, seq: fake.SeqAck, md5: fake.BadMD5Sig},
+	)
 	return len(payload), nil
 }
 
