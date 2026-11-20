@@ -10,9 +10,10 @@ type Sniffer interface {
 	StartCapturing()
 	Register(addrs []net.IP)
 	GetOptimalTTL(key netutil.IPKey) uint8
-	// HopLearned reports whether the hop count for key has been learned
-	// from a captured packet, rather than being the registered default.
-	HopLearned(key netutil.IPKey) bool
+	// LearnedHops returns the hop count for key and whether it has been
+	// learned from a captured packet, rather than being the registered
+	// default.
+	LearnedHops(key netutil.IPKey) (hops uint8, ok bool)
 }
 
 // HopEntry is a hop-count cache entry.
@@ -21,9 +22,11 @@ type HopEntry struct {
 	Learned bool // learned from a captured packet, not the default
 }
 
-// estimateHops estimates the number of hops based on TTL.
+// estimateHops estimates the number of hops based on TTL, assuming the
+// sender started from the nearest common initial TTL (64, 128 or 255).
 // This logic is based on the hop counting mechanism from GoodbyeDPI.
-// It returns 0 if the TTL is not recognizable.
+// It returns 0 when the TTL is unchanged, i.e. the sender is on the local
+// link.
 func estimateHops(ttlLeft uint8) uint8 {
 	// Unrecognizable initial TTL
 	estimatedInitialHops := uint8(255)
@@ -37,40 +40,4 @@ func estimateHops(ttlLeft uint8) uint8 {
 	}
 
 	return estimatedInitialHops - ttlLeft
-}
-
-// isLocalIP checks if an IP address is in a local/private range.
-// This is used to filter out outgoing packets from local machine.
-// Private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8
-func isLocalIP(ip []byte) bool {
-	if len(ip) < 4 {
-		return false
-	}
-
-	// 10.0.0.0/8
-	if ip[0] == 10 {
-		return true
-	}
-
-	// 127.0.0.0/8 (loopback)
-	if ip[0] == 127 {
-		return true
-	}
-
-	// 172.16.0.0/12 (172.16.x.x - 172.31.x.x)
-	if ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31 {
-		return true
-	}
-
-	// 192.168.0.0/16
-	if ip[0] == 192 && ip[1] == 168 {
-		return true
-	}
-
-	// 169.254.0.0/16 (link-local)
-	if ip[0] == 169 && ip[1] == 254 {
-		return true
-	}
-
-	return false
 }

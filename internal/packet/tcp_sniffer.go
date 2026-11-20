@@ -79,11 +79,14 @@ func (ts *TCPSniffer) GetOptimalTTL(key netutil.IPKey) uint8 {
 	return max(hopCount, 2) - 1
 }
 
-// HopLearned reports whether the hop count for key was learned from a
-// captured packet.
-func (ts *TCPSniffer) HopLearned(key netutil.IPKey) bool {
+// LearnedHops returns the hop count for key and whether it was learned
+// from a captured packet.
+func (ts *TCPSniffer) LearnedHops(key netutil.IPKey) (uint8, bool) {
 	e, ok := ts.nhopCache.Get(key)
-	return ok && e.Learned
+	if !ok || !e.Learned {
+		return 0, false
+	}
+	return e.Hops, true
 }
 
 // processPacket analyzes a single packet to find SYN/ACKs and store hop
@@ -106,10 +109,6 @@ func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 
 	if ipLayer := p.Layer(layers.LayerTypeIPv4); ipLayer != nil {
 		ip, _ := ipLayer.(*layers.IPv4)
-		if isLocalIP(ip.SrcIP) {
-			return
-		}
-
 		srcIP = ip.SrcIP
 		dstIP = ip.DstIP
 		ttlLeft = ip.TTL
@@ -119,6 +118,12 @@ func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 		dstIP = ip.DstIP
 		ttlLeft = ip.HopLimit
 	} else {
+		return
+	}
+
+	// A packet from an address to itself is not a reply from a server;
+	// learning from it would record a bogus hop count.
+	if srcIP.Equal(dstIP) {
 		return
 	}
 

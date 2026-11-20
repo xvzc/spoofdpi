@@ -166,11 +166,12 @@ func (h *UdpAssociateHandler) Handle(
 
 		// Add to pool (pool handles LRU eviction and deadline)
 		// returns IdleTimeoutConn with the actual net.Conn inside
-		rConn := h.pool.Store(key, rRawConn)
+		// Fakes share the flow, so the ICMP replies to them reach this socket.
+		rConn := h.pool.Store(key, netutil.NewICMPTolerantConn(rRawConn))
 
 		// Send fake packets before real payload (UDP desync)
 		if h.desyncer != nil && !cfg.UDP.Skip {
-			_, _ = h.desyncer.Desync(ctx, lUDPConn, rConn.Conn, &cfg.UDP)
+			_, _ = h.desyncer.Desync(ctx, rConn.Conn, &cfg.UDP)
 		}
 
 		// Start a goroutine to read from the target and forward to the client.

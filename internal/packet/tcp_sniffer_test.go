@@ -19,6 +19,7 @@ import (
 func synAck(
 	t *testing.T,
 	server, client *net.TCPAddr,
+	ttl uint8,
 	seq, ack uint32,
 ) gopacket.Packet {
 	t.Helper()
@@ -30,7 +31,7 @@ func synAck(
 	}
 	ip := &layers.IPv4{
 		Version:  4,
-		TTL:      52,
+		TTL:      ttl,
 		Protocol: layers.IPProtocolTCP,
 		SrcIP:    server.IP.To4(),
 		DstIP:    client.IP.To4(),
@@ -70,7 +71,7 @@ func TestTCPSniffer_RecordsSeqFromSynAck(t *testing.T) {
 	ts := newTestSniffer(seqs)
 	ts.Register([]net.IP{remote.IP})
 
-	ts.processPacket(context.Background(), synAck(t, remote, local, 7000, 1001))
+	ts.processPacket(context.Background(), synAck(t, remote, local, 52, 7000, 1001))
 
 	// The key Desync builds from the connection's addresses must match the
 	// one the sniffer builds from the SYN/ACK.
@@ -86,7 +87,7 @@ func TestTCPSniffer_IgnoresUnregisteredServer(t *testing.T) {
 	seqs := NewSeqTracker(time.Minute)
 	ts := newTestSniffer(seqs)
 
-	ts.processPacket(context.Background(), synAck(t, remote, local, 7000, 1001))
+	ts.processPacket(context.Background(), synAck(t, remote, local, 52, 7000, 1001))
 
 	assert.Equal(t, 0, seqs.Len())
 }
@@ -98,10 +99,8 @@ func TestCanLearnSeq(t *testing.T) {
 	}{
 		{"203.0.113.1", true},
 		{"8.8.8.8", true},
-		{"192.168.1.1", false},
-		{"10.0.0.1", false},
-		{"172.16.0.1", false},
-		{"127.0.0.1", false},
+		{"192.168.1.1", true},
+		{"10.0.0.1", true},
 		{"2001:db8::1", false},
 	}
 
@@ -112,21 +111,61 @@ func TestCanLearnSeq(t *testing.T) {
 	}
 }
 
-func TestTCPSniffer_HopLearned(t *testing.T) {
+func TestTCPSniffer_LearnedHops(t *testing.T) {
 	local := &net.TCPAddr{IP: net.ParseIP("192.168.1.11"), Port: 50000}
 	remote := &net.TCPAddr{IP: net.ParseIP("203.0.113.1"), Port: 443}
 	key := netutil.NewIPKey(remote.IP)
 
 	ts := newTestSniffer(nil)
-	assert.False(t, ts.HopLearned(key), "unknown server")
+	_, ok := ts.LearnedHops(key)
+	assert.False(t, ok, "unknown server")
 
 	ts.Register([]net.IP{remote.IP})
-	assert.False(t, ts.HopLearned(key), "registered default is not learned")
+	_, ok = ts.LearnedHops(key)
+	assert.False(t, ok, "registered default is not learned")
 	assert.Equal(t, uint8(7), ts.GetOptimalTTL(key), "default TTL is used until learned")
 
-	ts.processPacket(context.Background(), synAck(t, remote, local, 7000, 1001))
-	assert.True(t, ts.HopLearned(key))
+	ts.processPacket(context.Background(), synAck(t, remote, local, 52, 7000, 1001))
+	hops, ok := ts.LearnedHops(key)
+	assert.True(t, ok)
+	assert.Equal(t, uint8(12), hops)
 
 	ts.Register([]net.IP{remote.IP})
-	assert.True(t, ts.HopLearned(key), "registering again keeps the learned value")
+	_, ok = ts.LearnedHops(key)
+	assert.True(t, ok, "registering again keeps the learned value")
+}
+
+func TestTCPSniffer_LearnsFromPrivateServer(t *testing.T) {
+	local := &net.TCPAddr{IP: net.ParseIP("192.168.1.11"), Port: 50000}
+	remote := &net.TCPAddr{IP: net.ParseIP("192.168.1.20"), Port: 443}
+
+	seqs := NewSeqTracker(time.Minute)
+	ts := newTestSniffer(seqs)
+	ts.Register([]net.IP{remote.IP})
+
+	// A server on the local link: its TTL arrives unchanged.
+	ts.processPacket(context.Background(), synAck(t, remote, local, 64, 7000, 1001))
+
+	hops, ok := ts.LearnedHops(netutil.NewIPKey(remote.IP))
+	assert.True(t, ok)
+	assert.Equal(t, uint8(0), hops)
+
+	seq, ok := seqs.Wait(context.Background(), SeqKey(local, remote), 10*time.Millisecond)
+	require.True(t, ok)
+	assert.Equal(t, SeqAck{Seq: 1001, Ack: 7001}, seq)
+}
+
+func TestTCPSniffer_IgnoresPacketToItself(t *testing.T) {
+	remote := &net.TCPAddr{IP: net.ParseIP("203.0.113.1"), Port: 443}
+	self := &net.TCPAddr{IP: net.ParseIP("203.0.113.1"), Port: 50000}
+
+	seqs := NewSeqTracker(time.Minute)
+	ts := newTestSniffer(seqs)
+	ts.Register([]net.IP{remote.IP})
+
+	ts.processPacket(context.Background(), synAck(t, remote, self, 7, 7000, 1001))
+
+	_, ok := ts.LearnedHops(netutil.NewIPKey(remote.IP))
+	assert.False(t, ok)
+	assert.Equal(t, 0, seqs.Len())
 }

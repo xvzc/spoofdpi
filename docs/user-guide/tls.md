@@ -102,6 +102,8 @@ Specifies the number of fake packets to be sent before the actual Client Hello. 
 Sending fake packets can trick DPI systems into inspecting invalid traffic, allowing the real Client Hello to pass through.
 If `tls-chunk-size` is greater than 0, each fake packet will also be fragmented.
 
+Fake packets are not sent to a server found to be on the local link (0 hops away), since no TTL can stop them before such a server. To turn fake packets off for other servers, such as those on a LAN or a corporate network, use a [rule](rules.md), for example `tls = { fake-count = 0 }` for their CIDRs.
+
 By default, fake packets carry the connection's real TCP sequence and acknowledgment numbers, learned from the server's SYN/ACK, so they overlap the real Client Hello. See [`fake-seq`](#fake-seq), [`fake-ack`](#fake-ack) and [`syn-ack-timeout`](#syn-ack-timeout) to change this.
 
 !!! note
@@ -234,7 +236,7 @@ The SYN/ACK gives the connection's real sequence numbers and the number of hops 
 
 The wait ends as soon as the SYN/ACK is processed. If it is not processed in time, random sequence numbers and the default TTL are used. `0` disables waiting: only numbers already learned are used.
 
-Only IPv4 servers with public addresses are learned; spoofdpi does not wait for others.
+Only IPv4 servers are learned; spoofdpi does not wait for IPv6 servers.
 
 ### Usage
 

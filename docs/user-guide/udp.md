@@ -35,6 +35,10 @@ Specifies the number of fake packets to be sent before actual UDP packets. `(def
 
 Sending fake packets can trick DPI systems into inspecting invalid traffic, allowing real packets to pass through.
 
+Fake packets are not sent to a server found to be on the local link (0 hops away), since they would reach it no matter their TTL. The hop count is learned from the server's replies, so the first flow to a new server still sends them; use a [rule](rules.md) to turn them off for such servers.
+
+Fake packets share the flow of the real datagrams and rely on their TTL to expire before the server. If the hop count is overestimated, a fake can reach the server, and the server's reply to it is passed on to the application like any other.
+
 !!! note
     This feature requires root privileges and packet capture capabilities.
 

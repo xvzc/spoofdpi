@@ -67,11 +67,15 @@ func (h *UDPHandler) Handle(
 
 	timeout := cfg.Conn.UDPIdleTimeout
 
-	rConnWrapped := netutil.NewIdleTimeoutConn(rawConn, timeout)
+	// Fakes share the flow, so the ICMP replies to them reach this socket.
+	rConnWrapped := netutil.NewIdleTimeoutConn(
+		netutil.NewICMPTolerantConn(rawConn),
+		timeout,
+	)
 	lConnWrapped := netutil.NewIdleTimeoutConn(lConn, timeout)
 
 	if !cfg.UDP.Skip {
-		_, _ = h.desyncer.Desync(ctx, lConnWrapped, rConnWrapped, &cfg.UDP)
+		_, _ = h.desyncer.Desync(ctx, rConnWrapped, &cfg.UDP)
 	}
 
 	logger.Debug().

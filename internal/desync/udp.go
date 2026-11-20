@@ -34,9 +34,10 @@ func (d *UDPDesyncer) PrepareHopTrack(addrs []net.IP, cfg *config.UDPOptions) {
 	d.sniffer.Register(addrs)
 }
 
+// Desync sends fake packets on the flow of rConn, the connection to the
+// server.
 func (d *UDPDesyncer) Desync(
 	ctx context.Context,
-	lConn net.Conn,
 	rConn net.Conn,
 	opts *config.UDPOptions,
 ) (int, error) {
@@ -47,13 +48,19 @@ func (d *UDPDesyncer) Desync(
 	}
 
 	dstIP := rConn.RemoteAddr().(*net.UDPAddr).IP
-	oTTL := d.sniffer.GetOptimalTTL(netutil.NewIPKey(dstIP))
+	key := netutil.NewIPKey(dstIP)
+	if onLocalLink(d.sniffer, key) {
+		logger.Trace().Msg("server is on the local link, skipping fake packets")
+		return 0, nil
+	}
+	oTTL := d.sniffer.GetOptimalTTL(key)
 
 	var totalSent int
 	for range opts.FakeCount {
 		n, err := d.writer.WriteCraftedPacket(
 			ctx,
-			lConn.LocalAddr(), // Spoofing source: original local address (TUN)
+			// Same 5-tuple as the real flow, so DPI tracks the fakes with it.
+			rConn.LocalAddr(),
 			rConn.RemoteAddr(),
 			oTTL,
 			opts.FakePacket,

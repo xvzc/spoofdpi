@@ -37,11 +37,16 @@ func (w *recordingWriter) WriteCraftedPacketWithSeq(
 	return len(payload), nil
 }
 
-type stubSniffer struct{ hopLearned bool }
+type stubSniffer struct {
+	hopLearned bool
+	hops       uint8
+}
 
-func (stubSniffer) StartCapturing()                   {}
-func (stubSniffer) Register([]net.IP)                 {}
-func (s stubSniffer) HopLearned(netutil.IPKey) bool   { return s.hopLearned }
+func (stubSniffer) StartCapturing()   {}
+func (stubSniffer) Register([]net.IP) {}
+func (s stubSniffer) LearnedHops(netutil.IPKey) (uint8, bool) {
+	return s.hops, s.hopLearned
+}
 func (stubSniffer) GetOptimalTTL(netutil.IPKey) uint8 { return 8 }
 
 // stubConn is a net.Conn with TCP addresses that accepts every write.
@@ -226,7 +231,7 @@ func TestDesync_WaitRules(t *testing.T) {
 			false,
 		},
 		{"timeout 0 does not wait", "203.0.113.1", 1, false, false, 0, false},
-		{"private server does not wait", "192.168.1.1", 1, false, false, timeout, false},
+		{"private server waits", "192.168.1.1", 1, false, false, timeout, true},
 		{"ipv6 server does not wait", "2001:db8::1", 1, false, false, timeout, false},
 		{"no fakes, no wait", "203.0.113.1", 0, false, false, timeout, false},
 	}
@@ -258,4 +263,106 @@ func TestDesync_WaitRules(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDesync_SkipsFakesOnLocalLink(t *testing.T) {
+	tcs := []struct {
+		name      string
+		sniffer   stubSniffer
+		wantFakes bool
+	}{
+		{"server on the local link", stubSniffer{hopLearned: true, hops: 0}, false},
+		{"server one hop away", stubSniffer{hopLearned: true, hops: 1}, true},
+		{"hop count not learned", stubSniffer{}, true},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &recordingWriter{}
+			d := NewTLSDesyncer(zerolog.Nop(), w, tc.sniffer, nil)
+			opts := tlsOpts(1, 100)
+			opts.SynAckTimeout = 0
+
+			n, err := d.Desync(
+				context.Background(),
+				newStubConn("192.168.1.20"),
+				fakeMsg(),
+				opts,
+			)
+			require.NoError(t, err)
+			assert.Equal(
+				t,
+				len(config.FakeClientHello),
+				n,
+				"the real Client Hello is still sent",
+			)
+			assert.Equal(t, tc.wantFakes, len(w.packets) > 0)
+		})
+	}
+}
+
+// udpWriter records crafted UDP packets.
+type udpWriter struct {
+	n        int
+	src, dst net.Addr
+}
+
+func (w *udpWriter) WriteCraftedPacket(
+	_ context.Context, src, dst net.Addr, _ uint8, payload []byte,
+) (int, error) {
+	w.n++
+	w.src, w.dst = src, dst
+	return len(payload), nil
+}
+
+type udpConn struct {
+	net.Conn
+	local, remote *net.UDPAddr
+}
+
+func (c udpConn) LocalAddr() net.Addr  { return c.local }
+func (c udpConn) RemoteAddr() net.Addr { return c.remote }
+
+func TestUDPDesync_SkipsFakesOnLocalLink(t *testing.T) {
+	conn := udpConn{
+		local:  &net.UDPAddr{IP: net.ParseIP("192.168.1.11"), Port: 50000},
+		remote: &net.UDPAddr{IP: net.ParseIP("192.168.1.20"), Port: 443},
+	}
+	opts := &config.UDPOptions{FakeCount: 2, FakePacket: make([]byte, 8)}
+
+	for _, tc := range []struct {
+		name      string
+		sniffer   stubSniffer
+		wantFakes int
+	}{
+		{"server on the local link", stubSniffer{hopLearned: true, hops: 0}, 0},
+		{"server one hop away", stubSniffer{hopLearned: true, hops: 1}, 2},
+		{"hop count not learned", stubSniffer{}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &udpWriter{}
+			d := NewUDPDesyncer(zerolog.Nop(), w, tc.sniffer)
+			_, err := d.Desync(context.Background(), conn, opts)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantFakes, w.n)
+		})
+	}
+}
+
+func TestUDPDesync_UsesTheFlowAddresses(t *testing.T) {
+	conn := udpConn{
+		local:  &net.UDPAddr{IP: net.ParseIP("192.168.1.11"), Port: 50000},
+		remote: &net.UDPAddr{IP: net.ParseIP("203.0.113.1"), Port: 443},
+	}
+	w := &udpWriter{}
+	d := NewUDPDesyncer(zerolog.Nop(), w, stubSniffer{})
+
+	_, err := d.Desync(
+		context.Background(),
+		conn,
+		&config.UDPOptions{FakeCount: 1, FakePacket: make([]byte, 8)},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, conn.local, w.src, "fakes come from the real flow's local address")
+	assert.Equal(t, conn.remote, w.dst)
 }

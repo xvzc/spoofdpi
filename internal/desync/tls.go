@@ -70,10 +70,13 @@ func (d *TLSDesyncer) Desync(
 		// Wait for the SYN/ACK first: the sniffer learns the hop count from
 		// it too, so the TTL read after it is fresher.
 		real := d.learnSeqAck(ctx, logger, conn, httpsOpts)
+		key := netutil.NewIPKey(conn.RemoteAddr().(*net.TCPAddr).IP)
+		if onLocalLink(d.sniffer, key) {
+			logger.Debug().Msg("server is on the local link, skipping fake packets")
+			return d.sendSegments(conn, logger, split(logger, msg, httpsOpts), nil)
+		}
 		seq = &real
-		oTTL := d.sniffer.GetOptimalTTL(
-			netutil.NewIPKey(conn.RemoteAddr().(*net.TCPAddr).IP),
-		)
+		oTTL := d.sniffer.GetOptimalTTL(key)
 		fake := fakeSeqAck(real, httpsOpts)
 		logger.Trace().
 			Uint32("seq", fake.Seq).
@@ -116,7 +119,8 @@ func (d *TLSDesyncer) learnSeqAck(
 	}
 
 	needSeqAck := !opts.FakeSeq.Random || !opts.FakeAck.Random
-	needHop := !d.sniffer.HopLearned(netutil.NewIPKey(remote.IP))
+	_, hopLearned := d.sniffer.LearnedHops(netutil.NewIPKey(remote.IP))
+	needHop := !hopLearned
 	if !needSeqAck && !needHop {
 		return random
 	}
@@ -132,6 +136,15 @@ func (d *TLSDesyncer) learnSeqAck(
 	}
 
 	return sa
+}
+
+// onLocalLink reports whether the server at key is known to be on the local
+// link (0 hops). No TTL can stop a fake packet before such a server, and no
+// DPI can sit in between, so fakes are pointless and only risk the
+// connection.
+func onLocalLink(sniffer packet.Sniffer, key netutil.IPKey) bool {
+	hops, ok := sniffer.LearnedHops(key)
+	return ok && hops == 0
 }
 
 // fakeSeqAck applies opts.FakeSeq and opts.FakeAck to the connection's real
