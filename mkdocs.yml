@@ -64,6 +64,7 @@ nav:
       - 'UDP': user-guide/udp.md
       - 'Rules': user-guide/rules.md
     - 'Configuration Examples': user-guide/examples.md
+    - 'Live Test': user-guide/livetest.md
   - 'Developer Guide':
     - 'Agent Setup': developer-guide/agent-setup.md
     - 'Build and Run': developer-guide/build-and-run.md

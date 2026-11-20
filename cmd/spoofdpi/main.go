@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/dns"
+	"github.com/xvzc/spoofdpi/internal/livetest"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
@@ -64,10 +66,19 @@ func (dw *DelayedWriter) Write(p []byte) (n int, err error) {
 }
 
 func main() {
-	cmd := config.CreateCommand(runApp, version, commit, build)
-	if err := cmd.Run(context.Background(), os.Args); err != nil {
-		fmt.Println("application failed to start")
-		fmt.Fprintln(os.Stderr, err)
+	selected := newCommandRegistry(runApp, os.Executable).selectCommand(os.Args)
+	if err := selected.cmd.Run(context.Background(), selected.args); err != nil {
+		if selected.runsServer {
+			fmt.Println("application failed to start")
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "%s: %v\n", selected.cmd.Name, err)
+		// An interrupted livetest exits with the signal's status.
+		var interrupted *livetest.InterruptedError
+		if errors.As(err, &interrupted) {
+			os.Exit(interrupted.ExitStatus())
+		}
 		os.Exit(1)
 	}
 }
@@ -121,6 +132,8 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	}()
 
 	logger.Info().Str("version", version).Msg("spoofdpi")
+	// livetest reads these two messages, and the dir field, to report the
+	// config file its baseline case loaded (internal/livetest/case.go).
 	if configDir != "" {
 		logger.Info().
 			Str("dir", configDir).
@@ -179,6 +192,8 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	if err := srv.ListenAndServe(appctx); err != nil {
 		return fmt.Errorf("listen and serve: %w", err)
 	}
+	// livetest waits for this message to know that spoofdpi is ready
+	// (internal/livetest/case.go).
 	logger.Info().Msgf("server started on %s", srv.Addr())
 	if cfg.App.AutoConfigureNetwork {
 		if stateFile, acErr := srv.SetupNetworkJobs(appctx); acErr != nil {
