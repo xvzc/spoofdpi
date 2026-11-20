@@ -211,6 +211,38 @@ func SetTTL(conn net.Conn, isIPv4 bool, ttl uint8) error {
 	return sysErr
 }
 
+// MSS returns the maximum segment size the kernel uses for conn: the
+// largest TCP payload it puts in one packet.
+func MSS(conn net.Conn) (int, error) {
+	if tc, ok := conn.(*TrackingConn); ok {
+		conn = tc.Conn
+	}
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return 0, errors.New("failed to cast to TCPConn")
+	}
+
+	rawConn, err := tcpConn.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+
+	var mss int
+	var sysErr error
+	err = rawConn.Control(func(fd uintptr) {
+		mss, sysErr = syscall.GetsockoptInt(
+			int(fd),
+			syscall.IPPROTO_TCP,
+			syscall.TCP_MAXSEG,
+		)
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return mss, sysErr
+}
+
 // BufferedConn wraps a net.Conn with a bufio.Reader to support peeking.
 type BufferedConn struct {
 	r *bufio.Reader

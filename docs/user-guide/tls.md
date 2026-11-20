@@ -116,6 +116,8 @@ Each fake segment covers the same bytes as the real segment that follows it: it 
 
 [`fake-seq-offset`](#fake-seq-offset) and [`fake-ack-offset`](#fake-ack-offset) apply to fake segments too. Keep `fake-seq-offset` at the default `0`, so that each fake covers exactly the position of its real segment; any other value moves the fakes away from it. To keep fakes that reach the server (for example when the hop count is wrong) from breaking the connection, adjust `fake-ack-offset` instead, such as `fake-ack-offset = -1073741824`: the server drops such fakes, while their position is unchanged.
 
+A fake segment longer than the connection's MSS is sent in MSS-sized pieces, as the kernel sends the real data, so no fake exceeds the path MTU.
+
 The number of packets grows to the number of segments times (N + 1), so a [`split-mode`](#split-mode) that makes many segments, such as a small `chunk:N`, sends many packets.
 
 ### Usage

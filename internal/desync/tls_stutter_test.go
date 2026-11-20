@@ -285,3 +285,78 @@ func TestStutter_SeqWrapAround(t *testing.T) {
 	}
 	assert.Equal(t, uint32(0x24-10), rest[2].seq.Seq, "wraps past 2^32")
 }
+
+func TestFakeSender_SplitsByMSS(t *testing.T) {
+	newSender := func(log *eventLog, preflight, stutter uint8) *fakeSender {
+		opts := tlsOpts(preflight, 100)
+		opts.SplitMode = config.HTTPSSplitModeNone
+		opts.FakeStutter = stutter
+		opts.FakePacket = proto.NewFakeTLSMessage(bytes.Repeat([]byte{0xAB}, 120))
+		f := newFakeSender(eventWriter{log: log}, newStubConn("203.0.113.1"), 8, opts,
+			packet.SeqAck{Seq: 1000, Ack: 5000})
+		f.mss = 50
+		return f
+	}
+	pieces := func(events []event) (seqs []uint32, lens []int) {
+		for _, e := range events {
+			seqs = append(seqs, e.seq.Seq)
+			lens = append(lens, len(e.payload))
+		}
+		return seqs, lens
+	}
+
+	t.Run("stutter", func(t *testing.T) {
+		log := &eventLog{}
+		n, err := newSender(log, 0, 1).stutter(
+			context.Background(), packet.SeqAck{Seq: 2000, Ack: 5000}, 0, 120)
+		require.NoError(t, err)
+		assert.Equal(t, 120, n)
+		seqs, lens := pieces(log.events)
+		assert.Equal(t, []uint32{2000, 2050, 2100}, seqs)
+		assert.Equal(t, []int{50, 50, 20}, lens)
+	})
+
+	t.Run("preflight", func(t *testing.T) {
+		log := &eventLog{}
+		n, err := newSender(log, 1, 0).preflight(context.Background(), zerolog.Nop())
+		require.NoError(t, err)
+		assert.Equal(t, 120, n)
+		seqs, lens := pieces(log.events)
+		assert.Equal(t, []uint32{1000, 1050, 1100}, seqs)
+		assert.Equal(t, []int{50, 50, 20}, lens)
+	})
+
+	t.Run("short payloads are one packet", func(t *testing.T) {
+		log := &eventLog{}
+		_, err := newSender(log, 0, 1).stutter(
+			context.Background(), packet.SeqAck{Seq: 2000, Ack: 5000}, 0, 50)
+		require.NoError(t, err)
+		assert.Len(t, log.events, 1)
+	})
+}
+
+func TestConnMSS(t *testing.T) {
+	t.Run("fallback when it cannot be read", func(t *testing.T) {
+		assert.Equal(t, fallbackMSS, connMSS(newStubConn("203.0.113.1")))
+	})
+
+	t.Run("real tcp connection", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		defer func() { _ = ln.Close() }()
+		go func() {
+			if c, err := ln.Accept(); err == nil {
+				defer func() { _ = c.Close() }()
+				time.Sleep(100 * time.Millisecond)
+			}
+		}()
+
+		conn, err := net.Dial("tcp", ln.Addr().String())
+		require.NoError(t, err)
+		defer func() { _ = conn.Close() }()
+
+		mss := connMSS(conn)
+		assert.Positive(t, mss)
+		assert.NotEqual(t, fallbackMSS, mss, "read from the socket")
+	})
+}

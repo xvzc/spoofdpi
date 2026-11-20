@@ -6,6 +6,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
@@ -22,6 +23,24 @@ type fakeSender struct {
 	opts      *config.HTTPSOptions
 	realStart packet.SeqAck
 	fakeStart packet.SeqAck
+
+	// mss is the largest payload of one fake packet: the connection's MSS,
+	// so that fakes are split where the kernel splits the real data and no
+	// fake exceeds the path MTU.
+	mss int
+}
+
+// fallbackMSS is used when the connection's MSS cannot be read. It is low
+// enough for paths with a reduced MTU, such as VPNs and PPPoE.
+const fallbackMSS = 1200
+
+// connMSS returns conn's MSS, or fallbackMSS if it cannot be read.
+func connMSS(conn net.Conn) int {
+	mss, err := netutil.MSS(conn)
+	if err != nil || mss <= 0 {
+		return fallbackMSS
+	}
+	return mss
 }
 
 func newFakeSender(
@@ -38,22 +57,37 @@ func newFakeSender(
 		opts:      opts,
 		realStart: real,
 		fakeStart: fakeSeqAck(real, opts),
+		mss:       connMSS(conn),
 	}
 }
 
+// write sends payload as fake packets starting at sa, split into pieces of
+// at most f.mss bytes with consecutive sequence numbers.
 func (f *fakeSender) write(
 	ctx context.Context,
 	payload []byte,
 	sa packet.SeqAck,
 ) (int, error) {
-	return f.writer.WriteCraftedPacketWithSeq(
-		ctx,
-		f.conn.LocalAddr(),
-		f.conn.RemoteAddr(),
-		f.ttl,
-		payload,
-		sa,
-	)
+	var total int
+	for len(payload) > 0 {
+		piece := payload[:min(len(payload), f.mss)]
+		n, err := f.writer.WriteCraftedPacketWithSeq(
+			ctx,
+			f.conn.LocalAddr(),
+			f.conn.RemoteAddr(),
+			f.ttl,
+			piece,
+			sa,
+		)
+		total += n
+		if err != nil {
+			return total, err
+		}
+		sa.Seq += uint32(len(piece))
+		payload = payload[len(piece):]
+	}
+
+	return total, nil
 }
 
 // preflight sends opts.FakePreflight copies of the fake Client Hello, each
@@ -70,11 +104,11 @@ func (f *fakeSender) preflight(
 		cur := f.fakeStart
 		for _, v := range segments {
 			n, err := f.write(ctx, v.Packet, cur)
+			total += n
 			if err != nil {
 				return total, err
 			}
 			cur.Seq += uint32(len(v.Packet))
-			total += n
 		}
 	}
 
