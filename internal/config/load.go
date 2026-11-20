@@ -153,6 +153,9 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 		}
 		// 'https' is the deprecated name of 'tls'. When 'tls' is present,
 		// 'https' is ignored entirely.
+		//
+		// TODO(deprecated): renamed to 'tls' after v1.6.0; remove with the
+		// [https] fallback in Config.UnmarshalTOML (config.go).
 		if v, ok := item["tls"]; ok {
 			if _, dup := item["https"]; dup {
 				AddWarnMsg(fmt.Sprintf(

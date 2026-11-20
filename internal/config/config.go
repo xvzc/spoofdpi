@@ -50,6 +50,11 @@ func (c *Config) UnmarshalTOML(data any) (err error) {
 	}
 	// [https] is the deprecated name of [tls]. When [tls] is present,
 	// [https] is ignored entirely.
+	//
+	// TODO(deprecated): [https] was renamed to [tls] after v1.6.0. Remove
+	// the [https] fallback together with the rule 'https' key (load.go),
+	// the --https-* flags (cli.go) and the notes in docs/user-guide/tls.md
+	// and rules.md.
 	if v, ok := m["tls"]; ok && err == nil {
 		if _, dup := m["https"]; dup {
 			AddWarnMsg("'[https]' is ignored because '[tls]' is set")

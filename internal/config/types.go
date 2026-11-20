@@ -147,6 +147,10 @@ func (o *ConnOptions) UnmarshalTOML(data any) (err error) {
 
 	// default-fake-ttl is the deprecated name of hop-count-default. When
 	// both are present, the deprecated one is ignored.
+	//
+	// TODO(deprecated): renamed to hop-count-default after v1.6.0. Remove
+	// with the --default-fake-ttl flag (cli.go) and the note in
+	// docs/user-guide/connection.md.
 	key := "hop-count-default"
 	if _, ok := v["default-fake-ttl"]; ok {
 		if _, both := v[key]; both {

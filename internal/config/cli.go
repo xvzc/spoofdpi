@@ -87,6 +87,9 @@ func CreateCommand(
 	var cliOverrides []func(*Config)
 	// deprecatedOverrides holds the overrides from deprecated flag names.
 	// They are applied before cliOverrides so the current names win.
+	//
+	// TODO(deprecated): remove once no deprecated flag names are left
+	// (--https-*, --default-fake-ttl).
 	var deprecatedOverrides []func(*Config)
 	defaultCfg := DefaultConfig()
 
@@ -155,6 +158,9 @@ func CreateCommand(
 			},
 
 			// Deprecated name of --hop-count-default.
+			//
+			// TODO(deprecated): renamed to --hop-count-default after v1.6.0;
+			// remove with the default-fake-ttl TOML key (types.go).
 			&cli.Int64Flag{
 				Name:      "default-fake-ttl",
 				Hidden:    true,
@@ -336,6 +342,9 @@ func CreateCommand(
 			},
 		},
 			tlsFlags("tls-", false, defaultCfg, &cliOverrides),
+			// TODO(deprecated): --https-* were renamed to --tls-* after
+			// v1.6.0; remove with the [https] fallback (config.go), then
+			// drop tlsFlags' deprecated parameter.
 			tlsFlags("https-", true, defaultCfg, &deprecatedOverrides),
 			[]cli.Flag{
 				&cli.Int64Flag{
