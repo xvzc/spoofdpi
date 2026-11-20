@@ -81,14 +81,14 @@ func TestConnOptions_UnmarshalTOML(t *testing.T) {
 		{
 			name: "valid server options",
 			input: map[string]any{
-				"default-fake-ttl": int64(64),
-				"dns-timeout":      int64(1000),
-				"tcp-timeout":      int64(1000),
-				"udp-idle-timeout": int64(1000),
+				"hop-count-default": int64(64),
+				"dns-timeout":       int64(1000),
+				"tcp-timeout":       int64(1000),
+				"udp-idle-timeout":  int64(1000),
 			},
 			wantErr: false,
 			assert: func(t *testing.T, o ConnOptions) {
-				assert.Equal(t, uint8(64), o.DefaultFakeTTL)
+				assert.Equal(t, uint8(64), o.HopCountDefault)
 				assert.Equal(t, 1000*time.Millisecond, o.DNSTimeout)
 				assert.Equal(t, 1000*time.Millisecond, o.TCPTimeout)
 				assert.Equal(t, 1000*time.Millisecond, o.UDPIdleTimeout)
@@ -469,14 +469,14 @@ func TestEnums_MarshalText_StringForms(t *testing.T) {
 
 func TestConnOptions_MarshalJSON_durationsAsString(t *testing.T) {
 	o := ConnOptions{
-		DefaultFakeTTL: 8,
-		DNSTimeout:     5000 * time.Millisecond,
-		TCPTimeout:     10000 * time.Millisecond,
-		UDPIdleTimeout: 25000 * time.Millisecond,
+		HopCountDefault: 8,
+		DNSTimeout:      5000 * time.Millisecond,
+		TCPTimeout:      10000 * time.Millisecond,
+		UDPIdleTimeout:  25000 * time.Millisecond,
 	}
 	b, err := json.Marshal(o)
 	assert.NoError(t, err)
-	const want = `{"default-fake-ttl":8,"dns-timeout":"5s",` +
+	const want = `{"hop-count-default":8,"hop-count-min":0,"hop-count-max":0,"hop-count-offset":0,"dns-timeout":"5s",` +
 		`"tcp-timeout":"10s","udp-idle-timeout":"25s"}`
 	assert.JSONEq(t, want, string(b))
 }

@@ -54,6 +54,7 @@ func int64Range(mini, maxi int64) func(int64) error {
 
 var (
 	checkUint8          = int64Range(0, math.MaxUint8)
+	checkInt8           = int64Range(math.MinInt8, math.MaxInt8)
 	checkUint16         = int64Range(0, math.MaxUint16)
 	checkUint8NonZero   = int64Range(1, math.MaxUint8)
 	checkAppMode        = checkOneOf(availableAppModeValues...)
@@ -174,8 +175,14 @@ func checkMatchAttrs(m MatchAttrs) error {
 // can only be detected once defaults+TOML+CLI are merged and rules are
 // eager-resolved.
 func (c *Config) Validate() error {
+	if err := checkHopCountRange(c.Conn); err != nil {
+		return err
+	}
 	for i, rule := range c.Rules {
 		if err := checkRule(rule); err != nil {
+			return fmt.Errorf("rules[%d]: %w", i, err)
+		}
+		if err := checkHopCountRange(rule.Config.Conn); err != nil {
 			return fmt.Errorf("rules[%d]: %w", i, err)
 		}
 	}
@@ -209,4 +216,14 @@ func warnFakeSeqOverlap(scope string, o HTTPSOptions) {
 			"fakes may overlap real data",
 		scope, o.FakeSeq.Offset, n,
 	))
+}
+
+func checkHopCountRange(o ConnOptions) error {
+	if o.HopCountMin > o.HopCountMax {
+		return fmt.Errorf(
+			"'hop-count-min' (%d) must not be greater than 'hop-count-max' (%d)",
+			o.HopCountMin, o.HopCountMax,
+		)
+	}
+	return nil
 }

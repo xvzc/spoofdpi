@@ -105,9 +105,9 @@ func TestUDPSniffer_LearnsHops(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			us := &UDPSniffer{
-				logger:     zerolog.Nop(),
-				nhopCache:  cache.NewLRUCache[netutil.IPKey, HopEntry](1, 16, nil),
-				defaultTTL: 8,
+				logger:    zerolog.Nop(),
+				nhopCache: cache.NewLRUCache[netutil.IPKey, HopEntry](1, 16, nil),
+				hops:      HopPolicy{Default: 8, Max: 255},
 			}
 			server := net.ParseIP(tc.server)
 			if tc.register {

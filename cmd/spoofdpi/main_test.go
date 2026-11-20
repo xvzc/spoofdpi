@@ -27,10 +27,10 @@ func TestCreateProxy_NoPcap(t *testing.T) {
 
 	// Conn Config
 	cfg.Conn = config.ConnOptions{
-		DefaultFakeTTL: uint8(64),
-		DNSTimeout:     time.Duration(0),
-		TCPTimeout:     time.Duration(0),
-		UDPIdleTimeout: time.Duration(0),
+		HopCountDefault: uint8(64),
+		DNSTimeout:      time.Duration(0),
+		TCPTimeout:      time.Duration(0),
+		UDPIdleTimeout:  time.Duration(0),
 	}
 
 	// HTTPS Config (Ensure FakeCount is 0 to disable PCAP)
@@ -72,10 +72,10 @@ func TestCreateProxy_WithRules(t *testing.T) {
 
 	// Conn Config
 	cfg.Conn = config.ConnOptions{
-		DefaultFakeTTL: uint8(64),
-		DNSTimeout:     time.Duration(0),
-		TCPTimeout:     time.Duration(0),
-		UDPIdleTimeout: time.Duration(0),
+		HopCountDefault: uint8(64),
+		DNSTimeout:      time.Duration(0),
+		TCPTimeout:      time.Duration(0),
+		UDPIdleTimeout:  time.Duration(0),
 	}
 
 	// HTTPS Config

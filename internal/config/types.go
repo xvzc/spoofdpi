@@ -104,25 +104,38 @@ func (t AppModeType) MarshalText() ([]byte, error) {
 // └────────────────────┘
 
 type ConnOptions struct {
-	DefaultFakeTTL uint8         `toml:"default-fake-ttl"`
-	DNSTimeout     time.Duration `toml:"dns-timeout"`
-	TCPTimeout     time.Duration `toml:"tcp-timeout"`
-	UDPIdleTimeout time.Duration `toml:"udp-idle-timeout"`
+	// Hop count to the server, which sets the TTL of fake packets
+	// (hop count - 1). HopCountDefault is assumed until the hop count is
+	// learned; a learned hop count gets HopCountOffset added and is then
+	// clamped to [HopCountMin, HopCountMax].
+	HopCountDefault uint8         `toml:"hop-count-default"`
+	HopCountMin     uint8         `toml:"hop-count-min"`
+	HopCountMax     uint8         `toml:"hop-count-max"`
+	HopCountOffset  int8          `toml:"hop-count-offset"`
+	DNSTimeout      time.Duration `toml:"dns-timeout"`
+	TCPTimeout      time.Duration `toml:"tcp-timeout"`
+	UDPIdleTimeout  time.Duration `toml:"udp-idle-timeout"`
 }
 
 // MarshalJSON renders durations via String() (e.g. "10s") instead of
 // raw nanoseconds so trace logs are readable.
 func (o ConnOptions) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		DefaultFakeTTL uint8  `json:"default-fake-ttl"`
-		DNSTimeout     string `json:"dns-timeout"`
-		TCPTimeout     string `json:"tcp-timeout"`
-		UDPIdleTimeout string `json:"udp-idle-timeout"`
+		HopCountDefault uint8  `json:"hop-count-default"`
+		HopCountMin     uint8  `json:"hop-count-min"`
+		HopCountMax     uint8  `json:"hop-count-max"`
+		HopCountOffset  int8   `json:"hop-count-offset"`
+		DNSTimeout      string `json:"dns-timeout"`
+		TCPTimeout      string `json:"tcp-timeout"`
+		UDPIdleTimeout  string `json:"udp-idle-timeout"`
 	}{
-		DefaultFakeTTL: o.DefaultFakeTTL,
-		DNSTimeout:     o.DNSTimeout.String(),
-		TCPTimeout:     o.TCPTimeout.String(),
-		UDPIdleTimeout: o.UDPIdleTimeout.String(),
+		HopCountDefault: o.HopCountDefault,
+		HopCountMin:     o.HopCountMin,
+		HopCountMax:     o.HopCountMax,
+		HopCountOffset:  o.HopCountOffset,
+		DNSTimeout:      o.DNSTimeout.String(),
+		TCPTimeout:      o.TCPTimeout.String(),
+		UDPIdleTimeout:  o.UDPIdleTimeout.String(),
 	})
 }
 
@@ -132,16 +145,57 @@ func (o *ConnOptions) UnmarshalTOML(data any) (err error) {
 		return fmt.Errorf("non-table type connection config")
 	}
 
+	// default-fake-ttl is the deprecated name of hop-count-default. When
+	// both are present, the deprecated one is ignored.
+	key := "hop-count-default"
+	if _, ok := v["default-fake-ttl"]; ok {
+		if _, both := v[key]; both {
+			AddWarnMsg("'default-fake-ttl' is ignored because 'hop-count-default' is set")
+		} else {
+			AddWarnMsg("'default-fake-ttl' is deprecated; rename to 'hop-count-default'")
+			key = "default-fake-ttl"
+		}
+	}
 	if p := findFrom(
 		v,
-		"default-fake-ttl",
+		key,
 		parseIntFn[uint8](checkUint8NonZero),
 		&err,
 	); isOk(
 		p,
 		err,
 	) {
-		o.DefaultFakeTTL = *p
+		o.HopCountDefault = *p
+	}
+	if p := findFrom(
+		v,
+		"hop-count-min",
+		parseIntFn[uint8](checkUint8),
+		&err,
+	); isOk(
+		p,
+		err,
+	) {
+		o.HopCountMin = *p
+	}
+	if p := findFrom(
+		v,
+		"hop-count-max",
+		parseIntFn[uint8](checkUint8NonZero),
+		&err,
+	); isOk(p, err) {
+		o.HopCountMax = *p
+	}
+	if p := findFrom(
+		v,
+		"hop-count-offset",
+		parseIntFn[int8](checkInt8),
+		&err,
+	); isOk(
+		p,
+		err,
+	) {
+		o.HopCountOffset = *p
 	}
 	if p := findFrom(
 		v,

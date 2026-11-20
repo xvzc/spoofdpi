@@ -19,8 +19,8 @@ var _ Sniffer = (*UDPSniffer)(nil)
 type UDPSniffer struct {
 	logger zerolog.Logger
 
-	nhopCache  cache.Cache[netutil.IPKey, HopEntry]
-	defaultTTL uint8
+	nhopCache cache.Cache[netutil.IPKey, HopEntry]
+	hops      HopPolicy
 
 	handle Handle
 }
@@ -32,10 +32,10 @@ func NewUDPSniffer(
 	cfg *config.RuntimeConfig,
 ) *UDPSniffer {
 	return &UDPSniffer{
-		logger:     logger,
-		handle:     handle,
-		nhopCache:  cache,
-		defaultTTL: uint8(cfg.Conn.DefaultFakeTTL),
+		logger:    logger,
+		handle:    handle,
+		nhopCache: cache,
+		hops:      NewHopPolicy(cfg.Conn),
 	}
 }
 
@@ -60,7 +60,7 @@ func (us *UDPSniffer) Register(addrs []net.IP) {
 	for _, v := range addrs {
 		us.nhopCache.Set(
 			netutil.NewIPKey(v),
-			HopEntry{Hops: us.defaultTTL, Learned: false},
+			HopEntry{Hops: us.hops.Default, Learned: false},
 			cache.Options().WithSkipExisting(true),
 		)
 	}
@@ -68,12 +68,8 @@ func (us *UDPSniffer) Register(addrs []net.IP) {
 
 // GetOptimalTTL retrieves the estimated hop count for a given key from the cache.
 func (us *UDPSniffer) GetOptimalTTL(key netutil.IPKey) uint8 {
-	hopCount := uint8(255)
-	if e, ok := us.nhopCache.Get(key); ok {
-		hopCount = e.Hops
-	}
-
-	return max(hopCount, 2) - 1
+	e, ok := us.nhopCache.Get(key)
+	return us.hops.TTL(e, ok)
 }
 
 // LearnedHops returns the hop count for key and whether it was learned

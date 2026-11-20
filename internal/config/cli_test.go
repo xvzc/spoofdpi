@@ -31,7 +31,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				assert.False(t, cfg.App.AutoConfigureNetwork)
 				assert.Equal(t, "127.0.0.1:8080", cfg.App.ListenAddr.String())
 				assert.Nil(t, cfg.App.Gateway)
-				assert.Equal(t, uint8(8), cfg.Conn.DefaultFakeTTL)
+				assert.Equal(t, uint8(8), cfg.Conn.HopCountDefault)
 				assert.Equal(t, int64(5000), cfg.Conn.DNSTimeout.Milliseconds())
 				assert.Equal(t, int64(10000), cfg.Conn.TCPTimeout.Milliseconds())
 				assert.Equal(t, int64(25000), cfg.Conn.UDPIdleTimeout.Milliseconds())
@@ -59,7 +59,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				"--auto-configure-network",
 				"--listen-addr", "127.0.0.1:9090",
 				"--gateway", "192.168.1.1",
-				"--default-fake-ttl", "128",
+				"--hop-count-default", "128",
 				"--dns-timeout", "5000",
 				"--tcp-timeout", "5000",
 				"--udp-idle-timeout", "5000",
@@ -86,7 +86,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				// Server
 				assert.Equal(t, "127.0.0.1:9090", cfg.App.ListenAddr.String())
 				assert.Equal(t, net.IPv4(192, 168, 1, 1).To4(), cfg.App.Gateway)
-				assert.Equal(t, uint8(128), cfg.Conn.DefaultFakeTTL)
+				assert.Equal(t, uint8(128), cfg.Conn.HopCountDefault)
 				assert.Equal(t, 5000*time.Millisecond, cfg.Conn.DNSTimeout)
 				assert.Equal(t, 5000*time.Millisecond, cfg.Conn.TCPTimeout)
 				assert.Equal(t, 5000*time.Millisecond, cfg.Conn.UDPIdleTimeout)
@@ -194,7 +194,7 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
     dns-timeout = 1000
     tcp-timeout = 1000
     udp-idle-timeout = 1000
-    default-fake-ttl = 100
+    hop-count-default = 100
 
 [dns]
     addr = "8.8.8.8:53"
@@ -259,7 +259,7 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
 		"--dns-timeout", "2000",
 		"--tcp-timeout", "2000",
 		"--udp-idle-timeout", "2000",
-		"--default-fake-ttl", "200",
+		"--hop-count-default", "200",
 		"--dns-addr", "1.1.1.1:53",
 		"--dns-cache=false",
 		"--dns-mode", "udp",
@@ -290,7 +290,7 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
 	assert.Equal(t, 2000*time.Millisecond, capturedCfg.Conn.DNSTimeout)
 	assert.Equal(t, 2000*time.Millisecond, capturedCfg.Conn.TCPTimeout)
 	assert.Equal(t, 2000*time.Millisecond, capturedCfg.Conn.UDPIdleTimeout)
-	assert.Equal(t, uint8(200), capturedCfg.Conn.DefaultFakeTTL)
+	assert.Equal(t, uint8(200), capturedCfg.Conn.HopCountDefault)
 
 	// DNS
 	assert.Equal(t, "1.1.1.1:53", capturedCfg.DNS.Addr.String())

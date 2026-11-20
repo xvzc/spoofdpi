@@ -56,10 +56,10 @@ func synAck(
 
 func newTestSniffer(seqs *SeqTracker) *TCPSniffer {
 	return &TCPSniffer{
-		logger:     zerolog.Nop(),
-		nhopCache:  cache.NewLRUCache[netutil.IPKey, HopEntry](1, 16, nil),
-		defaultTTL: 8,
-		seqs:       seqs,
+		logger:    zerolog.Nop(),
+		nhopCache: cache.NewLRUCache[netutil.IPKey, HopEntry](1, 16, nil),
+		hops:      HopPolicy{Default: 8, Max: 255},
+		seqs:      seqs,
 	}
 }
 

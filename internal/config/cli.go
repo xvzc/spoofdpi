@@ -38,10 +38,13 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 		Rules: nil,
 		RuntimeConfig: RuntimeConfig{ //exhaustruct:enforce
 			Conn: ConnOptions{ //exhaustruct:enforce
-				DefaultFakeTTL: 8,
-				DNSTimeout:     5000 * time.Millisecond,
-				TCPTimeout:     10000 * time.Millisecond,
-				UDPIdleTimeout: 25000 * time.Millisecond,
+				HopCountDefault: 8,
+				HopCountMin:     0,
+				HopCountMax:     255,
+				HopCountOffset:  0,
+				DNSTimeout:      5000 * time.Millisecond,
+				TCPTimeout:      10000 * time.Millisecond,
+				UDPIdleTimeout:  25000 * time.Millisecond,
 			},
 			DNS: DNSOptions{ //exhaustruct:enforce
 				Mode:     DNSModeUDP,
@@ -82,9 +85,9 @@ func CreateCommand(
 	// cliOverrides is appended to by Flag.Action below — once per flag the
 	// user actually sets. Load applies them after loadTOML so CLI wins.
 	var cliOverrides []func(*Config)
-	// httpsOverrides holds the overrides from the deprecated --https-*
-	// flags. They are applied before cliOverrides so --tls-* wins.
-	var httpsOverrides []func(*Config)
+	// deprecatedOverrides holds the overrides from deprecated flag names.
+	// They are applied before cliOverrides so the current names win.
+	var deprecatedOverrides []func(*Config)
 	defaultCfg := DefaultConfig()
 
 	cmd := &cli.Command{
@@ -134,17 +137,86 @@ func CreateCommand(
 			},
 
 			&cli.Int64Flag{
-				Name: "default-fake-ttl",
+				Name: "hop-count-default",
 				Usage: fmt.Sprintf(`
-				Default TTL value for fake packets. (default: %v)`,
-					defaultCfg.Conn.DefaultFakeTTL,
+				Hop count to the server assumed until it is learned. Fake packets
+				are sent with a TTL of the hop count minus 1. (default: %v)`,
+					defaultCfg.Conn.HopCountDefault,
 				),
 				OnlyOnce:  true,
 				Validator: checkUint8NonZero,
 				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
-					ttl := uint8(v)
+					n := uint8(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Conn.DefaultFakeTTL = ttl
+						cfg.Conn.HopCountDefault = n
+					})
+					return nil
+				},
+			},
+
+			// Deprecated name of --hop-count-default.
+			&cli.Int64Flag{
+				Name:      "default-fake-ttl",
+				Hidden:    true,
+				OnlyOnce:  true,
+				Validator: checkUint8NonZero,
+				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
+					AddWarnMsg("'--default-fake-ttl' is deprecated; use '--hop-count-default'")
+					n := uint8(v)
+					deprecatedOverrides = append(deprecatedOverrides, func(cfg *Config) {
+						cfg.Conn.HopCountDefault = n
+					})
+					return nil
+				},
+			},
+
+			&cli.Int64Flag{
+				Name: "hop-count-min",
+				Usage: fmt.Sprintf(`
+				Lower bound of the hop count used for fake packets. (default: %v)`,
+					defaultCfg.Conn.HopCountMin,
+				),
+				OnlyOnce:  true,
+				Validator: checkUint8,
+				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
+					n := uint8(v)
+					cliOverrides = append(cliOverrides, func(cfg *Config) {
+						cfg.Conn.HopCountMin = n
+					})
+					return nil
+				},
+			},
+
+			&cli.Int64Flag{
+				Name: "hop-count-max",
+				Usage: fmt.Sprintf(`
+				Upper bound of the hop count used for fake packets. (default: %v)`,
+					defaultCfg.Conn.HopCountMax,
+				),
+				OnlyOnce:  true,
+				Validator: checkUint8NonZero,
+				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
+					n := uint8(v)
+					cliOverrides = append(cliOverrides, func(cfg *Config) {
+						cfg.Conn.HopCountMax = n
+					})
+					return nil
+				},
+			},
+
+			&cli.Int64Flag{
+				Name: "hop-count-offset",
+				Usage: fmt.Sprintf(`
+				Added to a learned hop count to correct estimation errors; use
+				'--hop-count-offset=-N' for negative values. (default: %v)`,
+					defaultCfg.Conn.HopCountOffset,
+				),
+				OnlyOnce:  true,
+				Validator: checkInt8,
+				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
+					n := int8(v)
+					cliOverrides = append(cliOverrides, func(cfg *Config) {
+						cfg.Conn.HopCountOffset = n
 					})
 					return nil
 				},
@@ -264,7 +336,7 @@ func CreateCommand(
 			},
 		},
 			tlsFlags("tls-", false, defaultCfg, &cliOverrides),
-			tlsFlags("https-", true, defaultCfg, &httpsOverrides),
+			tlsFlags("https-", true, defaultCfg, &deprecatedOverrides),
 			[]cli.Flag{
 				&cli.Int64Flag{
 					Name: "udp-fake-count",
@@ -472,7 +544,7 @@ func CreateCommand(
 				os.Exit(0)
 			}
 
-			cfg, configDir, err := Load(cmd, slices.Concat(httpsOverrides, cliOverrides))
+			cfg, configDir, err := Load(cmd, slices.Concat(deprecatedOverrides, cliOverrides))
 			if err != nil {
 				return err
 			}

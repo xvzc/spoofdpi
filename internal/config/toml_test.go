@@ -424,7 +424,7 @@ func TestFromTomlFile(t *testing.T) {
 				dns-timeout = 1000
 				tcp-timeout = 1000
 				udp-idle-timeout = 1000
-				default-fake-ttl = 100
+				hop-count-default = 100
 
 			[dns]
 				addr = "8.8.8.8:53"
@@ -502,7 +502,7 @@ func TestFromTomlFile(t *testing.T) {
 		assert.Equal(t, DNSModeHTTPS, cfg.DNS.Mode)
 		assert.Equal(t, "https://1.1.1.1/dns-query", cfg.DNS.HTTPSURL)
 		assert.Equal(t, DNSQueryIPv4, cfg.DNS.QType)
-		assert.Equal(t, uint8(100), cfg.Conn.DefaultFakeTTL)
+		assert.Equal(t, uint8(100), cfg.Conn.HopCountDefault)
 		assert.True(t, cfg.HTTPS.Disorder)
 		assert.Equal(t, uint8(5), cfg.HTTPS.FakeCount)
 		assert.Equal(t, []byte{0x01, 0x02, 0x03}, cfg.HTTPS.FakePacket.Raw())

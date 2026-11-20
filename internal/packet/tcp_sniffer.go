@@ -19,9 +19,9 @@ var _ Sniffer = (*TCPSniffer)(nil)
 type TCPSniffer struct {
 	logger zerolog.Logger
 
-	nhopCache  cache.Cache[netutil.IPKey, HopEntry]
-	defaultTTL uint8
-	seqs       *SeqTracker
+	nhopCache cache.Cache[netutil.IPKey, HopEntry]
+	hops      HopPolicy
+	seqs      *SeqTracker
 
 	handle Handle
 }
@@ -34,11 +34,11 @@ func NewTCPSniffer(
 	cfg *config.RuntimeConfig,
 ) *TCPSniffer {
 	return &TCPSniffer{
-		logger:     logger,
-		handle:     handle,
-		nhopCache:  cache,
-		defaultTTL: uint8(cfg.Conn.DefaultFakeTTL),
-		seqs:       seqs,
+		logger:    logger,
+		handle:    handle,
+		nhopCache: cache,
+		hops:      NewHopPolicy(cfg.Conn),
+		seqs:      seqs,
 	}
 }
 
@@ -63,7 +63,7 @@ func (ts *TCPSniffer) Register(addrs []net.IP) {
 	for _, v := range addrs {
 		ts.nhopCache.Set(
 			netutil.NewIPKey(v),
-			HopEntry{Hops: ts.defaultTTL, Learned: false},
+			HopEntry{Hops: ts.hops.Default, Learned: false},
 			cache.Options().WithSkipExisting(true),
 		)
 	}
@@ -71,12 +71,8 @@ func (ts *TCPSniffer) Register(addrs []net.IP) {
 
 // GetOptimalTTL retrieves the estimated hop count for a given key from the cache.
 func (ts *TCPSniffer) GetOptimalTTL(key netutil.IPKey) uint8 {
-	hopCount := uint8(255)
-	if e, ok := ts.nhopCache.Get(key); ok {
-		hopCount = e.Hops
-	}
-
-	return max(hopCount, 2) - 1
+	e, ok := ts.nhopCache.Get(key)
+	return ts.hops.TTL(e, ok)
 }
 
 // LearnedHops returns the hop count for key and whether it was learned

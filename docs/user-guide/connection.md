@@ -79,28 +79,79 @@ udp-idle-timeout = 30000
 
 ---
 
-## `default-fake-ttl`
+## `hop-count-default`
 
 `type: uint8`
 
 ### Description
 
-Specifies the default [Time To Live (TTL)](https://en.wikipedia.org/wiki/Time_to_live) value for fake packets. `(default: 8)`
+The hop count to the server assumed until spoofdpi learns it. `(default: 8)`
 
-This value is used for fake packets sent during disorder strategies. A lower value ensures fake packets expire before reaching the destination, while the real packets arrive successfully.
+Fake packets should pass the DPI but expire before reaching the server, so they are sent with a [Time To Live (TTL)](https://en.wikipedia.org/wiki/Time_to_live) of the hop count to the server minus 1. spoofdpi learns the hop count from the TTL left on the server's replies; until then, this value is used.
 
 !!! note
-    The fake TTL should be less than the number of hops to the destination.
+    This option was previously named `default-fake-ttl` (`--default-fake-ttl`). The old name still works but prints a deprecation warning. If both are set in the TOML config, `default-fake-ttl` is ignored.
 
 ### Usage
 
 **Command-Line Flag**
 ```console
-$ spoofdpi --default-fake-ttl 10
+$ spoofdpi --hop-count-default 10
 ```
 
 **TOML Config**
 ```toml
 [connection]
-default-fake-ttl = 10
+hop-count-default = 10
+```
+
+---
+
+## `hop-count-offset`
+
+`type: int8`
+
+### Description
+
+Added to a learned hop count before it sets the TTL of fake packets. `(default: 0)`
+
+The hop count is learned by assuming that the server started from a common initial TTL (64, 128 or 255), which is not always true, and the path back from the server can differ from the path to it. A negative offset makes fake packets expire earlier, for networks where the learned hop count tends to be too high and fakes reach the server.
+
+### Usage
+
+**Command-Line Flag**
+```console
+$ spoofdpi --hop-count-offset=-3
+```
+
+**TOML Config**
+```toml
+[connection]
+hop-count-offset = -3
+```
+
+---
+
+## `hop-count-min` / `hop-count-max`
+
+`type: uint8`
+
+### Description
+
+Bounds for the hop count used for fake packets, applied after [`hop-count-offset`](#hop-count-offset). `(default: 0 / 255, no bounds)`
+
+`hop-count-max` caps a hop count that was learned far too high, which would let fake packets reach the server. `hop-count-min` keeps fake packets from expiring before they reach the DPI. For example, if the DPI is 10 hops away and servers are farther than 15 hops, `hop-count-min = 11` and `hop-count-max = 15` keep the TTL of fake packets between 10 and 14.
+
+### Usage
+
+**Command-Line Flag**
+```console
+$ spoofdpi --hop-count-min 11 --hop-count-max 15
+```
+
+**TOML Config**
+```toml
+[connection]
+hop-count-min = 11
+hop-count-max = 15
 ```
