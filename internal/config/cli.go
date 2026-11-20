@@ -54,21 +54,21 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 				Cache:    false,
 			},
 			HTTPS: HTTPSOptions{ //exhaustruct:enforce
-				Disorder:           false,
-				FakeCount:          0,
-				FakePacket:         proto.NewFakeTLSMessage([]byte(FakeClientHello)),
-				FakeSeq:            SeqMode{Random: false, Offset: 0},
-				FakeAck:            SeqMode{Random: false, Offset: 0},
-				SynAckTimeout:      100 * time.Millisecond,
-				SplitMode:          HTTPSSplitModeSNI,
-				ChunkSize:          35,
-				CustomSegmentPlans: nil,
-				Skip:               false,
+				Disorder:      false,
+				FakePreflight: 0,
+				FakePacket:    proto.NewFakeTLSMessage([]byte(FakeClientHello)),
+				FakeSeq:       SeqMode{Random: false, Offset: 0},
+				FakeAck:       SeqMode{Random: false, Offset: 0},
+				SynAckTimeout: 100 * time.Millisecond,
+				SplitMode:     HTTPSSplitModeSNI,
+				ChunkSize:     DefaultChunkSize,
+				CustomSplit:   nil,
+				Skip:          false,
 			},
 			UDP: UDPOptions{ //exhaustruct:enforce
-				Skip:       false,
-				FakeCount:  0,
-				FakePacket: make([]byte, 64),
+				Skip:          false,
+				FakePreflight: 0,
+				FakePacket:    make([]byte, 64),
 			},
 		},
 	}
@@ -348,10 +348,11 @@ func CreateCommand(
 			tlsFlags("https-", true, defaultCfg, &deprecatedOverrides),
 			[]cli.Flag{
 				&cli.Int64Flag{
-					Name: "udp-fake-count",
+					Name: "udp-fake-preflight",
 					Usage: fmt.Sprintf(`
-				Number of fake packets to be sent. (default: %v)`,
-						defaultCfg.UDP.FakeCount,
+				Number of fake packets to be sent before the first datagram.
+				(default: %v)`,
+						defaultCfg.UDP.FakePreflight,
 					),
 					Value:     0,
 					OnlyOnce:  true,
@@ -359,7 +360,41 @@ func CreateCommand(
 					Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
 						n := uint8(v)
 						cliOverrides = append(cliOverrides, func(cfg *Config) {
-							cfg.UDP.FakeCount = n
+							cfg.UDP.FakePreflight = n
+						})
+						return nil
+					},
+				},
+
+				// Deprecated flags renamed after v1.6.0.
+				//
+				// TODO(deprecated): remove --udp-fake-count and --tls-fake-count
+				// with the TOML fallbacks in types.go.
+				&cli.Int64Flag{
+					Name:      "udp-fake-count",
+					Hidden:    true,
+					OnlyOnce:  true,
+					Validator: int64Range(0, math.MaxUint8),
+					Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
+						AddWarnMsg("'--udp-fake-count' is deprecated; use '--udp-fake-preflight'")
+						n := uint8(v)
+						deprecatedOverrides = append(deprecatedOverrides, func(cfg *Config) {
+							cfg.UDP.FakePreflight = n
+						})
+						return nil
+					},
+				},
+
+				&cli.Int64Flag{
+					Name:      "tls-fake-count",
+					Hidden:    true,
+					OnlyOnce:  true,
+					Validator: checkUint8,
+					Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
+						AddWarnMsg("'--tls-fake-count' is deprecated; use '--tls-fake-preflight'")
+						n := uint8(v)
+						deprecatedOverrides = append(deprecatedOverrides, func(cfg *Config) {
+							cfg.HTTPS.FakePreflight = n
 						})
 						return nil
 					},
@@ -633,33 +668,42 @@ func tlsFlags(
 	defaultCfg *Config,
 	overrides *[]func(*Config),
 ) []cli.Flag {
+	// The deprecated --https-* flags keep the option names they had, so
+	// some of them point to a renamed --tls-* flag.
+	renamed := map[string]string{
+		"fake-count": "fake-preflight",
+	}
 	add := func(name string, fn func(*Config)) {
 		if deprecated {
-			AddWarnMsg(fmt.Sprintf(
-				"'--%s' is deprecated; use '--tls-%s'",
-				name,
-				strings.TrimPrefix(name, prefix),
-			))
+			opt := strings.TrimPrefix(name, prefix)
+			if r, ok := renamed[opt]; ok {
+				opt = r
+			}
+			AddWarnMsg(fmt.Sprintf("'--%s' is deprecated; use '--tls-%s'", name, opt))
 		}
 		*overrides = append(*overrides, fn)
+	}
+	preflight := "fake-preflight"
+	if deprecated {
+		preflight = "fake-count"
 	}
 
 	flags := []cli.Flag{
 		&cli.Int64Flag{
-			Name:   prefix + "fake-count",
+			Name:   prefix + preflight,
 			Hidden: deprecated,
 			Usage: fmt.Sprintf(`
 				Number of fake packets to be sent before the Client Hello.
-				Requires 'tls-chunk-size' > 0 for fragmentation. (default: %v)`,
-				defaultCfg.HTTPS.FakeCount,
+				(default: %v)`,
+				defaultCfg.HTTPS.FakePreflight,
 			),
 			Value:     0,
 			OnlyOnce:  true,
 			Validator: checkUint8,
 			Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
 				n := uint8(v)
-				add(prefix+"fake-count", func(cfg *Config) {
-					cfg.HTTPS.FakeCount = n
+				add(prefix+preflight, func(cfg *Config) {
+					cfg.HTTPS.FakePreflight = n
 				})
 				return nil
 			},
@@ -704,17 +748,23 @@ func tlsFlags(
 			Name:   prefix + "split-mode",
 			Hidden: deprecated,
 			Usage: fmt.Sprintf(`%s
-				Specifies the default packet fragmentation strategy to use. (default: %q)`,
+				Specifies the default packet fragmentation strategy to use.
+				'chunk:N' splits into chunks of N bytes; 'chunk' alone uses %v.
+				(default: %q)`,
 				enumUsage(availableHTTPSModeValues),
+				defaultCfg.HTTPS.ChunkSize,
 				defaultCfg.HTTPS.SplitMode.String(),
 			),
 			Value:     "chunk",
 			OnlyOnce:  true,
 			Validator: checkHTTPSSplitMode,
 			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-				mode := mustParseHTTPSSplitModeType(v)
+				mode, size := mustParseSplitMode(v)
 				add(prefix+"split-mode", func(cfg *Config) {
 					cfg.HTTPS.SplitMode = mode
+					if size > 0 {
+						cfg.HTTPS.ChunkSize = size
+					}
 				})
 				return nil
 			},
@@ -737,34 +787,28 @@ func tlsFlags(
 				return nil
 			},
 		},
-
-		&cli.Int64Flag{
-			Name:   prefix + "chunk-size",
-			Hidden: deprecated,
-			Usage: fmt.Sprintf(`
-				The chunk size (in bytes) for packet fragmentation. This value is only applied 
-				when 'tls-split-mode' is 'chunk'. While setting the size to '0' internally 
-				disables fragmentation (to avoid division-by-zero errors), you should set 
-				'tls-split-mode' to 'none' to disable the feature cleanly.
-				(default: %v, max: %v)`,
-				defaultCfg.HTTPS.ChunkSize,
-				math.MaxUint8,
-			),
-			OnlyOnce:  true,
-			Validator: checkUint8NonZero,
-			Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
-				sz := uint8(v)
-				add(prefix+"chunk-size", func(cfg *Config) {
-					cfg.HTTPS.ChunkSize = sz
-				})
-				return nil
-			},
-		},
 	}
 
 	// Options added after the rename have no deprecated --https-* name.
 	if deprecated {
-		return flags
+		// --https-chunk-size is no longer supported: chunk sizes are part
+		// of --tls-split-mode now. The flag is kept only to warn.
+		//
+		// TODO(deprecated): remove with the chunk-size warning in types.go.
+		return append(flags,
+			&cli.Int64Flag{
+				Name:     prefix + "chunk-size",
+				Hidden:   true,
+				OnlyOnce: true,
+				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
+					AddWarnMsg(
+						"'--https-chunk-size' is no longer supported and is ignored; " +
+							"use '--tls-split-mode chunk:N'",
+					)
+					return nil
+				},
+			},
+		)
 	}
 
 	return append(flags,

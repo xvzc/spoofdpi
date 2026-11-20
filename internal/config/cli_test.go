@@ -40,12 +40,12 @@ func TestCreateCommand_Flags(t *testing.T) {
 				assert.Equal(t, "https://dns.google/dns-query", cfg.DNS.HTTPSURL)
 				assert.Equal(t, DNSQueryIPv4, cfg.DNS.QType)
 				assert.False(t, cfg.DNS.Cache)
-				assert.Equal(t, uint8(0), cfg.HTTPS.FakeCount)
+				assert.Equal(t, uint8(0), cfg.HTTPS.FakePreflight)
 				assert.False(t, cfg.HTTPS.Disorder)
 				assert.Equal(t, HTTPSSplitModeSNI, cfg.HTTPS.SplitMode)
 				assert.Equal(t, uint8(35), cfg.HTTPS.ChunkSize)
 				assert.False(t, cfg.HTTPS.Skip)
-				assert.Equal(t, uint8(0), cfg.UDP.FakeCount)
+				assert.Equal(t, uint8(0), cfg.UDP.FakePreflight)
 				assert.Equal(t, 64, len(cfg.UDP.FakePacket))
 			},
 		},
@@ -68,13 +68,12 @@ func TestCreateCommand_Flags(t *testing.T) {
 				"--dns-https-url", "https://cloudflare-dns.com/dns-query",
 				"--dns-qtype", "ipv6",
 				"--dns-cache",
-				"--tls-fake-count", "10",
+				"--tls-fake-preflight", "10",
 				"--tls-fake-packet", "0x16, 0x03",
 				"--tls-disorder",
-				"--tls-split-mode", "chunk",
-				"--tls-chunk-size", "50",
+				"--tls-split-mode", "chunk:50",
 				"--tls-skip",
-				"--udp-fake-count", "5",
+				"--udp-fake-preflight", "5",
 				"--udp-fake-packet", "0x01, 0x02",
 			},
 			assert: func(t *testing.T, cfg *Config) {
@@ -103,7 +102,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				assert.True(t, cfg.DNS.Cache)
 
 				// HTTPS
-				assert.Equal(t, uint8(10), cfg.HTTPS.FakeCount)
+				assert.Equal(t, uint8(10), cfg.HTTPS.FakePreflight)
 				assert.Equal(t, []byte{0x16, 0x03}, cfg.HTTPS.FakePacket.Raw())
 				assert.True(t, cfg.HTTPS.Disorder)
 				assert.Equal(t, HTTPSSplitModeChunk, cfg.HTTPS.SplitMode)
@@ -111,7 +110,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				assert.True(t, cfg.HTTPS.Skip)
 
 				// UDP
-				assert.Equal(t, uint8(5), cfg.UDP.FakeCount)
+				assert.Equal(t, uint8(5), cfg.UDP.FakePreflight)
 				assert.Equal(t, []byte{0x01, 0x02}, cfg.UDP.FakePacket)
 			},
 		},
@@ -205,10 +204,9 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
 
 [tls]
     disorder = true
-    fake-count = 5
+    fake-preflight = 5
     fake-packet = [0x01, 0x02, 0x03]
-    split-mode = "chunk"
-    chunk-size = 20
+    split-mode = "chunk:20"
     skip = true
 
 [[rules]]
@@ -229,10 +227,9 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
     }
     tls = {
         disorder = false,
-        fake-count = 2,
+        fake-preflight = 2,
         fake-packet = [0xAA, 0xBB],
-        split-mode = "sni",
-        chunk-size = 10,
+        split-mode = "chunk:10",
         skip = true,
     }
 `
@@ -266,12 +263,11 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
 		"--dns-https-url", "https://8.8.8.8/dns-query",
 		"--dns-qtype", "ipv6",
 		"--tls-disorder=false",
-		"--tls-fake-count", "10",
+		"--tls-fake-preflight", "10",
 		"--tls-fake-packet", "0xff,0xff",
-		"--tls-split-mode", "sni",
-		"--tls-chunk-size", "10",
+		"--tls-split-mode", "chunk:10",
 		"--tls-skip=false",
-		"--udp-fake-count", "20",
+		"--udp-fake-preflight", "20",
 		"--udp-fake-packet", "0xcc,0xdd",
 	}
 
@@ -301,14 +297,14 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
 
 	// HTTPS
 	assert.False(t, capturedCfg.HTTPS.Disorder)
-	assert.Equal(t, uint8(10), capturedCfg.HTTPS.FakeCount)
+	assert.Equal(t, uint8(10), capturedCfg.HTTPS.FakePreflight)
 	assert.Equal(t, []byte{0xff, 0xff}, capturedCfg.HTTPS.FakePacket.Raw())
-	assert.Equal(t, HTTPSSplitModeSNI, capturedCfg.HTTPS.SplitMode)
+	assert.Equal(t, HTTPSSplitModeChunk, capturedCfg.HTTPS.SplitMode)
 	assert.Equal(t, uint8(10), capturedCfg.HTTPS.ChunkSize)
 	assert.False(t, capturedCfg.HTTPS.Skip)
 
 	// UDP
-	assert.Equal(t, uint8(20), capturedCfg.UDP.FakeCount)
+	assert.Equal(t, uint8(20), capturedCfg.UDP.FakePreflight)
 	assert.Equal(t, []byte{0xcc, 0xdd}, capturedCfg.UDP.FakePacket)
 	assert.Equal(t, []byte{0xcc, 0xdd}, capturedCfg.UDP.FakePacket)
 
@@ -329,13 +325,13 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
 func TestLoad_RuleInheritsFromCLIAndTOML(t *testing.T) {
 	tomlContent := `
 [tls]
-    split-mode = "chunk"
-    chunk-size = 20
+    split-mode = "chunk:20"
+    syn-ack-timeout = 50
 
 [[rules]]
     name = "partial-rule"
     match = { domains = ["example.com"] }
-    tls = { chunk-size = 50, skip = true }
+    tls = { split-mode = "chunk:50", skip = true }
 `
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "spoofdpi.toml")
@@ -354,7 +350,7 @@ func TestLoad_RuleInheritsFromCLIAndTOML(t *testing.T) {
 		"spoofdpi",
 		"--config", configPath,
 		// CLI sets a key the TOML and the rule both leave alone:
-		"--tls-fake-count", "10",
+		"--tls-fake-preflight", "10",
 	}
 	require.NoError(t, cmd.Run(context.Background(), args))
 	require.NotNil(t, capturedCfg)
@@ -363,16 +359,21 @@ func TestLoad_RuleInheritsFromCLIAndTOML(t *testing.T) {
 	rule := capturedCfg.Rules[0]
 
 	// Override-set wins
-	assert.Equal(t, uint8(50), rule.Config.HTTPS.ChunkSize, "rule overrides chunk-size")
+	assert.Equal(
+		t,
+		uint8(50),
+		rule.Config.HTTPS.ChunkSize,
+		"rule overrides the chunk size",
+	)
 	assert.True(t, rule.Config.HTTPS.Skip, "rule sets skip explicitly")
 
 	// TOML inherited (rule didn't set, CLI didn't touch)
-	assert.Equal(t, HTTPSSplitModeChunk, rule.Config.HTTPS.SplitMode,
-		"rule inherits split-mode from static TOML")
+	assert.Equal(t, 50*time.Millisecond, rule.Config.HTTPS.SynAckTimeout,
+		"rule inherits syn-ack-timeout from static TOML")
 
 	// CLI inherited (rule didn't set, TOML didn't set) — the key claim
-	assert.Equal(t, uint8(10), rule.Config.HTTPS.FakeCount,
-		"rule inherits fake-count from CLI override")
+	assert.Equal(t, uint8(10), rule.Config.HTTPS.FakePreflight,
+		"rule inherits fake-preflight from CLI override")
 
 	// Package default inherited (no one set it)
 	assert.False(t, rule.Config.HTTPS.Disorder,

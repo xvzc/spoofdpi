@@ -181,17 +181,16 @@ func TestHTTPSOptions_UnmarshalTOML(t *testing.T) {
 		{
 			name: "valid https options",
 			input: map[string]any{
-				"disorder":    true,
-				"fake-count":  int64(5),
-				"fake-packet": []any{int64(0x01), int64(0x02)},
-				"split-mode":  "chunk",
-				"chunk-size":  int64(20),
-				"skip":        true,
+				"disorder":       true,
+				"fake-preflight": int64(5),
+				"fake-packet":    []any{int64(0x01), int64(0x02)},
+				"split-mode":     "chunk:20",
+				"skip":           true,
 			},
 			wantErr: false,
 			assert: func(t *testing.T, o HTTPSOptions) {
 				assert.True(t, o.Disorder)
-				assert.Equal(t, uint8(5), o.FakeCount)
+				assert.Equal(t, uint8(5), o.FakePreflight)
 				assert.Equal(t, []byte{0x01, 0x02}, o.FakePacket.Raw())
 				assert.Equal(t, HTTPSSplitModeChunk, o.SplitMode)
 				assert.Equal(t, uint8(20), o.ChunkSize)
@@ -416,7 +415,7 @@ func TestHTTPSOptions_CustomSegmentPlans(t *testing.T) {
 	t.Run("valid custom config", func(t *testing.T) {
 		input := `
 split-mode = "custom"
-custom-segments = [
+custom-split = [
 	{ from = "head", at = 2 },
 	{ from = "sni", at = 0 }
 ]
@@ -425,9 +424,9 @@ custom-segments = [
 		err := toml.Unmarshal([]byte(input), &opts)
 		assert.NoError(t, err)
 		assert.Equal(t, HTTPSSplitModeCustom, opts.SplitMode)
-		assert.Len(t, opts.CustomSegmentPlans, 2)
-		assert.Equal(t, SegmentFromHead, opts.CustomSegmentPlans[0].From)
-		assert.Equal(t, 2, opts.CustomSegmentPlans[0].At)
+		assert.Len(t, opts.CustomSplit, 2)
+		assert.Equal(t, SegmentFromHead, opts.CustomSplit[0].From)
+		assert.Equal(t, 2, opts.CustomSplit[0].At)
 	})
 
 	t.Run("missing custom segments", func(t *testing.T) {
@@ -437,7 +436,7 @@ split-mode = "custom"
 		var opts HTTPSOptions
 		err := toml.Unmarshal([]byte(input), &opts)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "custom-segments must be provided")
+		assert.Contains(t, err.Error(), "custom-split must be provided")
 	})
 }
 
@@ -499,12 +498,12 @@ func TestDNSOptions_MarshalJSON_addrAsString(t *testing.T) {
 
 func TestHTTPSOptions_MarshalJSON_omitsFakePacketBytes(t *testing.T) {
 	o := HTTPSOptions{
-		Disorder:   false,
-		FakeCount:  2,
-		FakePacket: proto.NewFakeTLSMessage([]byte{0x01, 0x02, 0x03}),
-		SplitMode:  HTTPSSplitModeChunk,
-		ChunkSize:  8,
-		Skip:       false,
+		Disorder:      false,
+		FakePreflight: 2,
+		FakePacket:    proto.NewFakeTLSMessage([]byte{0x01, 0x02, 0x03}),
+		SplitMode:     HTTPSSplitModeChunk,
+		ChunkSize:     8,
+		Skip:          false,
 	}
 	b, err := json.Marshal(o)
 	assert.NoError(t, err)
@@ -524,14 +523,14 @@ func TestUDPOptions_UnmarshalTOML(t *testing.T) {
 		{
 			name: "valid udp options",
 			input: map[string]any{
-				"skip":        true,
-				"fake-count":  int64(3),
-				"fake-packet": []any{int64(0xAA), int64(0xBB)},
+				"skip":           true,
+				"fake-preflight": int64(3),
+				"fake-packet":    []any{int64(0xAA), int64(0xBB)},
 			},
 			wantErr: false,
 			assert: func(t *testing.T, o UDPOptions) {
 				assert.True(t, o.Skip)
-				assert.Equal(t, uint8(3), o.FakeCount)
+				assert.Equal(t, uint8(3), o.FakePreflight)
 				assert.Equal(t, []byte{0xAA, 0xBB}, o.FakePacket)
 			},
 		},
@@ -560,8 +559,8 @@ func TestUDPOptions_UnmarshalTOML(t *testing.T) {
 
 func TestUDPOptions_MarshalJSON_omitsFakePacketBytes(t *testing.T) {
 	o := UDPOptions{
-		FakeCount:  0,
-		FakePacket: make([]byte, 64),
+		FakePreflight: 0,
+		FakePacket:    make([]byte, 64),
 	}
 	b, err := json.Marshal(o)
 	assert.NoError(t, err)
@@ -642,7 +641,7 @@ func TestHTTPSOptions_MarshalJSON_customSegmentsAsCount(t *testing.T) {
 	o := HTTPSOptions{
 		SplitMode: HTTPSSplitModeCustom,
 		ChunkSize: 8,
-		CustomSegmentPlans: []SegmentPlan{
+		CustomSplit: []SegmentPlan{
 			{From: SegmentFromHead, At: 1},
 			{From: SegmentFromHead, At: 3},
 			{From: SegmentFromSNI, At: 4},
@@ -651,7 +650,7 @@ func TestHTTPSOptions_MarshalJSON_customSegmentsAsCount(t *testing.T) {
 	b, err := json.Marshal(o)
 	assert.NoError(t, err)
 	got := string(b)
-	assert.Contains(t, got, `"custom-segments":"3 items"`)
+	assert.Contains(t, got, `"custom-split":"3 items"`)
 	// Individual plan entries must NOT appear.
 	assert.NotContains(t, got, `"At":`)
 	assert.NotContains(t, got, `"From":`)

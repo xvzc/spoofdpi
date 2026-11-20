@@ -34,7 +34,7 @@ Both `domains` and `cidrs` accept items with a `file:` prefix. The path after th
 [[rules]]
 name = "streaming"
 match = { domains = ["file:assets/streaming-domains.txt", "*.youtube.com"] }
-tls = { fake-count = 5 }
+tls = { fake-preflight = 5 }
 ```
 
 **Path resolution**
@@ -79,10 +79,9 @@ Customize how TLS connections are established. The available fields mirror the g
 | Field         | Type   | Description                                           |
 | :------------ | :----- | :---------------------------------------------------- |
 | `disorder`    | Bool   | Send Client Hello packets out of order.               |
-| `fake-count`  | Int    | Number of fake packets to send.                       |
+| `fake-preflight` | Int | Number of fake packets to send before the Client Hello. |
 | `fake-packet` | Array  | List of bytes for the fake packet (e.g., `[0x16]`).   |
-| `split-mode`  | String | Split strategy: `"chunk"`, `"sni"`, `"random"`, etc.  |
-| `chunk-size`  | Int    | Size of chunks when `split-mode` is `"chunk"`.        |
+| `split-mode`  | String | Split strategy: `"sni"`, `"chunk:N"`, `"random"`, etc. |
 | `skip`        | Bool   | If `true`, bypasses DPI modifications (standard TLS). |
 
 ## Example
@@ -93,7 +92,7 @@ Customize how TLS connections are established. The available fields mirror the g
 name = "allow youtube"
 priority = 50
 match = { domains = ["*.youtube.com"] }
-tls = { disorder = true, fake-count = 7 }
+tls = { disorder = true, fake-preflight = 7 }
 
 # Example B: Bypass DPI for local network traffic (Standard Connection)
 [[rules]]

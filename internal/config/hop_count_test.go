@@ -88,7 +88,7 @@ connection = { default-fake-ttl = 20 }
 		assert.Contains(
 			t,
 			warns,
-			"'default-fake-ttl' is deprecated; rename to 'hop-count-default'",
+			"rule 0: 'default-fake-ttl' is deprecated; rename to 'hop-count-default'",
 		)
 	})
 

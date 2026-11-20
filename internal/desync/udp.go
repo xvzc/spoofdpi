@@ -28,7 +28,7 @@ func NewUDPDesyncer(
 // PrepareHopTrack registers addrs with the sniffer for hop-count learning,
 // guarded by the config so the LRU isn't touched when fakes won't be sent.
 func (d *UDPDesyncer) PrepareHopTrack(addrs []net.IP, cfg *config.UDPOptions) {
-	if d.sniffer == nil || cfg.FakeCount == 0 {
+	if d.sniffer == nil || cfg.FakePreflight == 0 {
 		return
 	}
 	d.sniffer.Register(addrs)
@@ -43,7 +43,7 @@ func (d *UDPDesyncer) Desync(
 ) (int, error) {
 	logger := logging.WithLocalScope(ctx, d.logger, "udp_desync")
 
-	if opts.FakeCount == 0 || d.sniffer == nil || d.writer == nil {
+	if opts.FakePreflight == 0 || d.sniffer == nil || d.writer == nil {
 		return 0, nil
 	}
 
@@ -56,7 +56,7 @@ func (d *UDPDesyncer) Desync(
 	oTTL := d.sniffer.GetOptimalTTL(key)
 
 	var totalSent int
-	for range opts.FakeCount {
+	for range opts.FakePreflight {
 		n, err := d.writer.WriteCraftedPacket(
 			ctx,
 			// Same 5-tuple as the real flow, so DPI tracks the fakes with it.
@@ -74,7 +74,7 @@ func (d *UDPDesyncer) Desync(
 
 	if totalSent > 0 {
 		logger.Debug().
-			Uint8("count", opts.FakeCount).
+			Uint8("count", opts.FakePreflight).
 			Int("bytes", totalSent).
 			Uint8("ttl", oTTL).
 			Msg("sent fake packets")

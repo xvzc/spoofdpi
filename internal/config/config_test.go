@@ -75,7 +75,7 @@ func TestConfig_NeedsPcapTCP(t *testing.T) {
 			name: "global https fake count > 0",
 			config: Config{
 				RuntimeConfig: RuntimeConfig{
-					HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+					HTTPS: HTTPSOptions{FakePreflight: uint8(1)},
 				},
 			},
 			expect: true,
@@ -86,7 +86,7 @@ func TestConfig_NeedsPcapTCP(t *testing.T) {
 				Rules: []Rule{
 					{
 						Config: RuntimeConfig{
-							HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+							HTTPS: HTTPSOptions{FakePreflight: uint8(1)},
 						},
 					},
 				},
@@ -97,7 +97,7 @@ func TestConfig_NeedsPcapTCP(t *testing.T) {
 			name: "udp fake count alone is not TCP",
 			config: Config{
 				RuntimeConfig: RuntimeConfig{
-					UDP: UDPOptions{FakeCount: uint8(1)},
+					UDP: UDPOptions{FakePreflight: uint8(1)},
 				},
 			},
 			expect: false,
@@ -125,7 +125,7 @@ func TestConfig_NeedsPcapUDP(t *testing.T) {
 			name: "global udp fake count > 0",
 			config: Config{
 				RuntimeConfig: RuntimeConfig{
-					UDP: UDPOptions{FakeCount: uint8(1)},
+					UDP: UDPOptions{FakePreflight: uint8(1)},
 				},
 			},
 			expect: true,
@@ -136,7 +136,7 @@ func TestConfig_NeedsPcapUDP(t *testing.T) {
 				Rules: []Rule{
 					{
 						Config: RuntimeConfig{
-							UDP: UDPOptions{FakeCount: uint8(1)},
+							UDP: UDPOptions{FakePreflight: uint8(1)},
 						},
 					},
 				},
@@ -147,7 +147,7 @@ func TestConfig_NeedsPcapUDP(t *testing.T) {
 			name: "https fake count alone is not UDP",
 			config: Config{
 				RuntimeConfig: RuntimeConfig{
-					HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+					HTTPS: HTTPSOptions{FakePreflight: uint8(1)},
 				},
 			},
 			expect: false,
@@ -183,7 +183,7 @@ func TestConfig_NeedsRoute(t *testing.T) {
 			config: Config{
 				App: AppOptions{Mode: AppModeHTTP},
 				RuntimeConfig: RuntimeConfig{
-					HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+					HTTPS: HTTPSOptions{FakePreflight: uint8(1)},
 				},
 			},
 			expect: true,
@@ -193,7 +193,7 @@ func TestConfig_NeedsRoute(t *testing.T) {
 			config: Config{
 				App: AppOptions{Mode: AppModeHTTP},
 				RuntimeConfig: RuntimeConfig{
-					UDP: UDPOptions{FakeCount: uint8(1)},
+					UDP: UDPOptions{FakePreflight: uint8(1)},
 				},
 			},
 			expect: true,
@@ -205,7 +205,7 @@ func TestConfig_NeedsRoute(t *testing.T) {
 				Rules: []Rule{
 					{
 						Config: RuntimeConfig{
-							HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+							HTTPS: HTTPSOptions{FakePreflight: uint8(1)},
 						},
 					},
 				},
@@ -224,7 +224,7 @@ func TestConfig_NeedsRoute(t *testing.T) {
 			config: Config{
 				App: AppOptions{Mode: AppModeSOCKS5},
 				RuntimeConfig: RuntimeConfig{
-					HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+					HTTPS: HTTPSOptions{FakePreflight: uint8(1)},
 				},
 			},
 			expect: true,
@@ -234,7 +234,7 @@ func TestConfig_NeedsRoute(t *testing.T) {
 			config: Config{
 				App: AppOptions{Mode: AppModeSOCKS5},
 				RuntimeConfig: RuntimeConfig{
-					UDP: UDPOptions{FakeCount: uint8(1)},
+					UDP: UDPOptions{FakePreflight: uint8(1)},
 				},
 			},
 			expect: true,
@@ -246,7 +246,7 @@ func TestConfig_NeedsRoute(t *testing.T) {
 				Rules: []Rule{
 					{
 						Config: RuntimeConfig{
-							HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+							HTTPS: HTTPSOptions{FakePreflight: uint8(1)},
 						},
 					},
 				},
@@ -265,7 +265,7 @@ func TestConfig_NeedsRoute(t *testing.T) {
 			config: Config{
 				App: AppOptions{Mode: AppModeTUN},
 				RuntimeConfig: RuntimeConfig{
-					HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+					HTTPS: HTTPSOptions{FakePreflight: uint8(1)},
 				},
 			},
 			expect: true,
@@ -275,7 +275,7 @@ func TestConfig_NeedsRoute(t *testing.T) {
 			config: Config{
 				App: AppOptions{Mode: AppModeTUN},
 				RuntimeConfig: RuntimeConfig{
-					UDP: UDPOptions{FakeCount: uint8(1)},
+					UDP: UDPOptions{FakePreflight: uint8(1)},
 				},
 			},
 			expect: true,
@@ -287,7 +287,7 @@ func TestConfig_NeedsRoute(t *testing.T) {
 				Rules: []Rule{
 					{
 						Config: RuntimeConfig{
-							HTTPS: HTTPSOptions{FakeCount: uint8(1)},
+							HTTPS: HTTPSOptions{FakePreflight: uint8(1)},
 						},
 					},
 				},
@@ -331,7 +331,7 @@ func TestConfig_Validate_acceptsValidRule(t *testing.T) {
 
 func TestResolveRules_inheritsFromBase(t *testing.T) {
 	base := DefaultConfig().RuntimeConfig
-	base.HTTPS.FakeCount = 5
+	base.HTTPS.FakePreflight = 5
 	base.HTTPS.SplitMode = HTTPSSplitModeChunk
 	base.HTTPS.ChunkSize = 99
 
@@ -342,9 +342,9 @@ func TestResolveRules_inheritsFromBase(t *testing.T) {
 				"domains": []any{"example.com"},
 			},
 			"tls": map[string]any{
-				// Only override fake-count; other TLS fields should
+				// Only override fake-preflight; other TLS fields should
 				// inherit from the base RuntimeConfig (eager-resolve at load).
-				"fake-count": int64(2),
+				"fake-preflight": int64(2),
 			},
 		},
 	}
@@ -354,7 +354,12 @@ func TestResolveRules_inheritsFromBase(t *testing.T) {
 	require.Len(t, rules, 1)
 	rule := rules[0]
 	assert.Equal(t, "rule1", rule.Name)
-	assert.Equal(t, uint8(2), rule.Config.HTTPS.FakeCount, "rule overrides fake-count")
+	assert.Equal(
+		t,
+		uint8(2),
+		rule.Config.HTTPS.FakePreflight,
+		"rule overrides fake-preflight",
+	)
 	assert.Equal(
 		t, HTTPSSplitModeChunk, rule.Config.HTTPS.SplitMode,
 		"rule inherits split-mode from base",
@@ -383,7 +388,7 @@ func TestResolveRules_skipNotInheritedFromBase(t *testing.T) {
 		{
 			name:      "base true, rule omits skip → false",
 			baseSkip:  true,
-			ruleHTTPS: map[string]any{"chunk-size": int64(8)},
+			ruleHTTPS: map[string]any{"disorder": true},
 			wantSkip:  false,
 		},
 		{
@@ -407,7 +412,7 @@ func TestResolveRules_skipNotInheritedFromBase(t *testing.T) {
 		{
 			name:      "base false, rule omits skip → false",
 			baseSkip:  false,
-			ruleHTTPS: map[string]any{"chunk-size": int64(8)},
+			ruleHTTPS: map[string]any{"disorder": true},
 			wantSkip:  false,
 		},
 		{

@@ -17,49 +17,26 @@ Specifies the default packet fragmentation strategy to use for the Client Hello 
 
 - `sni`: Splits the packet right after the SNI extension.
 - `random`: Splits the packet at a random position.
-- `chunk`: Splits the packet into fixed-size chunks (controlled by `tls-chunk-size`).
+- `chunk` or `chunk:N`: Splits the packet into chunks of N bytes (1 to 255). `chunk` alone always uses 35. Try lower values if the default fails to bypass the DPI, but a very small size splits the Client Hello into hundreds of packets, which costs performance (more so with [`fake-stutter`](#fake-stutter)).
 - `first-byte`: Splits only the first byte of the packet.
-- `custom`: Uses custom segment plans (TOML only).
+- `custom`: Splits at the positions in [`custom-split`](#custom-split) (TOML only).
 - `none`: Disables fragmentation.
 
 ### Usage
 
 **Command-Line Flag**
 ```console
-$ spoofdpi --tls-split-mode sni
+$ spoofdpi --tls-split-mode chunk:10
 ```
 
 **TOML Config**
 ```toml
 [tls]
-split-mode = "sni"
+split-mode = "chunk:10"
 ```
 
----
-
-## `chunk-size`
-
-`type: uint8`
-
-### Description
-
-Specifies the chunk size in bytes for packet fragmentation. `(default: 35, max: 255)`
-
-This value is only applied when `tls-split-mode` is set to `chunk`.
-Try lower values if the default fails to bypass the DPI.
-
-### Usage
-
-**Command-Line Flag**
-```console
-$ spoofdpi --tls-chunk-size 1
-```
-
-**TOML Config**
-```toml
-[tls]
-chunk-size = 1
-```
+!!! note
+    The chunk size was previously set with `chunk-size` (`--https-chunk-size`). It is no longer supported: spoofdpi ignores it and prints a warning. Use `split-mode = "chunk:N"` instead.
 
 ---
 
@@ -91,7 +68,7 @@ disorder = true
 
 ---
 
-## `fake-count`
+## `fake-preflight`
 
 `type: uint8`
 
@@ -99,10 +76,13 @@ disorder = true
 
 Specifies the number of fake packets to be sent before the actual Client Hello. `(default: 0)`
 
-Sending fake packets can trick DPI systems into inspecting invalid traffic, allowing the real Client Hello to pass through.
-If `tls-chunk-size` is greater than 0, each fake packet will also be fragmented.
+!!! note
+    This option was previously named `fake-count` (`--tls-fake-count`). The old name still works but prints a deprecation warning. If both are set in the TOML config, `fake-count` is ignored.
 
-Fake packets are not sent to a server found to be on the local link (0 hops away), since no TTL can stop them before such a server. To turn fake packets off for other servers, such as those on a LAN or a corporate network, use a [rule](rules.md), for example `tls = { fake-count = 0 }` for their CIDRs.
+Sending fake packets can trick DPI systems into inspecting invalid traffic, allowing the real Client Hello to pass through.
+Each fake packet is split the same way as the real Client Hello.
+
+Fake packets are not sent to a server found to be on the local link (0 hops away), since no TTL can stop them before such a server. To turn fake packets off for other servers, such as those on a LAN or a corporate network, use a [rule](rules.md), for example `tls = { fake-preflight = 0 }` for their CIDRs.
 
 By default, fake packets carry the connection's real TCP sequence and acknowledgment numbers, learned from the server's SYN/ACK, so they overlap the real Client Hello. See [`fake-seq`](#fake-seq), [`fake-ack`](#fake-ack) and [`syn-ack-timeout`](#syn-ack-timeout) to change this.
 
@@ -113,13 +93,13 @@ By default, fake packets carry the connection's real TCP sequence and acknowledg
 
 **Command-Line Flag**
 ```console
-$ spoofdpi --tls-fake-count 7
+$ spoofdpi --tls-fake-preflight 7
 ```
 
 **TOML Config**
 ```toml
 [tls]
-fake-count = 7
+fake-preflight = 7
 ```
 
 ---
@@ -130,7 +110,7 @@ fake-count = 7
 
 ### Description
 
-Customizes the content of the fake packets used by `tls-fake-count`. `(default: built-in fake packet)`
+Customizes the content of the fake packets used by `tls-fake-preflight`. `(default: built-in fake packet)`
 
 The value should be a sequence of bytes representing a valid (or semi-valid) TLS Client Hello or other protocol data.
 
@@ -176,13 +156,13 @@ If the real number cannot be learned (see [`syn-ack-timeout`](#syn-ack-timeout))
 
 **Command-Line Flag**
 ```console
-$ spoofdpi --tls-fake-count 2 --tls-fake-seq offset:-10000
+$ spoofdpi --tls-fake-preflight 2 --tls-fake-seq offset:-10000
 ```
 
 **TOML Config**
 ```toml
 [tls]
-fake-count = 2
+fake-preflight = 2
 fake-seq = "offset:-10000"
 ```
 
@@ -209,13 +189,13 @@ Some DPI ignores fakes that acknowledge data the server has not sent, so the rec
 
 **Command-Line Flag**
 ```console
-$ spoofdpi --tls-fake-count 2 --tls-fake-ack offset:-1073741824
+$ spoofdpi --tls-fake-preflight 2 --tls-fake-ack offset:-1073741824
 ```
 
 **TOML Config**
 ```toml
 [tls]
-fake-count = 2
+fake-preflight = 2
 fake-ack = "offset:-1073741824"
 ```
 
@@ -276,13 +256,16 @@ skip = true
 
 ---
 
-## `custom-segments`
+## `custom-split`
 
 `type: array of segment plans`
 
 ### Description
 
-Defines custom segmentation plans for fine-grained control over how the Client Hello packet is split. This option is only used when `split-mode` is set to `"custom"`.
+Defines the positions at which the Client Hello packet is split, for fine-grained control. This option is only used when `split-mode` is set to `"custom"`.
+
+!!! note
+    This option was previously named `custom-segments`. The old name still works but prints a deprecation warning. If both are set, `custom-segments` is ignored.
 
 Each segment plan specifies where to split the packet relative to a reference point (`from`) with an offset (`at`).
 
@@ -308,7 +291,7 @@ Each segment plan specifies where to split the packet relative to a reference po
 ```toml
 [tls]
 split-mode = "custom"
-custom-segments = [
+custom-split = [
     { from = "head", at = 2 },                    # Split 2 bytes from start
     { from = "sni", at = 0 },                     # Split at SNI start
     { from = "sni", at = -5, lazy = true },       # Split 5 bytes before SNI, delayed

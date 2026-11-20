@@ -151,18 +151,9 @@ func (o *ConnOptions) UnmarshalTOML(data any) (err error) {
 	// TODO(deprecated): renamed to hop-count-default after v1.6.0. Remove
 	// with the --default-fake-ttl flag (cli.go) and the note in
 	// docs/user-guide/connection.md.
-	key := "hop-count-default"
-	if _, ok := v["default-fake-ttl"]; ok {
-		if _, both := v[key]; both {
-			AddWarnMsg("'default-fake-ttl' is ignored because 'hop-count-default' is set")
-		} else {
-			AddWarnMsg("'default-fake-ttl' is deprecated; rename to 'hop-count-default'")
-			key = "default-fake-ttl"
-		}
-	}
 	if p := findFrom(
 		v,
-		key,
+		renamedKey(v, "hop-count-default", "default-fake-ttl"),
 		parseIntFn[uint8](checkUint8NonZero),
 		&err,
 	); isOk(
@@ -492,28 +483,43 @@ func (m SeqMode) String() string {
 	return fmt.Sprintf("offset:%d", m.Offset)
 }
 
+// renamedKey returns the key to read for an option whose old name was
+// old: key, unless only the old name is set. Using the old name warns;
+// with both set, the old one is ignored with a warning.
+func renamedKey(m map[string]any, key, old string) string {
+	if _, ok := m[old]; !ok {
+		return key
+	}
+	if _, both := m[key]; both {
+		AddWarnMsg(fmt.Sprintf("'%s' is ignored because '%s' is set", old, key))
+		return key
+	}
+	AddWarnMsg(fmt.Sprintf("'%s' is deprecated; rename to '%s'", old, key))
+	return old
+}
+
 type HTTPSOptions struct {
-	Disorder           bool               `toml:"disorder"`
-	FakeCount          uint8              `toml:"fake-count"`
-	FakePacket         *proto.TLSMessage  `toml:"fake-packet"`
-	FakeSeq            SeqMode            `toml:"fake-seq"`
-	FakeAck            SeqMode            `toml:"fake-ack"`
-	SynAckTimeout      time.Duration      `toml:"syn-ack-timeout"`
-	SplitMode          HTTPSSplitModeType `toml:"split-mode"`
-	ChunkSize          uint8              `toml:"chunk-size"`
-	Skip               bool               `toml:"skip"`
-	CustomSegmentPlans []SegmentPlan      `toml:"custom-segments"`
+	Disorder      bool               `toml:"disorder"`
+	FakePreflight uint8              `toml:"fake-preflight"`
+	FakePacket    *proto.TLSMessage  `toml:"fake-packet"`
+	FakeSeq       SeqMode            `toml:"fake-seq"`
+	FakeAck       SeqMode            `toml:"fake-ack"`
+	SynAckTimeout time.Duration      `toml:"syn-ack-timeout"`
+	SplitMode     HTTPSSplitModeType `toml:"split-mode"`
+	ChunkSize     uint8              `toml:"-"`
+	Skip          bool               `toml:"skip"`
+	CustomSplit   []SegmentPlan      `toml:"custom-split"`
 }
 
 // MarshalJSON omits FakePacket (a 64-byte buffer that's noise in trace
 // logs), surfaces fake-packet length separately, and renders
-// CustomSegmentPlans as a compact "N items" count for the same reason
+// CustomSplit as a compact "N items" count for the same reason
 // MatchAttrs does — segment plans are static config the user defined,
 // not something to re-dump on every match trace.
 func (o HTTPSOptions) MarshalJSON() ([]byte, error) {
 	out := struct {
 		Disorder       bool               `json:"disorder"`
-		FakeCount      uint8              `json:"fake-count"`
+		FakePreflight  uint8              `json:"fake-preflight"`
 		FakePacketLen  int                `json:"fake-packet-len,omitempty"`
 		FakeSeq        string             `json:"fake-seq"`
 		FakeAck        string             `json:"fake-ack"`
@@ -521,10 +527,10 @@ func (o HTTPSOptions) MarshalJSON() ([]byte, error) {
 		SplitMode      HTTPSSplitModeType `json:"split-mode"`
 		ChunkSize      uint8              `json:"chunk-size"`
 		Skip           bool               `json:"skip"`
-		CustomSegments string             `json:"custom-segments,omitempty"`
+		CustomSegments string             `json:"custom-split,omitempty"`
 	}{
 		Disorder:      o.Disorder,
-		FakeCount:     o.FakeCount,
+		FakePreflight: o.FakePreflight,
 		FakePacketLen: fakePacketLen(o.FakePacket),
 		FakeSeq:       o.FakeSeq.String(),
 		FakeAck:       o.FakeAck.String(),
@@ -533,7 +539,7 @@ func (o HTTPSOptions) MarshalJSON() ([]byte, error) {
 		ChunkSize:     o.ChunkSize,
 		Skip:          o.Skip,
 	}
-	if n := len(o.CustomSegmentPlans); n > 0 {
+	if n := len(o.CustomSplit); n > 0 {
 		out.CustomSegments = fmt.Sprintf("%d items", n)
 	}
 	return json.Marshal(out)
@@ -555,8 +561,16 @@ func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
 	if p := findFrom(m, "disorder", parseBoolFn(), &err); isOk(p, err) {
 		o.Disorder = *p
 	}
-	if p := findFrom(m, "fake-count", parseIntFn[uint8](checkUint8), &err); isOk(p, err) {
-		o.FakeCount = *p
+	// TODO(deprecated): fake-count was renamed to fake-preflight after
+	// v1.6.0; remove the fallback with --tls-fake-count and
+	// --https-fake-count (cli.go) and the note in docs/user-guide/tls.md.
+	if p := findFrom(
+		m,
+		renamedKey(m, "fake-preflight", "fake-count"),
+		parseIntFn[uint8](checkUint8),
+		&err,
+	); isOk(p, err) {
+		o.FakePreflight = *p
 	}
 
 	if fakePacket := findSliceFrom(
@@ -583,6 +597,15 @@ func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
 		o.SynAckTimeout = time.Duration(*p) * time.Millisecond
 	}
 
+	// TODO(deprecated): chunk-size was folded into split-mode ("chunk:N")
+	// after v1.6.0 and is only warned about; remove the warning with
+	// --https-chunk-size (cli.go) and the note in docs/user-guide/tls.md.
+	if _, ok := m["chunk-size"]; ok {
+		AddWarnMsg(
+			"'chunk-size' is no longer supported and is ignored; " +
+				"use 'split-mode = \"chunk:N\"'",
+		)
+	}
 	if p := findFrom(
 		m,
 		"split-mode",
@@ -592,34 +615,28 @@ func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
 		p,
 		err,
 	) {
-		o.SplitMode = mustParseHTTPSSplitModeType(*p)
-	}
-
-	if p := findFrom(
-		m,
-		"chunk-size",
-		parseIntFn[uint8](checkUint8NonZero),
-		&err,
-	); isOk(
-		p,
-		err,
-	) {
-		o.ChunkSize = *p
+		mode, size := mustParseSplitMode(*p)
+		o.SplitMode = mode
+		if size > 0 {
+			o.ChunkSize = size
+		}
 	}
 	if p := findFrom(m, "skip", parseBoolFn(), &err); isOk(p, err) {
 		o.Skip = *p
 	}
 
+	// TODO(deprecated): custom-segments was renamed to custom-split after
+	// v1.6.0; remove the fallback and the note in docs/user-guide/tls.md.
 	if plans := findStructSliceFrom[SegmentPlan](
 		m,
-		"custom-segments",
+		renamedKey(m, "custom-split", "custom-segments"),
 		&err,
 	); plans != nil {
-		o.CustomSegmentPlans = plans
+		o.CustomSplit = plans
 	}
 	if err == nil && o.SplitMode == HTTPSSplitModeCustom &&
-		len(o.CustomSegmentPlans) == 0 {
-		err = fmt.Errorf("custom-segments must be provided when split-mode is 'custom'")
+		len(o.CustomSplit) == 0 {
+		err = fmt.Errorf("custom-split must be provided when split-mode is 'custom'")
 	}
 
 	return err
@@ -630,9 +647,9 @@ func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
 // └─────────────┘
 
 type UDPOptions struct {
-	Skip       bool   `toml:"skip"`
-	FakeCount  uint8  `toml:"fake-count"`
-	FakePacket []byte `toml:"fake-packet"`
+	Skip          bool   `toml:"skip"`
+	FakePreflight uint8  `toml:"fake-preflight"`
+	FakePacket    []byte `toml:"fake-packet"`
 }
 
 // MarshalJSON omits the raw FakePacket bytes (default is 64 zeros,
@@ -641,11 +658,11 @@ type UDPOptions struct {
 func (o UDPOptions) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Skip          bool  `json:"skip"`
-		FakeCount     uint8 `json:"fake-count"`
+		FakePreflight uint8 `json:"fake-preflight"`
 		FakePacketLen int   `json:"fake-packet-len,omitempty"`
 	}{
 		Skip:          o.Skip,
-		FakeCount:     o.FakeCount,
+		FakePreflight: o.FakePreflight,
 		FakePacketLen: len(o.FakePacket),
 	})
 }
@@ -659,8 +676,16 @@ func (o *UDPOptions) UnmarshalTOML(data any) (err error) {
 	if p := findFrom(m, "skip", parseBoolFn(), &err); isOk(p, err) {
 		o.Skip = *p
 	}
-	if p := findFrom(m, "fake-count", parseIntFn[uint8](checkUint8), &err); isOk(p, err) {
-		o.FakeCount = *p
+	// TODO(deprecated): fake-count was renamed to fake-preflight after
+	// v1.6.0; remove the fallback with --udp-fake-count (cli.go) and the
+	// note in docs/user-guide/udp.md.
+	if p := findFrom(
+		m,
+		renamedKey(m, "fake-preflight", "fake-count"),
+		parseIntFn[uint8](checkUint8),
+		&err,
+	); isOk(p, err) {
+		o.FakePreflight = *p
 	}
 	if fp := findSliceFrom(m, "fake-packet", parseByteFn(nil), &err); fp != nil {
 		o.FakePacket = fp

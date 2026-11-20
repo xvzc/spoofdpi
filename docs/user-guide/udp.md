@@ -25,13 +25,16 @@ skip = true
 
 ---
 
-## `fake-count`
+## `fake-preflight`
 
 `type: int`
 
 ### Description
 
 Specifies the number of fake packets to be sent before actual UDP packets. `(default: 0)`
+
+!!! note
+    This option was previously named `fake-count` (`--udp-fake-count`). The old name still works but prints a deprecation warning. If both are set in the TOML config, `fake-count` is ignored.
 
 Sending fake packets can trick DPI systems into inspecting invalid traffic, allowing real packets to pass through.
 
@@ -46,13 +49,13 @@ Fake packets share the flow of the real datagrams and rely on their TTL to expir
 
 **Command-Line Flag**
 ```console
-$ spoofdpi --udp-fake-count 5
+$ spoofdpi --udp-fake-preflight 5
 ```
 
 **TOML Config**
 ```toml
 [udp]
-fake-count = 5
+fake-preflight = 5
 ```
 
 ---
@@ -63,7 +66,7 @@ fake-count = 5
 
 ### Description
 
-Customizes the content of the fake packets used by `udp-fake-count`. `(default: 64 bytes of zeros)`
+Customizes the content of the fake packets used by `udp-fake-preflight`. `(default: 64 bytes of zeros)`
 
 The value should be a sequence of bytes representing the fake packet data.
 

@@ -22,6 +22,11 @@ func isOk[T any](p *T, err error) bool {
 	return true
 }
 
+func checkHTTPSSplitMode(v string) error {
+	_, _, err := parseSplitMode(v)
+	return err
+}
+
 func checkSeqMode(v string) error {
 	_, err := parseSeqMode(v)
 	return err
@@ -53,17 +58,16 @@ func int64Range(mini, maxi int64) func(int64) error {
 }
 
 var (
-	checkUint8          = int64Range(0, math.MaxUint8)
-	checkInt8           = int64Range(math.MinInt8, math.MaxInt8)
-	checkUint16         = int64Range(0, math.MaxUint16)
-	checkUint8NonZero   = int64Range(1, math.MaxUint8)
-	checkAppMode        = checkOneOf(availableAppModeValues...)
-	checkDNSMode        = checkOneOf(availableDNSModeValues...)
-	checkDNSQueryType   = checkOneOf(availableDNSQueryValues...)
-	checkHTTPSSplitMode = checkOneOf(availableHTTPSModeValues...)
-	checkLogLevel       = checkOneOf(availableLogLevelValues...)
-	checkSegmentFrom    = checkOneOf(availableSegmentFromValues...)
-	checkFreeBSDFibID   = int64Range(1, 15)
+	checkUint8        = int64Range(0, math.MaxUint8)
+	checkInt8         = int64Range(math.MinInt8, math.MaxInt8)
+	checkUint16       = int64Range(0, math.MaxUint16)
+	checkUint8NonZero = int64Range(1, math.MaxUint8)
+	checkAppMode      = checkOneOf(availableAppModeValues...)
+	checkDNSMode      = checkOneOf(availableDNSModeValues...)
+	checkDNSQueryType = checkOneOf(availableDNSQueryValues...)
+	checkLogLevel     = checkOneOf(availableLogLevelValues...)
+	checkSegmentFrom  = checkOneOf(availableSegmentFromValues...)
+	checkFreeBSDFibID = int64Range(1, 15)
 )
 
 func checkDomainPattern(v string) error {
@@ -206,7 +210,7 @@ func (c *Config) Validate() error {
 // it.
 func warnFakeSeqOverlap(scope string, o HTTPSOptions) {
 	n := fakePacketLen(o.FakePacket)
-	if o.FakeCount == 0 || o.FakeSeq.Random || o.FakeSeq.Offset >= 0 ||
+	if o.FakePreflight == 0 || o.FakeSeq.Random || o.FakeSeq.Offset >= 0 ||
 		-o.FakeSeq.Offset >= int64(n) {
 		return
 	}

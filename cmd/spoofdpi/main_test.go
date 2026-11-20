@@ -33,14 +33,14 @@ func TestCreateProxy_NoPcap(t *testing.T) {
 		UDPIdleTimeout:  time.Duration(0),
 	}
 
-	// HTTPS Config (Ensure FakeCount is 0 to disable PCAP)
+	// HTTPS Config (Ensure FakePreflight is 0 to disable PCAP)
 	cfg.HTTPS = config.HTTPSOptions{
-		Disorder:   false,
-		FakeCount:  uint8(0),
-		FakePacket: proto.NewFakeTLSMessage([]byte{}),
-		SplitMode:  config.HTTPSSplitModeChunk,
-		ChunkSize:  uint8(10),
-		Skip:       false,
+		Disorder:      false,
+		FakePreflight: uint8(0),
+		FakePacket:    proto.NewFakeTLSMessage([]byte{}),
+		SplitMode:     config.HTTPSSplitModeChunk,
+		ChunkSize:     uint8(10),
+		Skip:          false,
 	}
 
 	// Rules
@@ -80,7 +80,7 @@ func TestCreateProxy_WithRules(t *testing.T) {
 
 	// HTTPS Config
 	cfg.HTTPS = config.HTTPSOptions{
-		FakeCount: uint8(0),
+		FakePreflight: uint8(0),
 	}
 
 	// One rule

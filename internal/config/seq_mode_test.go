@@ -120,22 +120,22 @@ func TestFakeSeqOverlapWarning(t *testing.T) {
 	}{
 		{
 			"small negative offset",
-			"[tls]\nfake-count = 1\nfake-seq = \"offset:-10\"\n",
+			"[tls]\nfake-preflight = 1\nfake-seq = \"offset:-10\"\n",
 			true,
 		},
 		{
 			"large negative offset",
-			"[tls]\nfake-count = 1\nfake-seq = \"offset:-10000\"\n",
+			"[tls]\nfake-preflight = 1\nfake-seq = \"offset:-10000\"\n",
 			false,
 		},
-		{"positive offset", "[tls]\nfake-count = 1\nfake-seq = \"offset:10\"\n", false},
-		{"rand", "[tls]\nfake-count = 1\nfake-seq = \"rand\"\n", false},
+		{"positive offset", "[tls]\nfake-preflight = 1\nfake-seq = \"offset:10\"\n", false},
+		{"rand", "[tls]\nfake-preflight = 1\nfake-seq = \"rand\"\n", false},
 		{"no fakes", "[tls]\nfake-seq = \"offset:-10\"\n", false},
 		{"rule with small offset", `
 [[rules]]
 name = "r"
 match = { domains = ["example.com"] }
-tls = { fake-count = 1, fake-seq = "offset:-10" }
+tls = { fake-preflight = 1, fake-seq = "offset:-10" }
 `, true},
 	}
 

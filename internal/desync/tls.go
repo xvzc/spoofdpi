@@ -44,7 +44,7 @@ func NewTLSDesyncer(
 // PrepareHopTrack registers addrs with the sniffer for hop-count learning,
 // guarded by the config so the LRU isn't touched when fakes won't be sent.
 func (d *TLSDesyncer) PrepareHopTrack(addrs []net.IP, cfg *config.HTTPSOptions) {
-	if d.sniffer == nil || cfg.Skip || cfg.FakeCount == 0 {
+	if d.sniffer == nil || cfg.Skip || cfg.FakePreflight == 0 {
 		return
 	}
 	d.sniffer.Register(addrs)
@@ -66,7 +66,7 @@ func (d *TLSDesyncer) Desync(
 	// seq tracks the connection's next sequence number while segments are
 	// sent. It is nil when fake packets are not sent.
 	var seq *packet.SeqAck
-	if httpsOpts.FakeCount > 0 && d.sniffer != nil && d.writer != nil {
+	if httpsOpts.FakePreflight > 0 && d.sniffer != nil && d.writer != nil {
 		// Wait for the SYN/ACK first: the sniffer learns the hop count from
 		// it too, so the TTL read after it is fresher.
 		real := d.learnSeqAck(ctx, logger, conn, httpsOpts)
@@ -237,7 +237,7 @@ func split(
 	case config.HTTPSSplitModeFirstByte:
 		segments, err = splitFirstByte(raw, opts.Disorder)
 	case config.HTTPSSplitModeCustom:
-		segments, err = applySegmentPlans(msg, opts.CustomSegmentPlans)
+		segments, err = applySegmentPlans(msg, opts.CustomSplit)
 	case config.HTTPSSplitModeNone:
 		segments = []Segment{{Packet: raw}}
 	default:
@@ -390,7 +390,7 @@ func (d *TLSDesyncer) sendFakePackets(
 	var totalSent int
 	segments := split(logger, opts.FakePacket, opts)
 
-	for range opts.FakeCount {
+	for range opts.FakePreflight {
 		// Every copy starts at fake, so with the default offset of 0 it
 		// overlaps the real Client Hello. Fakes do not consume the
 		// connection's sequence space.

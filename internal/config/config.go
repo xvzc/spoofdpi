@@ -75,11 +75,11 @@ func (c *Config) UnmarshalTOML(data any) (err error) {
 // either in the base config or in any rule. The TCP raw packet IO
 // (sniffer + writer) is only set up when this returns true.
 func (c *Config) NeedsPcapTCP() bool {
-	if c.HTTPS.FakeCount > 0 {
+	if c.HTTPS.FakePreflight > 0 {
 		return true
 	}
 	for _, r := range c.Rules {
-		if r.Config.HTTPS.FakeCount > 0 {
+		if r.Config.HTTPS.FakePreflight > 0 {
 			return true
 		}
 	}
@@ -88,11 +88,11 @@ func (c *Config) NeedsPcapTCP() bool {
 
 // NeedsPcapUDP is the UDP counterpart of NeedsPcapTCP.
 func (c *Config) NeedsPcapUDP() bool {
-	if c.UDP.FakeCount > 0 {
+	if c.UDP.FakePreflight > 0 {
 		return true
 	}
 	for _, r := range c.Rules {
-		if r.Config.UDP.FakeCount > 0 {
+		if r.Config.UDP.FakePreflight > 0 {
 			return true
 		}
 	}

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -122,6 +123,39 @@ func MustParseDNSQueryType(s string) DNSQueryType {
 	default:
 		panic(fmt.Sprintf("cannot parse %q to DNSQueryType", s))
 	}
+}
+
+// DefaultChunkSize is the chunk size of split-mode "chunk" without a size.
+const DefaultChunkSize uint8 = 35
+
+// parseSplitMode parses a split-mode value: one of the modes, or
+// "chunk:N" for chunks of N bytes (1-255). Bare "chunk" means chunks of
+// DefaultChunkSize bytes. size is 0 for modes other than chunk.
+func parseSplitMode(s string) (mode HTTPSSplitModeType, size uint8, err error) {
+	if s == "chunk" {
+		return HTTPSSplitModeChunk, DefaultChunkSize, nil
+	}
+	if n, ok := strings.CutPrefix(s, "chunk:"); ok {
+		v, perr := strconv.ParseInt(n, 10, 64)
+		if perr != nil || v < 1 || v > math.MaxUint8 {
+			return 0, 0, fmt.Errorf(
+				"value '%s' has an invalid chunk size (allowed: 1-%d)", s, math.MaxUint8,
+			)
+		}
+		return HTTPSSplitModeChunk, uint8(v), nil
+	}
+	if err := checkOneOf(availableHTTPSModeValues...)(s); err != nil {
+		return 0, 0, err
+	}
+	return mustParseHTTPSSplitModeType(s), 0, nil
+}
+
+func mustParseSplitMode(s string) (HTTPSSplitModeType, uint8) {
+	mode, size, err := parseSplitMode(s)
+	if err != nil {
+		panic(err)
+	}
+	return mode, size
 }
 
 func mustParseHTTPSSplitModeType(s string) HTTPSSplitModeType {

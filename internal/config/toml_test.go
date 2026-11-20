@@ -435,10 +435,9 @@ func TestFromTomlFile(t *testing.T) {
 
 			[tls]
 				disorder = true
-				fake-count = 5
+				fake-preflight = 5
 				fake-packet = [0x01, 0x02, 0x03]
-				split-mode = "chunk"
-				chunk-size = 20
+				split-mode = "chunk:20"
 				skip = true
 
 			[[rules]]
@@ -459,10 +458,9 @@ func TestFromTomlFile(t *testing.T) {
 				}
 				tls = {
 					disorder = false,
-					fake-count = 2,
+					fake-preflight = 2,
 					fake-packet = [0xAA, 0xBB],
-					split-mode = "sni",
-					chunk-size = 10,
+					split-mode = "chunk:10",
 					skip = true,
 				}
 		`
@@ -504,7 +502,7 @@ func TestFromTomlFile(t *testing.T) {
 		assert.Equal(t, DNSQueryIPv4, cfg.DNS.QType)
 		assert.Equal(t, uint8(100), cfg.Conn.HopCountDefault)
 		assert.True(t, cfg.HTTPS.Disorder)
-		assert.Equal(t, uint8(5), cfg.HTTPS.FakeCount)
+		assert.Equal(t, uint8(5), cfg.HTTPS.FakePreflight)
 		assert.Equal(t, []byte{0x01, 0x02, 0x03}, cfg.HTTPS.FakePacket.Raw())
 		assert.Equal(t, HTTPSSplitModeChunk, cfg.HTTPS.SplitMode)
 		assert.Equal(t, uint8(20), cfg.HTTPS.ChunkSize)
@@ -531,9 +529,9 @@ func TestFromTomlFile(t *testing.T) {
 		assert.False(t, rule.Config.DNS.Cache)
 
 		assert.False(t, rule.Config.HTTPS.Disorder)
-		assert.Equal(t, uint8(2), rule.Config.HTTPS.FakeCount)
+		assert.Equal(t, uint8(2), rule.Config.HTTPS.FakePreflight)
 		assert.Equal(t, []byte{0xAA, 0xBB}, rule.Config.HTTPS.FakePacket.Raw())
-		assert.Equal(t, HTTPSSplitModeSNI, rule.Config.HTTPS.SplitMode)
+		assert.Equal(t, HTTPSSplitModeChunk, rule.Config.HTTPS.SplitMode)
 		assert.Equal(t, uint8(10), rule.Config.HTTPS.ChunkSize)
 		assert.True(t, rule.Config.HTTPS.Skip)
 	})

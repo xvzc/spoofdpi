@@ -151,7 +151,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 		Msg(" split")
 
 	logger.Info().
-		Uint8("count", uint8(cfg.HTTPS.FakeCount)).
+		Uint8("preflight", uint8(cfg.HTTPS.FakePreflight)).
 		Str("seq", cfg.HTTPS.FakeSeq.String()).
 		Str("ack", cfg.HTTPS.FakeAck.String()).
 		Str("syn-ack-timeout", fmt.Sprintf("%dms", cfg.HTTPS.SynAckTimeout.Milliseconds())).

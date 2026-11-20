@@ -18,11 +18,10 @@ If the default settings are not enough, you can try more aggressive settings. Th
 
 ```toml
 [tls]
-fake-count = 5
+fake-preflight = 5
 fake-packet = [0x16, 0x03, 0x01] # Simple fake Client Hello prefix
 disorder = true
-split-mode = "chunk"
-chunk-size = 1
+split-mode = "chunk:1"
 ```
 
 ## Rule-Based Routing
@@ -40,7 +39,7 @@ block = true
 [[rules]]
 name = "unblock site"
 match = { domains = ["blocked-site.com"] }
-tls = { fake-count = 2, disorder = true }
+tls = { fake-preflight = 2, disorder = true }
 
 # Use local network directly (no processing)
 [[rules]]

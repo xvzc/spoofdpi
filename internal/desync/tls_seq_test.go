@@ -68,7 +68,7 @@ func newStubConn(remoteIP string) *stubConn {
 
 func tlsOpts(fakeCount, chunkSize uint8) *config.HTTPSOptions {
 	return &config.HTTPSOptions{
-		FakeCount:     fakeCount,
+		FakePreflight: fakeCount,
 		FakePacket:    proto.NewFakeTLSMessage([]byte(config.FakeClientHello)),
 		SplitMode:     config.HTTPSSplitModeChunk,
 		ChunkSize:     chunkSize,
@@ -328,7 +328,7 @@ func TestUDPDesync_SkipsFakesOnLocalLink(t *testing.T) {
 		local:  &net.UDPAddr{IP: net.ParseIP("192.168.1.11"), Port: 50000},
 		remote: &net.UDPAddr{IP: net.ParseIP("192.168.1.20"), Port: 443},
 	}
-	opts := &config.UDPOptions{FakeCount: 2, FakePacket: make([]byte, 8)}
+	opts := &config.UDPOptions{FakePreflight: 2, FakePacket: make([]byte, 8)}
 
 	for _, tc := range []struct {
 		name      string
@@ -360,7 +360,7 @@ func TestUDPDesync_UsesTheFlowAddresses(t *testing.T) {
 	_, err := d.Desync(
 		context.Background(),
 		conn,
-		&config.UDPOptions{FakeCount: 1, FakePacket: make([]byte, 8)},
+		&config.UDPOptions{FakePreflight: 1, FakePacket: make([]byte, 8)},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, conn.local, w.src, "fakes come from the real flow's local address")

@@ -147,7 +147,7 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 			}
 		}
 		if v, ok := item["dns"]; ok {
-			if err := r.Config.DNS.UnmarshalTOML(v); err != nil {
+			if err := unmarshalScoped(i, r.Config.DNS.UnmarshalTOML, v); err != nil {
 				return nil, fmt.Errorf("rule %d: dns: %w", i, err)
 			}
 		}
@@ -162,24 +162,24 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 					"rule %d: 'https' is ignored because 'tls' is set", i,
 				))
 			}
-			if err := r.Config.HTTPS.UnmarshalTOML(v); err != nil {
+			if err := unmarshalScoped(i, r.Config.HTTPS.UnmarshalTOML, v); err != nil {
 				return nil, fmt.Errorf("rule %d: tls: %w", i, err)
 			}
 		} else if v, ok := item["https"]; ok {
 			AddWarnMsg(fmt.Sprintf(
 				"rule %d: 'https' is deprecated; rename to 'tls'", i,
 			))
-			if err := r.Config.HTTPS.UnmarshalTOML(v); err != nil {
+			if err := unmarshalScoped(i, r.Config.HTTPS.UnmarshalTOML, v); err != nil {
 				return nil, fmt.Errorf("rule %d: https: %w", i, err)
 			}
 		}
 		if v, ok := item["udp"]; ok {
-			if err := r.Config.UDP.UnmarshalTOML(v); err != nil {
+			if err := unmarshalScoped(i, r.Config.UDP.UnmarshalTOML, v); err != nil {
 				return nil, fmt.Errorf("rule %d: udp: %w", i, err)
 			}
 		}
 		if v, ok := item["connection"]; ok {
-			if err := r.Config.Conn.UnmarshalTOML(v); err != nil {
+			if err := unmarshalScoped(i, r.Config.Conn.UnmarshalTOML, v); err != nil {
 				return nil, fmt.Errorf("rule %d: connection: %w", i, err)
 			}
 		}
@@ -219,4 +219,10 @@ func expandFileMatchList(v any, ruleIdx int, configDir string) error {
 		m[key] = result
 	}
 	return nil
+}
+
+// unmarshalScoped runs one section's UnmarshalTOML for rule i, prefixing
+// the warnings it adds with "rule i".
+func unmarshalScoped(i int, fn func(any) error, v any) error {
+	return scopeWarnings(fmt.Sprintf("rule %d", i), func() error { return fn(v) })
 }

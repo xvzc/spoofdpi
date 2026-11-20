@@ -66,8 +66,8 @@ func runWithTOML(t *testing.T, toml string, args ...string) (*Config, []string) 
 
 func TestTLSCompat_CLI(t *testing.T) {
 	t.Run("tls flag", func(t *testing.T) {
-		cfg, warns := runWithTOML(t, "", "--tls-fake-count", "3")
-		assert.Equal(t, uint8(3), cfg.HTTPS.FakeCount)
+		cfg, warns := runWithTOML(t, "", "--tls-fake-preflight", "3")
+		assert.Equal(t, uint8(3), cfg.HTTPS.FakePreflight)
 		assert.Empty(t, warns)
 	})
 
@@ -76,10 +76,10 @@ func TestTLSCompat_CLI(t *testing.T) {
 			"--https-fake-count", "3",
 			"--https-split-mode", "chunk",
 		)
-		assert.Equal(t, uint8(3), cfg.HTTPS.FakeCount)
+		assert.Equal(t, uint8(3), cfg.HTTPS.FakePreflight)
 		assert.Equal(t, HTTPSSplitModeChunk, cfg.HTTPS.SplitMode)
 		assert.Contains(t, warns,
-			"'--https-fake-count' is deprecated; use '--tls-fake-count'")
+			"'--https-fake-count' is deprecated; use '--tls-fake-preflight'")
 		assert.Contains(t, warns,
 			"'--https-split-mode' is deprecated; use '--tls-split-mode'")
 	})
@@ -87,21 +87,21 @@ func TestTLSCompat_CLI(t *testing.T) {
 	// urfave/cli runs flag actions in map order, not argument order, so
 	// check both orders.
 	for _, args := range [][]string{
-		{"--tls-fake-count", "5", "--https-fake-count", "3", "--https-chunk-size", "9"},
-		{"--https-chunk-size", "9", "--https-fake-count", "3", "--tls-fake-count", "5"},
+		{"--tls-fake-preflight", "5", "--https-fake-count", "3", "--https-disorder"},
+		{"--https-disorder", "--https-fake-count", "3", "--tls-fake-preflight", "5"},
 	} {
 		t.Run("tls flag wins over the same https flag", func(t *testing.T) {
 			cfg, _ := runWithTOML(t, "", args...)
-			assert.Equal(t, uint8(5), cfg.HTTPS.FakeCount, "--tls-* wins")
-			assert.Equal(t, uint8(9), cfg.HTTPS.ChunkSize,
-				"an https flag without a tls counterpart still applies")
+			assert.Equal(t, uint8(5), cfg.HTTPS.FakePreflight, "--tls-* wins")
+			assert.True(t, cfg.HTTPS.Disorder,
+				"an https flag without a tls value still applies")
 		})
 	}
 
 	t.Run("deprecated https flags override TOML", func(t *testing.T) {
 		cfg, _ := runWithTOML(t, `
 [tls]
-fake-count = 5
+fake-preflight = 5
 disorder = true
 skip = true
 `,
@@ -110,7 +110,7 @@ skip = true
 			"--https-skip=false",
 			"--https-fake-packet", "0xff,0xee",
 		)
-		assert.Equal(t, uint8(3), cfg.HTTPS.FakeCount)
+		assert.Equal(t, uint8(3), cfg.HTTPS.FakePreflight)
 		assert.False(t, cfg.HTTPS.Disorder)
 		assert.False(t, cfg.HTTPS.Skip)
 		assert.Equal(t, []byte{0xff, 0xee}, cfg.HTTPS.FakePacket.Raw())
@@ -125,35 +125,35 @@ skip = true
 		cmd.Writer = &out
 		require.NoError(t, cmd.Run(context.Background(), []string{"spoofdpi", "--help"}))
 
-		assert.Contains(t, out.String(), "--tls-fake-count")
+		assert.Contains(t, out.String(), "--tls-fake-preflight")
 		assert.NotContains(t, out.String(), "--https-")
 	})
 }
 
 func TestTLSCompat_TOML(t *testing.T) {
 	t.Run("tls section", func(t *testing.T) {
-		cfg, warns := runWithTOML(t, "[tls]\nfake-count = 3\n")
-		assert.Equal(t, uint8(3), cfg.HTTPS.FakeCount)
+		cfg, warns := runWithTOML(t, "[tls]\nfake-preflight = 3\n")
+		assert.Equal(t, uint8(3), cfg.HTTPS.FakePreflight)
 		assert.Empty(t, warns)
 	})
 
 	t.Run("deprecated https section still works and warns", func(t *testing.T) {
-		cfg, warns := runWithTOML(t, "[https]\nfake-count = 3\n")
-		assert.Equal(t, uint8(3), cfg.HTTPS.FakeCount)
+		cfg, warns := runWithTOML(t, "[https]\nfake-preflight = 3\n")
+		assert.Equal(t, uint8(3), cfg.HTTPS.FakePreflight)
 		assert.Contains(t, warns, "'[https]' is deprecated; rename to '[tls]'")
 	})
 
 	t.Run("https section is ignored when tls is set", func(t *testing.T) {
 		cfg, warns := runWithTOML(t, `
 [tls]
-fake-count = 5
+fake-preflight = 5
 
 [https]
-fake-count = 3
+fake-preflight = 3
 chunk-size = 9
 split-mode = "custom"
 `)
-		assert.Equal(t, uint8(5), cfg.HTTPS.FakeCount)
+		assert.Equal(t, uint8(5), cfg.HTTPS.FakePreflight)
 		assert.Equal(
 			t,
 			uint8(35),
@@ -178,10 +178,10 @@ func TestTLSCompat_Rules(t *testing.T) {
 [[rules]]
 name = "r"
 match = { domains = ["example.com"] }
-tls = { fake-count = 3 }
+tls = { fake-preflight = 3 }
 `)
 		require.Len(t, cfg.Rules, 1)
-		assert.Equal(t, uint8(3), cfg.Rules[0].Config.HTTPS.FakeCount)
+		assert.Equal(t, uint8(3), cfg.Rules[0].Config.HTTPS.FakePreflight)
 		assert.Empty(t, warns)
 	})
 
@@ -190,10 +190,10 @@ tls = { fake-count = 3 }
 [[rules]]
 name = "r"
 match = { domains = ["example.com"] }
-https = { fake-count = 3 }
+https = { fake-preflight = 3 }
 `)
 		require.Len(t, cfg.Rules, 1)
-		assert.Equal(t, uint8(3), cfg.Rules[0].Config.HTTPS.FakeCount)
+		assert.Equal(t, uint8(3), cfg.Rules[0].Config.HTTPS.FakePreflight)
 		assert.Contains(t, warns, "rule 0: 'https' is deprecated; rename to 'tls'")
 	})
 
@@ -203,10 +203,10 @@ https = { fake-count = 3 }
 name = "r"
 match = { domains = ["example.com"] }
 https = { fake-count = 3, chunk-size = 9, split-mode = "custom" }
-tls = { fake-count = 5 }
+tls = { fake-preflight = 5 }
 `)
 		require.Len(t, cfg.Rules, 1)
-		assert.Equal(t, uint8(5), cfg.Rules[0].Config.HTTPS.FakeCount)
+		assert.Equal(t, uint8(5), cfg.Rules[0].Config.HTTPS.FakePreflight)
 		assert.Equal(t, uint8(35), cfg.Rules[0].Config.HTTPS.ChunkSize,
 			"keys only in https are ignored too")
 		assert.Contains(t, warns, "rule 0: 'https' is ignored because 'tls' is set")
