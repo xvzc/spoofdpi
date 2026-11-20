@@ -56,9 +56,10 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 			HTTPS: HTTPSOptions{ //exhaustruct:enforce
 				Disorder:      false,
 				FakePreflight: 0,
+				FakeStutter:   0,
 				FakePacket:    proto.NewFakeTLSMessage([]byte(FakeClientHello)),
-				FakeSeq:       SeqMode{Random: false, Offset: 0},
-				FakeAck:       SeqMode{Random: false, Offset: 0},
+				FakeSeqOffset: 0,
+				FakeAckOffset: 0,
 				SynAckTimeout: 100 * time.Millisecond,
 				SplitMode:     HTTPSSplitModeSNI,
 				ChunkSize:     DefaultChunkSize,
@@ -812,38 +813,54 @@ func tlsFlags(
 	}
 
 	return append(flags,
-		&cli.StringFlag{
-			Name: prefix + "fake-seq",
-			Usage: fmt.Sprintf(`<"rand"|"offset:N">
-				Sequence number of fake packets. 'offset:N' adds N to the
-				connection's real number; 'rand' picks one per connection.
-				(default: %q)`,
-				defaultCfg.HTTPS.FakeSeq.String(),
+		&cli.Int64Flag{
+			Name: prefix + "fake-stutter",
+			Usage: fmt.Sprintf(`
+				Number of fake segments to be sent before each segment of the
+				Client Hello, covering the same bytes. (default: %v)`,
+				defaultCfg.HTTPS.FakeStutter,
 			),
 			OnlyOnce:  true,
-			Validator: checkSeqMode,
-			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-				mode := mustParseSeqMode(v)
-				add(prefix+"fake-seq", func(cfg *Config) {
-					cfg.HTTPS.FakeSeq = mode
+			Validator: checkUint8,
+			Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
+				n := uint8(v)
+				add(prefix+"fake-stutter", func(cfg *Config) {
+					cfg.HTTPS.FakeStutter = n
 				})
 				return nil
 			},
 		},
 
-		&cli.StringFlag{
-			Name: prefix + "fake-ack",
-			Usage: fmt.Sprintf(`<"rand"|"offset:N">
-				Acknowledgment number of fake packets, set like 'tls-fake-seq'.
-				(default: %q)`,
-				defaultCfg.HTTPS.FakeAck.String(),
+		&cli.Int64Flag{
+			Name: prefix + "fake-seq-offset",
+			Usage: fmt.Sprintf(`
+				Offset added (mod 2^32) to the connection's real sequence number
+				in fake packets. With fake-stutter, keep it 0 and use
+				'tls-fake-ack-offset' instead. (default: %v)`,
+				defaultCfg.HTTPS.FakeSeqOffset,
 			),
 			OnlyOnce:  true,
-			Validator: checkSeqMode,
-			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-				mode := mustParseSeqMode(v)
-				add(prefix+"fake-ack", func(cfg *Config) {
-					cfg.HTTPS.FakeAck = mode
+			Validator: checkSeqOffset,
+			Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
+				add(prefix+"fake-seq-offset", func(cfg *Config) {
+					cfg.HTTPS.FakeSeqOffset = v
+				})
+				return nil
+			},
+		},
+
+		&cli.Int64Flag{
+			Name: prefix + "fake-ack-offset",
+			Usage: fmt.Sprintf(`
+				Offset added (mod 2^32) to the connection's real acknowledgment
+				number in fake packets. (default: %v)`,
+				defaultCfg.HTTPS.FakeAckOffset,
+			),
+			OnlyOnce:  true,
+			Validator: checkSeqOffset,
+			Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
+				add(prefix+"fake-ack-offset", func(cfg *Config) {
+					cfg.HTTPS.FakeAckOffset = v
 				})
 				return nil
 			},

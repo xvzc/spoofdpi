@@ -80,19 +80,14 @@ func fakeMsg() *proto.TLSMessage {
 	return proto.NewFakeTLSMessage([]byte(config.FakeClientHello))
 }
 
-func TestSendFakePackets_SegmentsAndCopies(t *testing.T) {
+func TestFakeSenderPreflight_SegmentsAndCopies(t *testing.T) {
 	w := &recordingWriter{}
-	d := NewTLSDesyncer(zerolog.Nop(), w, stubSniffer{}, nil)
-	fake := packet.SeqAck{Seq: 1000, Ack: 5000}
-
-	_, err := d.sendFakePackets(
-		context.Background(),
-		zerolog.Nop(),
-		newStubConn("203.0.113.1"),
-		8,
-		tlsOpts(2, 100),
-		fake,
+	f := newFakeSender(
+		w, newStubConn("203.0.113.1"), 8, tlsOpts(2, 100),
+		packet.SeqAck{Seq: 1000, Ack: 5000},
 	)
+
+	_, err := f.preflight(context.Background(), zerolog.Nop())
 	require.NoError(t, err)
 
 	perCopy := (len(config.FakeClientHello) + 99) / 100
@@ -108,34 +103,63 @@ func TestSendFakePackets_SegmentsAndCopies(t *testing.T) {
 	}
 }
 
-func TestApplySeqMode(t *testing.T) {
+func TestFakeSeqAck(t *testing.T) {
 	tcs := []struct {
-		name string
-		mode config.SeqMode
-		real uint32
-		want uint32
+		name     string
+		seq, ack int64
+		real     packet.SeqAck
+		want     packet.SeqAck
 	}{
-		{"offset 0 keeps the real number", config.SeqMode{}, 5000, 5000},
-		{"negative offset", config.SeqMode{Offset: -10000}, 20000, 10000},
-		{"negative offset wraps", config.SeqMode{Offset: -10000}, 5000, 1<<32 - 5000},
-		{"positive offset", config.SeqMode{Offset: 66000}, 5000, 71000},
-		{"positive offset wraps", config.SeqMode{Offset: 1 << 31}, 1 << 31, 0},
+		{
+			"offset 0 keeps the real numbers",
+			0,
+			0,
+			packet.SeqAck{Seq: 5000, Ack: 7000},
+			packet.SeqAck{Seq: 5000, Ack: 7000},
+		},
+		{
+			"negative offsets",
+			-10000,
+			-1000,
+			packet.SeqAck{Seq: 20000, Ack: 30000},
+			packet.SeqAck{Seq: 10000, Ack: 29000},
+		},
+		{
+			"negative offset wraps",
+			-10000,
+			0,
+			packet.SeqAck{Seq: 5000, Ack: 1},
+			packet.SeqAck{Seq: 1<<32 - 5000, Ack: 1},
+		},
+		{
+			"positive offset",
+			66000,
+			66000,
+			packet.SeqAck{Seq: 5000, Ack: 5000},
+			packet.SeqAck{Seq: 71000, Ack: 71000},
+		},
+		{
+			"positive offset wraps",
+			1 << 31,
+			0,
+			packet.SeqAck{Seq: 1 << 31, Ack: 1},
+			packet.SeqAck{Seq: 0, Ack: 1},
+		},
+		{
+			"largest offsets",
+			1<<32 - 1,
+			-(1<<32 - 1),
+			packet.SeqAck{Seq: 5, Ack: 5},
+			packet.SeqAck{Seq: 4, Ack: 6},
+		},
 	}
 
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, applySeqMode(tc.mode, tc.real))
+			opts := &config.HTTPSOptions{FakeSeqOffset: tc.seq, FakeAckOffset: tc.ack}
+			assert.Equal(t, tc.want, fakeSeqAck(tc.real, opts))
 		})
 	}
-
-	t.Run("seq and ack are independent", func(t *testing.T) {
-		opts := &config.HTTPSOptions{
-			FakeSeq: config.SeqMode{Offset: -10000},
-			FakeAck: config.SeqMode{Offset: 66000},
-		}
-		got := fakeSeqAck(packet.SeqAck{Seq: 20000, Ack: 30000}, opts)
-		assert.Equal(t, packet.SeqAck{Seq: 10000, Ack: 96000}, got)
-	})
 }
 
 func TestSendSegments_AdvancesSeq(t *testing.T) {
@@ -143,10 +167,12 @@ func TestSendSegments_AdvancesSeq(t *testing.T) {
 	seq := &packet.SeqAck{Seq: 1000, Ack: 5000}
 
 	n, err := d.sendSegments(
+		context.Background(),
 		newStubConn("203.0.113.1"),
 		zerolog.Nop(),
 		[]Segment{{Packet: []byte("abc")}, {Packet: []byte("defgh")}},
 		seq,
+		nil,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, 8, n)
@@ -164,8 +190,8 @@ func TestDesync_UsesLearnedSeqAckWithOffsets(t *testing.T) {
 	)
 
 	opts := tlsOpts(1, 100)
-	opts.FakeSeq = config.SeqMode{Offset: -10000}
-	opts.FakeAck = config.SeqMode{Offset: 66000}
+	opts.FakeSeqOffset = -10000
+	opts.FakeAckOffset = 66000
 
 	_, err := d.Desync(context.Background(), conn, fakeMsg(), opts)
 	require.NoError(t, err)
@@ -206,34 +232,16 @@ func TestDesync_WaitRules(t *testing.T) {
 		name       string
 		remote     string
 		fakeCount  uint8
-		randBoth   bool
 		hopLearned bool
 		timeout    time.Duration
 		wantWait   bool
 	}{
-		{"offset mode waits", "203.0.113.1", 1, false, true, timeout, true},
-		{
-			"rand mode waits for an unlearned hop",
-			"203.0.113.1",
-			1,
-			true,
-			false,
-			timeout,
-			true,
-		},
-		{
-			"rand mode skips the wait once the hop is learned",
-			"203.0.113.1",
-			1,
-			true,
-			true,
-			timeout,
-			false,
-		},
-		{"timeout 0 does not wait", "203.0.113.1", 1, false, false, 0, false},
-		{"private server waits", "192.168.1.1", 1, false, false, timeout, true},
-		{"ipv6 server does not wait", "2001:db8::1", 1, false, false, timeout, false},
-		{"no fakes, no wait", "203.0.113.1", 0, false, false, timeout, false},
+		{"waits", "203.0.113.1", 1, false, timeout, true},
+		{"waits even once the hop is learned", "203.0.113.1", 1, true, timeout, true},
+		{"timeout 0 does not wait", "203.0.113.1", 1, false, 0, false},
+		{"private server waits", "192.168.1.1", 1, false, timeout, true},
+		{"ipv6 server does not wait", "2001:db8::1", 1, false, timeout, false},
+		{"no fakes, no wait", "203.0.113.1", 0, false, timeout, false},
 	}
 
 	for _, tc := range tcs {
@@ -246,10 +254,6 @@ func TestDesync_WaitRules(t *testing.T) {
 			)
 			opts := tlsOpts(tc.fakeCount, 100)
 			opts.SynAckTimeout = tc.timeout
-			if tc.randBoth {
-				opts.FakeSeq = config.SeqMode{Random: true}
-				opts.FakeAck = config.SeqMode{Random: true}
-			}
 
 			start := time.Now()
 			_, err := d.Desync(context.Background(), newStubConn(tc.remote), fakeMsg(), opts)

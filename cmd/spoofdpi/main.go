@@ -152,8 +152,9 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 
 	logger.Info().
 		Uint8("preflight", uint8(cfg.HTTPS.FakePreflight)).
-		Str("seq", cfg.HTTPS.FakeSeq.String()).
-		Str("ack", cfg.HTTPS.FakeAck.String()).
+		Uint8("stutter", uint8(cfg.HTTPS.FakeStutter)).
+		Int64("seq-offset", cfg.HTTPS.FakeSeqOffset).
+		Int64("ack-offset", cfg.HTTPS.FakeAckOffset).
 		Str("syn-ack-timeout", fmt.Sprintf("%dms", cfg.HTTPS.SynAckTimeout.Milliseconds())).
 		Msg(" fake")
 

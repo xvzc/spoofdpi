@@ -467,22 +467,6 @@ func (s *SegmentPlan) UnmarshalTOML(data any) (err error) {
 	return err
 }
 
-// SeqMode sets the sequence or acknowledgment number of fake TCP packets.
-// The zero value is "offset:0": the connection's real number.
-type SeqMode struct {
-	// Random uses a random number, chosen once per connection.
-	Random bool
-	// Offset is added (mod 2^32) to the connection's real number.
-	Offset int64
-}
-
-func (m SeqMode) String() string {
-	if m.Random {
-		return "rand"
-	}
-	return fmt.Sprintf("offset:%d", m.Offset)
-}
-
 // renamedKey returns the key to read for an option whose old name was
 // old: key, unless only the old name is set. Using the old name warns;
 // with both set, the old one is ignored with a warning.
@@ -501,14 +485,21 @@ func renamedKey(m map[string]any, key, old string) string {
 type HTTPSOptions struct {
 	Disorder      bool               `toml:"disorder"`
 	FakePreflight uint8              `toml:"fake-preflight"`
+	FakeStutter   uint8              `toml:"fake-stutter"`
 	FakePacket    *proto.TLSMessage  `toml:"fake-packet"`
-	FakeSeq       SeqMode            `toml:"fake-seq"`
-	FakeAck       SeqMode            `toml:"fake-ack"`
+	FakeSeqOffset int64              `toml:"fake-seq-offset"`
+	FakeAckOffset int64              `toml:"fake-ack-offset"`
 	SynAckTimeout time.Duration      `toml:"syn-ack-timeout"`
 	SplitMode     HTTPSSplitModeType `toml:"split-mode"`
 	ChunkSize     uint8              `toml:"-"`
 	Skip          bool               `toml:"skip"`
 	CustomSplit   []SegmentPlan      `toml:"custom-split"`
+}
+
+// UsesFakes reports whether fake packets are sent: before the Client
+// Hello (FakePreflight) or before each of its segments (FakeStutter).
+func (o HTTPSOptions) UsesFakes() bool {
+	return o.FakePreflight > 0 || o.FakeStutter > 0
 }
 
 // MarshalJSON omits FakePacket (a 64-byte buffer that's noise in trace
@@ -518,29 +509,31 @@ type HTTPSOptions struct {
 // not something to re-dump on every match trace.
 func (o HTTPSOptions) MarshalJSON() ([]byte, error) {
 	out := struct {
-		Disorder       bool               `json:"disorder"`
-		FakePreflight  uint8              `json:"fake-preflight"`
-		FakePacketLen  int                `json:"fake-packet-len,omitempty"`
-		FakeSeq        string             `json:"fake-seq"`
-		FakeAck        string             `json:"fake-ack"`
-		SynAckTimeout  string             `json:"syn-ack-timeout"`
-		SplitMode      HTTPSSplitModeType `json:"split-mode"`
-		ChunkSize      uint8              `json:"chunk-size"`
-		Skip           bool               `json:"skip"`
-		CustomSegments string             `json:"custom-split,omitempty"`
+		Disorder      bool               `json:"disorder"`
+		FakePreflight uint8              `json:"fake-preflight"`
+		FakeStutter   uint8              `json:"fake-stutter"`
+		FakePacketLen int                `json:"fake-packet-len,omitempty"`
+		FakeSeqOffset int64              `json:"fake-seq-offset"`
+		FakeAckOffset int64              `json:"fake-ack-offset"`
+		SynAckTimeout string             `json:"syn-ack-timeout"`
+		SplitMode     HTTPSSplitModeType `json:"split-mode"`
+		ChunkSize     uint8              `json:"chunk-size"`
+		Skip          bool               `json:"skip"`
+		CustomSplit   string             `json:"custom-split,omitempty"`
 	}{
 		Disorder:      o.Disorder,
 		FakePreflight: o.FakePreflight,
+		FakeStutter:   o.FakeStutter,
 		FakePacketLen: fakePacketLen(o.FakePacket),
-		FakeSeq:       o.FakeSeq.String(),
-		FakeAck:       o.FakeAck.String(),
+		FakeSeqOffset: o.FakeSeqOffset,
+		FakeAckOffset: o.FakeAckOffset,
 		SynAckTimeout: o.SynAckTimeout.String(),
 		SplitMode:     o.SplitMode,
 		ChunkSize:     o.ChunkSize,
 		Skip:          o.Skip,
 	}
 	if n := len(o.CustomSplit); n > 0 {
-		out.CustomSegments = fmt.Sprintf("%d items", n)
+		out.CustomSplit = fmt.Sprintf("%d items", n)
 	}
 	return json.Marshal(out)
 }
@@ -573,6 +566,18 @@ func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
 		o.FakePreflight = *p
 	}
 
+	if p := findFrom(
+		m,
+		"fake-stutter",
+		parseIntFn[uint8](checkUint8),
+		&err,
+	); isOk(
+		p,
+		err,
+	) {
+		o.FakeStutter = *p
+	}
+
 	if fakePacket := findSliceFrom(
 		m,
 		"fake-packet",
@@ -582,11 +587,27 @@ func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
 		o.FakePacket = proto.NewFakeTLSMessage(fakePacket)
 	}
 
-	if p := findFrom(m, "fake-seq", parseStringFn(checkSeqMode), &err); isOk(p, err) {
-		o.FakeSeq = mustParseSeqMode(*p)
+	if p := findFrom(
+		m,
+		"fake-seq-offset",
+		parseIntFn[int64](checkSeqOffset),
+		&err,
+	); isOk(
+		p,
+		err,
+	) {
+		o.FakeSeqOffset = *p
 	}
-	if p := findFrom(m, "fake-ack", parseStringFn(checkSeqMode), &err); isOk(p, err) {
-		o.FakeAck = mustParseSeqMode(*p)
+	if p := findFrom(
+		m,
+		"fake-ack-offset",
+		parseIntFn[int64](checkSeqOffset),
+		&err,
+	); isOk(
+		p,
+		err,
+	) {
+		o.FakeAckOffset = *p
 	}
 	if p := findFrom(
 		m,

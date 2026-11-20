@@ -27,11 +27,6 @@ func checkHTTPSSplitMode(v string) error {
 	return err
 }
 
-func checkSeqMode(v string) error {
-	_, err := parseSeqMode(v)
-	return err
-}
-
 func checkOneOf(allowed ...string) func(string) error {
 	return func(v string) error {
 		if slices.Contains(allowed, v) {
@@ -62,6 +57,8 @@ var (
 	checkInt8         = int64Range(math.MinInt8, math.MaxInt8)
 	checkUint16       = int64Range(0, math.MaxUint16)
 	checkUint8NonZero = int64Range(1, math.MaxUint8)
+	// checkSeqOffset accepts offsets with |N| < 2^32.
+	checkSeqOffset    = int64Range(-math.MaxUint32, math.MaxUint32)
 	checkAppMode      = checkOneOf(availableAppModeValues...)
 	checkDNSMode      = checkOneOf(availableDNSModeValues...)
 	checkDNSQueryType = checkOneOf(availableDNSQueryValues...)
@@ -191,35 +188,7 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	warnFakeSeqOverlap("tls", c.HTTPS)
-	for i, rule := range c.Rules {
-		// Rules inherit the base options; warn only when the rule changes
-		// something the check depends on.
-		if rule.Config.HTTPS.FakeSeq != c.HTTPS.FakeSeq ||
-			fakePacketLen(rule.Config.HTTPS.FakePacket) != fakePacketLen(c.HTTPS.FakePacket) {
-			warnFakeSeqOverlap(fmt.Sprintf("rule %d", i), rule.Config.HTTPS)
-		}
-	}
-
 	return nil
-}
-
-// warnFakeSeqOverlap warns when a negative fake-seq offset is smaller than
-// the fake packet: the end of each fake then overlaps the real data's
-// sequence space, and the server may accept those bytes if a fake reaches
-// it.
-func warnFakeSeqOverlap(scope string, o HTTPSOptions) {
-	n := fakePacketLen(o.FakePacket)
-	if o.FakePreflight == 0 || o.FakeSeq.Random || o.FakeSeq.Offset >= 0 ||
-		-o.FakeSeq.Offset >= int64(n) {
-		return
-	}
-
-	AddWarnMsg(fmt.Sprintf(
-		"%s: 'fake-seq' offset %d is smaller than the fake packet (%d bytes); "+
-			"fakes may overlap real data",
-		scope, o.FakeSeq.Offset, n,
-	))
 }
 
 func checkHopCountRange(o ConnOptions) error {

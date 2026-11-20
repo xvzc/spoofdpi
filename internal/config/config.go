@@ -75,11 +75,11 @@ func (c *Config) UnmarshalTOML(data any) (err error) {
 // either in the base config or in any rule. The TCP raw packet IO
 // (sniffer + writer) is only set up when this returns true.
 func (c *Config) NeedsPcapTCP() bool {
-	if c.HTTPS.FakePreflight > 0 {
+	if c.HTTPS.UsesFakes() {
 		return true
 	}
 	for _, r := range c.Rules {
-		if r.Config.HTTPS.FakePreflight > 0 {
+		if r.Config.HTTPS.UsesFakes() {
 			return true
 		}
 	}

@@ -44,7 +44,7 @@ func NewTLSDesyncer(
 // PrepareHopTrack registers addrs with the sniffer for hop-count learning,
 // guarded by the config so the LRU isn't touched when fakes won't be sent.
 func (d *TLSDesyncer) PrepareHopTrack(addrs []net.IP, cfg *config.HTTPSOptions) {
-	if d.sniffer == nil || cfg.Skip || cfg.FakePreflight == 0 {
+	if d.sniffer == nil || cfg.Skip || !cfg.UsesFakes() {
 		return
 	}
 	d.sniffer.Register(addrs)
@@ -60,50 +60,53 @@ func (d *TLSDesyncer) Desync(
 
 	if httpsOpts.Skip {
 		logger.Trace().Msg("skip desync for this request")
-		return d.sendSegments(conn, logger, []Segment{{Packet: msg.Raw()}}, nil)
+		return d.sendSegments(ctx, conn, logger, []Segment{{Packet: msg.Raw()}}, nil, nil)
 	}
 
 	// seq tracks the connection's next sequence number while segments are
-	// sent. It is nil when fake packets are not sent.
+	// sent; fakes sends the fake packets. Both are nil when no fake packets
+	// are sent.
 	var seq *packet.SeqAck
-	if httpsOpts.FakePreflight > 0 && d.sniffer != nil && d.writer != nil {
+	var fakes *fakeSender
+	if httpsOpts.UsesFakes() && d.sniffer != nil && d.writer != nil {
 		// Wait for the SYN/ACK first: the sniffer learns the hop count from
 		// it too, so the TTL read after it is fresher.
 		real := d.learnSeqAck(ctx, logger, conn, httpsOpts)
 		key := netutil.NewIPKey(conn.RemoteAddr().(*net.TCPAddr).IP)
 		if onLocalLink(d.sniffer, key) {
 			logger.Debug().Msg("server is on the local link, skipping fake packets")
-			return d.sendSegments(conn, logger, split(logger, msg, httpsOpts), nil)
+			return d.sendSegments(ctx, conn, logger, split(logger, msg, httpsOpts), nil, nil)
 		}
 		seq = &real
 		oTTL := d.sniffer.GetOptimalTTL(key)
-		fake := fakeSeqAck(real, httpsOpts)
+		fakes = newFakeSender(d.writer, conn, oTTL, httpsOpts, real)
 		logger.Trace().
-			Uint32("seq", fake.Seq).
-			Uint32("ack", fake.Ack).
-			Str("fake_seq", httpsOpts.FakeSeq.String()).
-			Str("fake_ack", httpsOpts.FakeAck.String()).
+			Uint32("seq", fakes.fakeStart.Seq).
+			Uint32("ack", fakes.fakeStart.Ack).
+			Int64("seq_offset", httpsOpts.FakeSeqOffset).
+			Int64("ack_offset", httpsOpts.FakeAckOffset).
 			Msg("fake sequence numbers")
-		n, err := d.sendFakePackets(ctx, logger, conn, oTTL, httpsOpts, fake)
-		if err != nil {
-			logger.Warn().Err(err).Msg("failed to send fake packets")
-		} else {
-			logger.Debug().Int("len", n).Uint8("ttl", oTTL).Msg("sent fake packets")
+		if httpsOpts.FakePreflight > 0 {
+			n, err := fakes.preflight(ctx, logger)
+			if err != nil {
+				logger.Warn().Err(err).Msg("failed to send fake packets")
+			} else {
+				logger.Debug().Int("len", n).Uint8("ttl", oTTL).Msg("sent fake packets")
+			}
 		}
 	}
 
 	segments := split(logger, msg, httpsOpts)
 
-	return d.sendSegments(conn, logger, segments, seq)
+	return d.sendSegments(ctx, conn, logger, segments, seq, fakes)
 }
 
 // learnSeqAck returns the connection's next sequence numbers, learned
 // from its SYN/ACK. If they are not learned, it returns random ones chosen
 // once for the connection, so that the segments of each fake still line up.
 //
-// It waits up to opts.SynAckTimeout for the sniffer to process the SYN/ACK
-// when that is useful: when a fake number is based on the real one, or when
-// the hop count for the server has not been learned yet.
+// For IPv4 servers, it waits up to opts.SynAckTimeout for the sniffer to
+// process the SYN/ACK. IPv6 servers are not learned, so it does not wait.
 func (d *TLSDesyncer) learnSeqAck(
 	ctx context.Context,
 	logger zerolog.Logger,
@@ -115,13 +118,6 @@ func (d *TLSDesyncer) learnSeqAck(
 	local, lok := conn.LocalAddr().(*net.TCPAddr)
 	remote, rok := conn.RemoteAddr().(*net.TCPAddr)
 	if d.seqs == nil || !lok || !rok || !packet.CanLearnSeq(remote.IP) {
-		return random
-	}
-
-	needSeqAck := !opts.FakeSeq.Random || !opts.FakeAck.Random
-	_, hopLearned := d.sniffer.LearnedHops(netutil.NewIPKey(remote.IP))
-	needHop := !hopLearned
-	if !needSeqAck && !needHop {
 		return random
 	}
 
@@ -147,31 +143,27 @@ func onLocalLink(sniffer packet.Sniffer, key netutil.IPKey) bool {
 	return ok && hops == 0
 }
 
-// fakeSeqAck applies opts.FakeSeq and opts.FakeAck to the connection's real
-// sequence numbers.
+// fakeSeqAck adds opts.FakeSeqOffset and opts.FakeAckOffset to the
+// connection's real sequence numbers. The uint32 conversion of a negative
+// offset wraps, which is what we want (mod 2^32).
 func fakeSeqAck(real packet.SeqAck, opts *config.HTTPSOptions) packet.SeqAck {
 	return packet.SeqAck{
-		Seq: applySeqMode(opts.FakeSeq, real.Seq),
-		Ack: applySeqMode(opts.FakeAck, real.Ack),
+		Seq: real.Seq + uint32(opts.FakeSeqOffset),
+		Ack: real.Ack + uint32(opts.FakeAckOffset),
 	}
-}
-
-func applySeqMode(m config.SeqMode, real uint32) uint32 {
-	if m.Random {
-		return rand.Uint32()
-	}
-	// uint32 conversion of a negative offset wraps, which is what we want.
-	return real + uint32(m.Offset)
 }
 
 // sendSegments sends the segmented Client Hello sequentially. If seq is not
 // nil, it is advanced by every byte written so that it always holds the
-// connection's next sequence number.
+// connection's next sequence number. If fakes is not nil and stutter is
+// enabled, the fake segments for each segment are sent right before it.
 func (d *TLSDesyncer) sendSegments(
+	ctx context.Context,
 	conn net.Conn,
 	logger zerolog.Logger,
 	segments []Segment,
 	seq *packet.SeqAck,
+	fakes *fakeSender,
 ) (int, error) {
 	var isIPv4 bool
 	if tcpAddr, ok := conn.LocalAddr().(*net.TCPAddr); ok {
@@ -187,15 +179,24 @@ func (d *TLSDesyncer) sendSegments(
 	}
 
 	defaultTTL := getDefaultTTL()
+	stuttering := fakes != nil && seq != nil && fakes.opts.FakeStutter > 0
 
-	total := 0
+	total, offset, stuttered := 0, 0, 0
+	var stutterErr error
 	for _, chunk := range segments {
+		if stuttering && stutterErr == nil {
+			n, err := fakes.stutter(ctx, *seq, offset, len(chunk.Packet))
+			stuttered += n
+			stutterErr = err
+		}
+
 		if !ttlErrored && chunk.Lazy {
 			setTTLWrap(1)
 		}
 
 		n, err := conn.Write(chunk.Packet)
 		total += n
+		offset += n
 		if seq != nil {
 			seq.Seq += uint32(n)
 		}
@@ -206,6 +207,15 @@ func (d *TLSDesyncer) sendSegments(
 		if !ttlErrored && chunk.Lazy {
 			setTTLWrap(defaultTTL)
 		}
+	}
+
+	if stutterErr != nil {
+		logger.Warn().Err(stutterErr).Msg("failed to send stutter fakes")
+	} else if stuttering {
+		logger.Debug().
+			Int("len", stuttered).
+			Int("segments", len(segments)).
+			Msg("sent stutter fakes")
 	}
 
 	return total, nil
@@ -377,43 +387,6 @@ func splitMask(raw []byte, mask uint64, disorder bool) ([]Segment, error) {
 
 func (d *TLSDesyncer) String() string {
 	return "split"
-}
-
-func (d *TLSDesyncer) sendFakePackets(
-	ctx context.Context,
-	logger zerolog.Logger,
-	conn net.Conn,
-	oTTL uint8,
-	opts *config.HTTPSOptions,
-	fake packet.SeqAck,
-) (int, error) {
-	var totalSent int
-	segments := split(logger, opts.FakePacket, opts)
-
-	for range opts.FakePreflight {
-		// Every copy starts at fake, so with the default offset of 0 it
-		// overlaps the real Client Hello. Fakes do not consume the
-		// connection's sequence space.
-		cur := fake
-		for _, v := range segments {
-			n, err := d.writer.WriteCraftedPacketWithSeq(
-				ctx,
-				conn.LocalAddr(),
-				conn.RemoteAddr(),
-				oTTL,
-				v.Packet,
-				cur,
-			)
-			if err != nil {
-				return totalSent, err
-			}
-
-			cur.Seq += uint32(len(v.Packet))
-			totalSent += n
-		}
-	}
-
-	return totalSent, nil
 }
 
 func applySegmentPlans(

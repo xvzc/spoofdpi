@@ -76,13 +76,18 @@ Customize how domain names are resolved for matched traffic. The available field
 
 Customize how TLS connections are established. The available fields mirror the global [TLS Configuration](tls.md). The previous name `https` still works but prints a deprecation warning; if a rule sets both, `https` is ignored.
 
-| Field         | Type   | Description                                           |
-| :------------ | :----- | :---------------------------------------------------- |
-| `disorder`    | Bool   | Send Client Hello packets out of order.               |
-| `fake-preflight` | Int | Number of fake packets to send before the Client Hello. |
-| `fake-packet` | Array  | List of bytes for the fake packet (e.g., `[0x16]`).   |
-| `split-mode`  | String | Split strategy: `"sni"`, `"chunk:N"`, `"random"`, etc. |
-| `skip`        | Bool   | If `true`, bypasses DPI modifications (standard TLS). |
+| Field             | Type   | Description                                                |
+| :---------------- | :----- | :--------------------------------------------------------- |
+| `disorder`        | Bool   | Send Client Hello packets out of order.                    |
+| `fake-preflight`  | Int    | Number of fake packets to send before the Client Hello.    |
+| `fake-stutter`    | Int    | Number of fake segments to send before each segment.       |
+| `fake-packet`     | Array  | List of bytes for the fake packet (e.g., `[0x16]`).        |
+| `fake-seq-offset` | Int    | Offset added to the sequence number of fake packets.       |
+| `fake-ack-offset` | Int    | Offset added to the acknowledgment number of fake packets. |
+| `syn-ack-timeout` | Int    | Milliseconds to wait for the SYN/ACK before sending fakes. |
+| `split-mode`      | String | Split strategy: `"sni"`, `"chunk:N"`, `"random"`, etc.     |
+| `custom-split`    | Array  | Segment plans for `split-mode = "custom"`.                 |
+| `skip`            | Bool   | If `true`, bypasses DPI modifications (standard TLS).      |
 
 ## Example
 

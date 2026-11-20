@@ -82,12 +82,12 @@ Specifies the number of fake packets to be sent before the actual Client Hello. 
 Sending fake packets can trick DPI systems into inspecting invalid traffic, allowing the real Client Hello to pass through.
 Each fake packet is split the same way as the real Client Hello.
 
-Fake packets are not sent to a server found to be on the local link (0 hops away), since no TTL can stop them before such a server. To turn fake packets off for other servers, such as those on a LAN or a corporate network, use a [rule](rules.md), for example `tls = { fake-preflight = 0 }` for their CIDRs.
+Fake packets are not sent to a server found to be on the local link (0 hops away), since no TTL can stop them before such a server. To turn fake packets off for other servers, such as those on a LAN or a corporate network, use a [rule](rules.md), for example `tls = { fake-preflight = 0, fake-stutter = 0 }` for their CIDRs.
 
-By default, fake packets carry the connection's real TCP sequence and acknowledgment numbers, learned from the server's SYN/ACK, so they overlap the real Client Hello. See [`fake-seq`](#fake-seq), [`fake-ack`](#fake-ack) and [`syn-ack-timeout`](#syn-ack-timeout) to change this.
+By default, fake packets carry the connection's real TCP sequence and acknowledgment numbers, learned from the server's SYN/ACK, so they overlap the real Client Hello. See [`fake-seq-offset`](#fake-seq-offset), [`fake-ack-offset`](#fake-ack-offset) and [`syn-ack-timeout`](#syn-ack-timeout) to change this.
 
 !!! note
-    spoofdpi must be run with root privileges to use this option effectively on some systems or configurations requiring raw socket access (though usually not required for standard usage, verify if this note from old docs is still accurate - kept for safety).
+    Fake packets, from this option and [`fake-stutter`](#fake-stutter), require root privileges and packet capture capabilities.
 
 ### Usage
 
@@ -104,13 +104,43 @@ fake-preflight = 7
 
 ---
 
+## `fake-stutter`
+
+`type: uint8`
+
+### Description
+
+Specifies the number of fake segments to be sent before each segment of the Client Hello. `(default: 0)`
+
+Each fake segment covers the same bytes as the real segment that follows it: it has the same length and sequence number, and its content is the [`fake-packet`](#fake-packet) bytes at the same position, padded with zeros past its end. So DPI that reassembles the stream sees a fake at every position before the real data. Fake segments use the same TTL as other fake packets and can be combined with [`fake-preflight`](#fake-preflight).
+
+[`fake-seq-offset`](#fake-seq-offset) and [`fake-ack-offset`](#fake-ack-offset) apply to fake segments too. Keep `fake-seq-offset` at the default `0`, so that each fake covers exactly the position of its real segment; any other value moves the fakes away from it. To keep fakes that reach the server (for example when the hop count is wrong) from breaking the connection, adjust `fake-ack-offset` instead, such as `fake-ack-offset = -1073741824`: the server drops such fakes, while their position is unchanged.
+
+The number of packets grows to the number of segments times (N + 1), so a [`split-mode`](#split-mode) that makes many segments, such as a small `chunk:N`, sends many packets.
+
+### Usage
+
+**Command-Line Flag**
+```console
+$ spoofdpi --tls-split-mode chunk:10 --tls-fake-stutter 1
+```
+
+**TOML Config**
+```toml
+[tls]
+split-mode = "chunk:10"
+fake-stutter = 1
+```
+
+---
+
 ## `fake-packet`
 
 `type: byte array`
 
 ### Description
 
-Customizes the content of the fake packets used by `tls-fake-preflight`. `(default: built-in fake packet)`
+Customizes the content of the fake packets used by [`fake-preflight`](#fake-preflight) and [`fake-stutter`](#fake-stutter). `(default: built-in fake packet)`
 
 The value should be a sequence of bytes representing a valid (or semi-valid) TLS Client Hello or other protocol data.
 
@@ -133,22 +163,22 @@ fake-packet = [0x16, 0x03, 0x01, 0x00]
 
 ---
 
-## `fake-seq`
+## `fake-seq-offset`
 
-`type: string`
+`type: int64`
 
 ### Description
 
-Sets the TCP sequence number of fake packets. `(default: "offset:0")`
+Adds an offset (mod 2^32) to the connection's real TCP sequence number in fake packets, both [`fake-preflight`](#fake-preflight) and [`fake-stutter`](#fake-stutter). It may be negative; its absolute value must be less than 2^32. `(default: 0)`
 
-- `offset:N`: the connection's real sequence number plus `N` (mod 2^32). `N` may be negative.
-- `rand`: a random number, chosen once per connection.
+With the default `0`, each fake overlaps the real Client Hello, which works against DPI that tracks the TCP window. If a fake outlives its TTL and reaches the server, though, the server accepts it as data and the connection breaks.
 
-With the default `offset:0`, each fake overlaps the real Client Hello, which works against DPI that tracks the TCP window. If a fake outlives its TTL and reaches the server, though, the server accepts it as data and the connection breaks.
+The server drops a fake that reaches it only if the fake lies entirely before the data it has already received, that is, when the offset is at most minus the length of the [`fake-packet`](#fake-packet). For example, `-10000`. A negative offset smaller than that is not safe: the end of each fake still overlaps the real data. spoofdpi does not check this.
 
-The server drops a fake that reaches it only if the fake lies entirely before the data it has already received, that is, when the offset is at most minus the length of the fake packet. For example, `offset:-10000`. spoofdpi warns at startup if a negative offset is smaller than the fake packet, since the fakes would then overlap real data.
+DPI that checks the TCP window strictly may ignore such fakes too. Which offsets a DPI accepts varies by network, so test them on yours. To make fakes safe for the server while keeping the sequence number DPI expects, see [`fake-ack-offset`](#fake-ack-offset).
 
-DPI that checks the TCP window strictly may ignore such fakes too. Which offsets a DPI accepts varies by network, so test them on yours. To make fakes safe for the server while keeping the sequence number DPI expects, see [`fake-ack`](#fake-ack).
+!!! note
+    With [`fake-stutter`](#fake-stutter), keep this at `0` and adjust [`fake-ack-offset`](#fake-ack-offset) instead. Stutter fakes are meant to cover the same position as the real segments, and any other offset moves them away.
 
 If the real number cannot be learned (see [`syn-ack-timeout`](#syn-ack-timeout)), a random number chosen once per connection is used in its place.
 
@@ -156,25 +186,25 @@ If the real number cannot be learned (see [`syn-ack-timeout`](#syn-ack-timeout))
 
 **Command-Line Flag**
 ```console
-$ spoofdpi --tls-fake-preflight 2 --tls-fake-seq offset:-10000
+$ spoofdpi --tls-fake-preflight 2 --tls-fake-seq-offset -10000
 ```
 
 **TOML Config**
 ```toml
 [tls]
 fake-preflight = 2
-fake-seq = "offset:-10000"
+fake-seq-offset = -10000
 ```
 
 ---
 
-## `fake-ack`
+## `fake-ack-offset`
 
-`type: string`
+`type: int64`
 
 ### Description
 
-Sets the TCP acknowledgment number of fake packets, with the same values as [`fake-seq`](#fake-seq). `(default: "offset:0")`
+Adds an offset (mod 2^32) to the connection's real TCP acknowledgment number in fake packets, both [`fake-preflight`](#fake-preflight) and [`fake-stutter`](#fake-stutter), with the same range as [`fake-seq-offset`](#fake-seq-offset). This is the way to make [`fake-stutter`](#fake-stutter) fakes safe for the server. `(default: 0)`
 
 Changing only the acknowledgment number keeps the sequence number DPI expects, while a server that receives the fake drops it if the number is out of range. Following [RFC 793](https://www.rfc-editor.org/rfc/rfc793) and [RFC 5961](https://www.rfc-editor.org/rfc/rfc5961), as Linux does, a server drops a segment whose acknowledgment number:
 
@@ -183,20 +213,20 @@ Changing only the acknowledgment number keeps the sequence number DPI expects, w
 
 Offsets in between, from `-1073725440` to `0`, may be accepted depending on the window, and offsets beyond ±2^31 wrap around to the other side.
 
-Some DPI ignores fakes that acknowledge data the server has not sent, so the recommended value is `offset:-1073741824` (-2^30). Servers on other operating systems may behave differently, and which offsets a DPI accepts varies by network, so test them on yours.
+Some DPI ignores fakes that acknowledge data the server has not sent, so the recommended value is `-1073741824` (-2^30). Servers on other operating systems may behave differently, and which offsets a DPI accepts varies by network, so test them on yours.
 
 ### Usage
 
 **Command-Line Flag**
 ```console
-$ spoofdpi --tls-fake-preflight 2 --tls-fake-ack offset:-1073741824
+$ spoofdpi --tls-fake-preflight 2 --tls-fake-ack-offset -1073741824
 ```
 
 **TOML Config**
 ```toml
 [tls]
 fake-preflight = 2
-fake-ack = "offset:-1073741824"
+fake-ack-offset = -1073741824
 ```
 
 ---
@@ -209,10 +239,7 @@ fake-ack = "offset:-1073741824"
 
 The maximum time in milliseconds to wait, before sending fake packets, for the server's SYN/ACK to be captured. `(default: 100)`
 
-The SYN/ACK gives the connection's real sequence numbers and the number of hops to the server, which sets the TTL of fake packets. spoofdpi waits only when needed:
-
-- when [`fake-seq`](#fake-seq) or [`fake-ack`](#fake-ack) uses an offset, for every connection;
-- when both are `rand`, only until the hop count for the server has been learned.
+The SYN/ACK gives the connection's real sequence numbers and the number of hops to the server, which sets the TTL of fake packets. spoofdpi waits for it on every connection that sends fake packets.
 
 The wait ends as soon as the SYN/ACK is processed. If it is not processed in time, random sequence numbers and the default TTL are used. `0` disables waiting: only numbers already learned are used.
 

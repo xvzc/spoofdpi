@@ -258,37 +258,3 @@ func parseByteFn(validator func(byte) error) func(any) (byte, error) {
 		return val, nil
 	}
 }
-
-// parseSeqMode parses "rand" or "offset:<N>", where |N| < 2^32.
-func parseSeqMode(s string) (SeqMode, error) {
-	if s == "rand" {
-		return SeqMode{Random: true}, nil
-	}
-
-	v, ok := strings.CutPrefix(s, "offset:")
-	if !ok {
-		return SeqMode{}, fmt.Errorf(
-			"value '%s' is invalid (allowed: rand, offset:<N>)", s,
-		)
-	}
-
-	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil {
-		return SeqMode{}, fmt.Errorf("value '%s' has an invalid offset", s)
-	}
-	if n <= -(1<<32) || n >= 1<<32 {
-		return SeqMode{}, fmt.Errorf(
-			"value '%s' is out of range (|N| must be less than 2^32)", s,
-		)
-	}
-
-	return SeqMode{Offset: n}, nil
-}
-
-func mustParseSeqMode(s string) SeqMode {
-	m, err := parseSeqMode(s)
-	if err != nil {
-		panic(err)
-	}
-	return m
-}
