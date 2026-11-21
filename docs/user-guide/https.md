@@ -208,3 +208,63 @@ custom-segments = [
     { from = "head", at = 100, noise = 10 },      # Split at ~100 bytes with ±10 noise
 ]
 ```
+
+---
+
+## `record-split`
+
+`type: table`
+
+### Description
+
+Splits the Client Hello TLS record into several smaller TLS records before it is
+segmented into TCP packets. `(default: disabled)`
+
+Unlike `split-mode`, which only changes how the bytes are spread across TCP packets,
+record splitting changes the TLS framing itself: every piece gets its own 5-byte record
+header. The server reassembles the handshake from the records as defined by
+[RFC 8446](https://datatracker.ietf.org/doc/html/rfc8446#section-5.1), but a DPI system
+that expects the whole Client Hello in a single record may fail to parse it.
+
+Cuts are placed at offsets `at`, `at + step`, `at + 2 * step`, ... of the original
+record body, at most `repeat` cuts in total. Cuts beyond the end of the record are
+ignored. For example, `at = 16, repeat = 150, step = 16` turns the Client Hello into
+16-byte records. This is the same as ciadpi's `-r 16:150:16` (`--tlsrec`) option.
+
+| Field    | Type | Required | Description |
+| :------- | :--- | :------- | :---------- |
+| `at`     | Int  | Yes      | Offset of the first cut in the record body. `0` disables record splitting. `(max: 65535)` |
+| `repeat` | Int  | No       | Maximum number of cuts. `(default: 1, min: 1, max: 65535)` |
+| `step`   | Int  | No       | Distance between cuts. `0` means a single cut at `at`. `(default: 0, max: 65535)` |
+
+On the command line, the same value is written as `at[:repeat[:step]]`.
+
+Record splitting is applied first, and the result is then segmented according to
+`split-mode`. It works with every split mode; `sni` and `custom` segment plans with
+`from = "sni"` still find the SNI after the record headers are inserted.
+Fake packets (`fake-count`) are not affected.
+
+!!! note
+    Only Client Hello records are split. Other TLS records are sent as is.
+
+### Usage
+
+**Command-Line Flag**
+```console
+$ spoofdpi --https-record-split 16:150:16
+```
+
+**TOML Config**
+```toml
+[https]
+record-split = { at = 16, repeat = 150, step = 16 }
+```
+
+To enable it only for some domains, set it in a [rule](rules.md):
+
+```toml
+[[rules]]
+name = "youtube"
+match = { domains = ["*.youtube.com", "*.googlevideo.com"] }
+https = { record-split = { at = 16, repeat = 150, step = 16 } }
+```

@@ -171,6 +171,100 @@ func TestDNSOptions_UnmarshalTOML(t *testing.T) {
 // ┌───────────────┐
 // │ HTTPS OPTIONS │
 // └───────────────┘
+func TestTLSRecordSplit_UnmarshalTOML(t *testing.T) {
+	tcs := []struct {
+		name    string
+		input   any
+		wantErr bool
+		want    TLSRecordSplit
+	}{
+		{
+			name: "all fields",
+			input: map[string]any{
+				"at":     int64(16),
+				"repeat": int64(150),
+				"step":   int64(16),
+			},
+			want: TLSRecordSplit{At: 16, Repeat: 150, Step: 16},
+		},
+		{
+			name:  "defaults for repeat and step",
+			input: map[string]any{"at": int64(3)},
+			want:  TLSRecordSplit{At: 3, Repeat: 1, Step: 0},
+		},
+		{
+			name:  "zero at disables",
+			input: map[string]any{"at": int64(0)},
+			want:  TLSRecordSplit{At: 0, Repeat: 1, Step: 0},
+		},
+		{
+			name:    "missing at",
+			input:   map[string]any{"repeat": int64(2)},
+			wantErr: true,
+		},
+		{
+			name:    "negative at",
+			input:   map[string]any{"at": int64(-1)},
+			wantErr: true,
+		},
+		{
+			name:    "at out of range",
+			input:   map[string]any{"at": int64(70000)},
+			wantErr: true,
+		},
+		{
+			name:    "zero repeat",
+			input:   map[string]any{"at": int64(16), "repeat": int64(0)},
+			wantErr: true,
+		},
+		{
+			name:    "invalid step type",
+			input:   map[string]any{"at": int64(16), "step": "x"},
+			wantErr: true,
+		},
+		{
+			name:    "invalid type",
+			input:   "16:150:16",
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			var s TLSRecordSplit
+			err := s.UnmarshalTOML(tc.input)
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tc.want, s)
+		})
+	}
+}
+
+func TestTLSRecordSplit_String(t *testing.T) {
+	tcs := []struct {
+		name    string
+		input   TLSRecordSplit
+		want    string
+		enabled bool
+	}{
+		{"zero value", TLSRecordSplit{}, "off", false},
+		{"zero at", TLSRecordSplit{At: 0, Repeat: 5, Step: 1}, "off", false},
+		{"zero repeat", TLSRecordSplit{At: 16, Repeat: 0, Step: 0}, "off", false},
+		{"single cut", TLSRecordSplit{At: 3, Repeat: 1, Step: 0}, "3:1:0", true},
+		{"repeated", TLSRecordSplit{At: 16, Repeat: 150, Step: 16}, "16:150:16", true},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.input.String())
+			assert.Equal(t, tc.enabled, tc.input.Enabled())
+		})
+	}
+}
+
 func TestHTTPSOptions_UnmarshalTOML(t *testing.T) {
 	tcs := []struct {
 		name    string
@@ -187,9 +281,19 @@ func TestHTTPSOptions_UnmarshalTOML(t *testing.T) {
 				"split-mode":  "chunk",
 				"chunk-size":  int64(20),
 				"skip":        true,
+				"record-split": map[string]any{
+					"at":     int64(16),
+					"repeat": int64(150),
+					"step":   int64(16),
+				},
 			},
 			wantErr: false,
 			assert: func(t *testing.T, o HTTPSOptions) {
+				assert.Equal(
+					t,
+					TLSRecordSplit{At: 16, Repeat: 150, Step: 16},
+					o.RecordSplit,
+				)
 				assert.True(t, o.Disorder)
 				assert.Equal(t, uint8(5), o.FakeCount)
 				assert.Equal(t, []byte{0x01, 0x02}, o.FakePacket.Raw())
@@ -197,6 +301,11 @@ func TestHTTPSOptions_UnmarshalTOML(t *testing.T) {
 				assert.Equal(t, uint8(20), o.ChunkSize)
 				assert.True(t, o.Skip)
 			},
+		},
+		{
+			name:    "invalid record-split",
+			input:   map[string]any{"record-split": map[string]any{"repeat": int64(2)}},
+			wantErr: true,
 		},
 		{
 			name:    "invalid type",
@@ -512,6 +621,12 @@ func TestHTTPSOptions_MarshalJSON_omitsFakePacketBytes(t *testing.T) {
 	assert.NotContains(t, got, "fake-packet\":")
 	assert.Contains(t, got, `"fake-packet-len":3`)
 	assert.Contains(t, got, `"split-mode":"chunk"`)
+	assert.NotContains(t, got, "record-split")
+
+	o.RecordSplit = TLSRecordSplit{At: 16, Repeat: 150, Step: 16}
+	b, err = json.Marshal(o)
+	assert.NoError(t, err)
+	assert.Contains(t, string(b), `"record-split":"16:150:16"`)
 }
 
 func TestUDPOptions_UnmarshalTOML(t *testing.T) {

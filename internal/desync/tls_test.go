@@ -26,7 +26,7 @@ func TestApplySegmentPlans(t *testing.T) {
 			},
 		}
 
-		chunks, err := applySegmentPlans(msg, plans)
+		chunks, err := applySegmentPlans(msg.Raw(), msg.ExtractSNIOffset, plans)
 		assert.NoError(t, err)
 		assert.Len(t, chunks, 2)
 		assert.Equal(t, fakeRaw[:5], chunks[0].Packet)
@@ -44,7 +44,7 @@ func TestApplySegmentPlans(t *testing.T) {
 			},
 		}
 
-		chunks, err := applySegmentPlans(msg, plans)
+		chunks, err := applySegmentPlans(msg.Raw(), msg.ExtractSNIOffset, plans)
 		assert.NoError(t, err)
 		assert.Len(t, chunks, 2)
 		assert.Equal(t, fakeRaw[:5], chunks[0].Packet)
@@ -65,7 +65,7 @@ func TestApplySegmentPlans(t *testing.T) {
 			},
 		}
 
-		chunks, err := applySegmentPlans(msg, plans)
+		chunks, err := applySegmentPlans(msg.Raw(), msg.ExtractSNIOffset, plans)
 		assert.NoError(t, err)
 		assert.Len(t, chunks, 3)
 		assert.Equal(t, fakeRaw[:5], chunks[0].Packet)
@@ -86,7 +86,7 @@ func TestApplySegmentPlans(t *testing.T) {
 			},
 		}
 
-		chunks, err := applySegmentPlans(msg, plans)
+		chunks, err := applySegmentPlans(msg.Raw(), msg.ExtractSNIOffset, plans)
 		assert.NoError(t, err)
 
 		// Should be [0...sniStart], [sniStart...]
@@ -109,7 +109,7 @@ func TestApplySegmentPlans(t *testing.T) {
 			},
 		}
 
-		chunks, err := applySegmentPlans(msg, plans)
+		chunks, err := applySegmentPlans(msg.Raw(), msg.ExtractSNIOffset, plans)
 		assert.NoError(t, err)
 		assert.Len(t, chunks, 2)
 		assert.Equal(t, fakeRaw[:target], chunks[0].Packet)
@@ -133,7 +133,7 @@ func TestApplySegmentPlans(t *testing.T) {
 			},
 		}
 
-		chunks, err := applySegmentPlans(msg, plans)
+		chunks, err := applySegmentPlans(msg.Raw(), msg.ExtractSNIOffset, plans)
 		assert.NoError(t, err)
 		assert.Len(t, chunks, 3)
 		assert.Equal(t, fakeRaw[:5], chunks[0].Packet)
@@ -155,7 +155,7 @@ func TestApplySegmentPlans(t *testing.T) {
 			},
 		}
 
-		chunks, err := applySegmentPlans(msg, plans)
+		chunks, err := applySegmentPlans(msg.Raw(), msg.ExtractSNIOffset, plans)
 		assert.NoError(t, err)
 		assert.Len(t, chunks, 3)
 		assert.Equal(t, fakeRaw[:5], chunks[0].Packet)
@@ -175,7 +175,7 @@ func TestApplySegmentPlans(t *testing.T) {
 		}
 
 		for i := 0; i < 50; i++ {
-			chunks, err := applySegmentPlans(msg, plans)
+			chunks, err := applySegmentPlans(msg.Raw(), msg.ExtractSNIOffset, plans)
 			assert.NoError(t, err)
 			assert.Len(t, chunks, 2)
 			// Split point should be between 10-5=5 and 10+5=15

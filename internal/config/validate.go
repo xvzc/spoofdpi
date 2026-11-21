@@ -51,6 +51,7 @@ var (
 	checkUint8          = int64Range(0, math.MaxUint8)
 	checkUint16         = int64Range(0, math.MaxUint16)
 	checkUint8NonZero   = int64Range(1, math.MaxUint8)
+	checkUint16NonZero  = int64Range(1, math.MaxUint16)
 	checkAppMode        = checkOneOf(availableAppModeValues...)
 	checkDNSMode        = checkOneOf(availableDNSModeValues...)
 	checkDNSQueryType   = checkOneOf(availableDNSQueryValues...)
@@ -108,6 +109,12 @@ func checkGateway(v string) error {
 	}
 
 	return nil
+}
+
+// checkTLSRecordSplit accepts "at[:repeat[:step]]", see parseTLSRecordSplit.
+func checkTLSRecordSplit(v string) error {
+	_, err := parseTLSRecordSplit(v)
+	return err
 }
 
 func checkCIDR(v string) error {

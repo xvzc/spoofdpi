@@ -132,6 +132,50 @@ func TestMustParseIPv4(t *testing.T) {
 	}
 }
 
+func TestMustParseTLSRecordSplit(t *testing.T) {
+	tcs := []struct {
+		name      string
+		input     string
+		want      TLSRecordSplit
+		wantPanic bool
+	}{
+		{
+			name:  "all fields",
+			input: "16:150:16",
+			want:  TLSRecordSplit{At: 16, Repeat: 150, Step: 16},
+		},
+		{name: "at only", input: "3", want: TLSRecordSplit{At: 3, Repeat: 1, Step: 0}},
+		{
+			name:  "at and repeat",
+			input: "3:2",
+			want:  TLSRecordSplit{At: 3, Repeat: 2, Step: 0},
+		},
+		{
+			name:  "zero disables",
+			input: "0",
+			want:  TLSRecordSplit{At: 0, Repeat: 1, Step: 0},
+		},
+		{name: "panic on empty", input: "", wantPanic: true},
+		{name: "panic on non-number", input: "a", wantPanic: true},
+		{name: "panic on negative", input: "-1", wantPanic: true},
+		{name: "panic on zero repeat", input: "16:0", wantPanic: true},
+		{name: "panic on out of range", input: "16:1:70000", wantPanic: true},
+		{name: "panic on too many fields", input: "1:2:3:4", wantPanic: true},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.wantPanic {
+				assert.Panics(t, func() {
+					MustParseTLSRecordSplit(tc.input)
+				})
+				return
+			}
+			assert.Equal(t, tc.want, MustParseTLSRecordSplit(tc.input))
+		})
+	}
+}
+
 func TestMustParseLogLevel(t *testing.T) {
 	tcs := []struct {
 		name      string

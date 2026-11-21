@@ -418,6 +418,58 @@ func (s *SegmentPlan) UnmarshalTOML(data any) (err error) {
 	return err
 }
 
+// TLSRecordSplit splits the Client Hello TLS record into several records
+// before it is segmented. Cuts are placed at record body offsets
+// At, At+Step, ..., at most Repeat of them (ciadpi's `-r pos:repeats:skip`).
+// At == 0 disables the feature.
+type TLSRecordSplit struct {
+	At     uint16 `toml:"at"`
+	Repeat uint16 `toml:"repeat"`
+	Step   uint16 `toml:"step"`
+}
+
+// Enabled reports whether at least one cut is configured.
+func (s TLSRecordSplit) Enabled() bool {
+	return s.At > 0 && s.Repeat > 0
+}
+
+// String renders s in the CLI format "at:repeat:step", or "off".
+func (s TLSRecordSplit) String() string {
+	if !s.Enabled() {
+		return "off"
+	}
+	return fmt.Sprintf("%d:%d:%d", s.At, s.Repeat, s.Step)
+}
+
+func (s *TLSRecordSplit) UnmarshalTOML(data any) (err error) {
+	m, ok := data.(map[string]any)
+	if !ok {
+		return fmt.Errorf("'record-split' must be table type")
+	}
+
+	if _, ok := m["at"]; !ok {
+		return fmt.Errorf("field 'at' is required")
+	}
+
+	*s = TLSRecordSplit{At: 0, Repeat: 1, Step: 0}
+	if p := findFrom(m, "at", parseIntFn[uint16](checkUint16), &err); isOk(p, err) {
+		s.At = *p
+	}
+	if p := findFrom(
+		m,
+		"repeat",
+		parseIntFn[uint16](checkUint16NonZero),
+		&err,
+	); isOk(p, err) {
+		s.Repeat = *p
+	}
+	if p := findFrom(m, "step", parseIntFn[uint16](checkUint16), &err); isOk(p, err) {
+		s.Step = *p
+	}
+
+	return err
+}
+
 type HTTPSOptions struct {
 	Disorder           bool               `toml:"disorder"`
 	FakeCount          uint8              `toml:"fake-count"`
@@ -426,6 +478,7 @@ type HTTPSOptions struct {
 	ChunkSize          uint8              `toml:"chunk-size"`
 	Skip               bool               `toml:"skip"`
 	CustomSegmentPlans []SegmentPlan      `toml:"custom-segments"`
+	RecordSplit        TLSRecordSplit     `toml:"record-split"`
 }
 
 // MarshalJSON omits FakePacket (a 64-byte buffer that's noise in trace
@@ -442,6 +495,7 @@ func (o HTTPSOptions) MarshalJSON() ([]byte, error) {
 		ChunkSize      uint8              `json:"chunk-size"`
 		Skip           bool               `json:"skip"`
 		CustomSegments string             `json:"custom-segments,omitempty"`
+		RecordSplit    string             `json:"record-split,omitempty"`
 	}{
 		Disorder:      o.Disorder,
 		FakeCount:     o.FakeCount,
@@ -452,6 +506,9 @@ func (o HTTPSOptions) MarshalJSON() ([]byte, error) {
 	}
 	if n := len(o.CustomSegmentPlans); n > 0 {
 		out.CustomSegments = fmt.Sprintf("%d items", n)
+	}
+	if o.RecordSplit.Enabled() {
+		out.RecordSplit = o.RecordSplit.String()
 	}
 	return json.Marshal(out)
 }
@@ -518,6 +575,9 @@ func (o *HTTPSOptions) UnmarshalTOML(data any) (err error) {
 		&err,
 	); plans != nil {
 		o.CustomSegmentPlans = plans
+	}
+	if rs := findStructFrom[TLSRecordSplit](m, "record-split", &err); rs != nil {
+		o.RecordSplit = *rs
 	}
 	if err == nil && o.SplitMode == HTTPSSplitModeCustom &&
 		len(o.CustomSegmentPlans) == 0 {
