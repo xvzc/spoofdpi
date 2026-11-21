@@ -380,6 +380,7 @@ func createServer(
 				logging.WithScope(logger, "hnd"),
 				udpPool,
 				udpDesyncer,
+				ruleSet,
 				&cfg.RuntimeConfig,
 			),
 			resolver,

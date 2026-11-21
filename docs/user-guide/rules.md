@@ -60,6 +60,10 @@ tls = { fake-preflight = 5 }
 # add more below
 ```
 
+### UDP traffic
+
+UDP traffic is matched per destination, so one flow of datagrams can use different settings for different destinations. In TUN mode and for SOCKS5 `UDP ASSOCIATE`, each destination address is matched against `cidrs`. When a SOCKS5 client sends a domain name instead of an address, that name is also matched against `domains`, and the higher-priority match wins. The name is resolved with the system resolver, so `dns` overrides do not apply to it.
+
 ## DNS Override (`dns`)
 
 Customize how domain names are resolved for matched traffic. The available fields mirror the global [DNS Configuration](dns.md).

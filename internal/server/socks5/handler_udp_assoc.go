@@ -13,12 +13,14 @@ import (
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/proto"
+	"github.com/xvzc/spoofdpi/internal/rule"
 )
 
 type UdpAssociateHandler struct {
 	logger   zerolog.Logger
 	pool     *netutil.ConnRegistry[netutil.NATKey]
 	desyncer *desync.UDPDesyncer
+	ruleSet  *rule.RuleSet
 	cfg      *config.RuntimeConfig
 }
 
@@ -26,12 +28,14 @@ func NewUdpAssociateHandler(
 	logger zerolog.Logger,
 	pool *netutil.ConnRegistry[netutil.NATKey],
 	desyncer *desync.UDPDesyncer,
+	ruleSet *rule.RuleSet,
 	cfg *config.RuntimeConfig,
 ) *UdpAssociateHandler {
 	return &UdpAssociateHandler{
 		logger:   logger,
 		pool:     pool,
 		desyncer: desyncer,
+		ruleSet:  ruleSet,
 		cfg:      cfg,
 	}
 }
@@ -42,8 +46,6 @@ func (h *UdpAssociateHandler) Handle(
 	req *proto.SOCKS5Request,
 ) error {
 	logger := logging.WithLocalScope(ctx, h.logger, "udp_associate")
-
-	cfg := h.cfg
 
 	// 1. Listen on a random UDP port
 	lTCPAddr := lConn.LocalAddr().(*net.TCPAddr) // SOCKS5 listens on TCP
@@ -150,6 +152,9 @@ func (h *UdpAssociateHandler) Handle(
 				Msg("session cache miss")
 		}
 
+		dstHost, _, _ := net.SplitHostPort(dstAddrStr)
+		cfg := h.destinationConfig(logger, dstHost, dstAddr.IP)
+
 		pktDst := &netutil.Destination{
 			Addrs: []net.IP{dstAddr.IP},
 			Port:  dstAddr.Port,
@@ -186,6 +191,33 @@ func (h *UdpAssociateHandler) Handle(
 			logger.Warn().Err(err).Msg("failed to write udp to target")
 		}
 	}
+}
+
+// destinationConfig returns the config for one destination of an
+// association. Rules match the way they do for CONNECT: by the resolved
+// address and, when the client sent a domain name, by that name; the
+// higher-priority match wins.
+func (h *UdpAssociateHandler) destinationConfig(
+	logger zerolog.Logger,
+	host string,
+	addr net.IP,
+) *config.RuntimeConfig {
+	if h.ruleSet == nil {
+		return h.cfg
+	}
+
+	queries := []rule.Query{{Type: rule.MatchTypeAddr, Value: addr.String()}}
+	if net.ParseIP(host) == nil {
+		queries = append(queries, rule.Query{Type: rule.MatchTypeDomain, Value: host})
+	}
+
+	matched := h.ruleSet.Search(queries)
+	if matched == nil {
+		return h.cfg
+	}
+
+	logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
+	return &matched.Config
 }
 
 func (h *UdpAssociateHandler) relayInboundUDP(
