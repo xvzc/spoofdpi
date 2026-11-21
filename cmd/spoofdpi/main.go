@@ -257,21 +257,18 @@ func setupPcapIO(
 		Msg(" gateway")
 
 	if cfg.NeedsPcapTCP() {
-		tcpHandle, hErr := capture.NewHandle(&route.Iface)
+		stack, hErr := packet.OpenTCPStack(
+			pktLogger,
+			&route.Iface,
+			gatewayMAC,
+			hopCache,
+			&cfg.RuntimeConfig,
+		)
 		if hErr != nil {
 			err = fmt.Errorf("tcp pcap handle on %s: %w", route.Iface.Name, hErr)
 			return
 		}
-		seqs = packet.NewSeqTracker(5 * time.Second)
-		tcpSniffer = packet.NewTCPSniffer(
-			pktLogger,
-			tcpHandle,
-			hopCache,
-			seqs,
-			&cfg.RuntimeConfig,
-		)
-		tcpWriter = packet.NewTCPWriter(pktLogger, tcpHandle, &route.Iface, gatewayMAC)
-		tcpSniffer.StartCapturing()
+		tcpSniffer, tcpWriter, seqs = stack.Sniffer, stack.Writer, stack.Seqs
 	}
 
 	if cfg.NeedsPcapUDP() {
