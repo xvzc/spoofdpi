@@ -13,7 +13,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/xvzc/spoofdpi/internal/cache"
-	"github.com/xvzc/spoofdpi/internal/capture"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/dns"
@@ -214,19 +213,17 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	return nil
 }
 
-func setupPcapIO(
+func setupNetworkStack(
 	ctx context.Context,
 	logger zerolog.Logger,
 	route *netutil.Route,
 	cfg *config.Config,
 ) (
-	tcpSniffer, udpSniffer packet.Sniffer,
-	tcpWriter packet.TCPSeqWriter,
-	udpWriter packet.Writer,
-	seqs *packet.SeqTracker,
+	tcpStack *packet.TCPStack,
+	udpStack *packet.UDPStack,
 	err error,
 ) {
-	if !cfg.NeedsPcap() {
+	if !cfg.NeedsNetworkStack() {
 		return
 	}
 
@@ -255,7 +252,7 @@ func setupPcapIO(
 		Str("mac", gatewayMAC.String()).
 		Msg(" gateway")
 
-	if cfg.NeedsPcapTCP() {
+	if cfg.NeedsTCPStack() {
 		stack, hErr := packet.OpenTCPStack(
 			pktLogger,
 			&route.Iface,
@@ -266,22 +263,21 @@ func setupPcapIO(
 			err = fmt.Errorf("tcp pcap handle on %s: %w", route.Iface.Name, hErr)
 			return
 		}
-		tcpSniffer, tcpWriter, seqs = stack.Sniffer, stack.Writer, stack.Seqs
+		tcpStack = stack
 	}
 
-	if cfg.NeedsPcapUDP() {
-		udpHandle, hErr := capture.NewHandle(&route.Iface)
+	if cfg.NeedsUDPStack() {
+		stack, hErr := packet.OpenUDPStack(
+			pktLogger,
+			&route.Iface,
+			gatewayMAC,
+			hopCache,
+		)
 		if hErr != nil {
 			err = fmt.Errorf("udp pcap handle on %s: %w", route.Iface.Name, hErr)
 			return
 		}
-		udpSniffer = packet.NewUDPSniffer(
-			pktLogger,
-			udpHandle,
-			hopCache,
-		)
-		udpWriter = packet.NewUDPWriter(pktLogger, udpHandle, &route.Iface, gatewayMAC)
-		udpSniffer.StartCapturing()
+		udpStack = stack
 	}
 
 	return
@@ -326,7 +322,7 @@ func createServer(
 			Msg("gateway is ignored; only fake packets and tun mode use it")
 	}
 
-	tcpSniffer, udpSniffer, tcpWriter, udpWriter, seqs, err := setupPcapIO(
+	tcpStack, udpStack, err := setupNetworkStack(
 		appctx,
 		logger,
 		defaultRoute,
@@ -334,6 +330,22 @@ func createServer(
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	// A nil stack must leave the interfaces nil: a nil *TCPSniffer stored in
+	// a packet.Sniffer would be non-nil and defeat the desyncers' nil checks.
+	var (
+		tcpSniffer packet.Sniffer
+		tcpWriter  packet.TCPSeqWriter
+		seqs       *packet.SeqTracker
+		udpSniffer packet.Sniffer
+		udpWriter  packet.Writer
+	)
+	if tcpStack != nil {
+		tcpSniffer, tcpWriter, seqs = tcpStack.Sniffer, tcpStack.Writer, tcpStack.Seqs
+	}
+	if udpStack != nil {
+		udpSniffer, udpWriter = udpStack.Sniffer, udpStack.Writer
 	}
 
 	tlsDesyncer := desync.NewTLSDesyncer(

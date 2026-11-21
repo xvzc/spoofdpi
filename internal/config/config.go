@@ -71,10 +71,10 @@ func (c *Config) UnmarshalTOML(data any) (err error) {
 	return
 }
 
-// NeedsPcapTCP reports whether any TCP fake-packet feature is enabled —
+// NeedsTCPStack reports whether any TCP fake-packet feature is enabled —
 // either in the base config or in any rule. The TCP raw packet IO
 // (sniffer + writer) is only set up when this returns true.
-func (c *Config) NeedsPcapTCP() bool {
+func (c *Config) NeedsTCPStack() bool {
 	if c.HTTPS.UsesFakes() {
 		return true
 	}
@@ -86,8 +86,8 @@ func (c *Config) NeedsPcapTCP() bool {
 	return false
 }
 
-// NeedsPcapUDP is the UDP counterpart of NeedsPcapTCP.
-func (c *Config) NeedsPcapUDP() bool {
+// NeedsUDPStack is the UDP counterpart of NeedsTCPStack.
+func (c *Config) NeedsUDPStack() bool {
 	if c.UDP.FakePreflight > 0 {
 		return true
 	}
@@ -99,16 +99,17 @@ func (c *Config) NeedsPcapUDP() bool {
 	return false
 }
 
-// NeedsPcap reports whether any raw packet capture is needed.
-func (c *Config) NeedsPcap() bool {
-	return c.NeedsPcapTCP() || c.NeedsPcapUDP()
+// NeedsNetworkStack reports whether the TCP or UDP network stack (raw
+// packet capture and injection) is needed.
+func (c *Config) NeedsNetworkStack() bool {
+	return c.NeedsTCPStack() || c.NeedsUDPStack()
 }
 
 // NeedsRoute reports whether the default route must be discovered at
 // startup: raw packet capture needs the gateway, and TUN mode routes
 // traffic through it.
 func (c *Config) NeedsRoute() bool {
-	return c.NeedsPcap() || c.App.Mode == AppModeTUN
+	return c.NeedsNetworkStack() || c.App.Mode == AppModeTUN
 }
 
 // Finalize applies defaults that depend on other fields (e.g. ListenAddr

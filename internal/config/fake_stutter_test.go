@@ -12,14 +12,14 @@ func TestFakeStutterOption(t *testing.T) {
 		cfg, _ := runWithTOML(t, "")
 		assert.Equal(t, uint8(0), cfg.HTTPS.FakeStutter)
 		assert.False(t, cfg.HTTPS.UsesFakes())
-		assert.False(t, cfg.NeedsPcapTCP())
+		assert.False(t, cfg.NeedsTCPStack())
 	})
 
 	t.Run("cli", func(t *testing.T) {
 		cfg, warns := runWithTOML(t, "", "--tls-fake-stutter", "2")
 		assert.Equal(t, uint8(2), cfg.HTTPS.FakeStutter)
 		assert.True(t, cfg.HTTPS.UsesFakes())
-		assert.True(t, cfg.NeedsPcapTCP(), "stutter alone needs packet capture")
+		assert.True(t, cfg.NeedsTCPStack(), "stutter alone needs packet capture")
 		assert.Empty(t, warns)
 	})
 
@@ -45,7 +45,7 @@ name = "r"
 match = { domains = ["example.com"] }
 tls = { fake-stutter = 1 }
 `)
-		assert.True(t, cfg.NeedsPcapTCP())
+		assert.True(t, cfg.NeedsTCPStack())
 	})
 
 	t.Run("invalid and deprecated names", func(t *testing.T) {

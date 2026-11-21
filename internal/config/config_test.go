@@ -65,7 +65,7 @@ func TestConfig_UnmarshalTOML(t *testing.T) {
 	}
 }
 
-func TestConfig_NeedsPcapTCP(t *testing.T) {
+func TestConfig_NeedsTCPStack(t *testing.T) {
 	tcs := []struct {
 		name   string
 		config Config
@@ -110,12 +110,12 @@ func TestConfig_NeedsPcapTCP(t *testing.T) {
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.expect, tc.config.NeedsPcapTCP())
+			assert.Equal(t, tc.expect, tc.config.NeedsTCPStack())
 		})
 	}
 }
 
-func TestConfig_NeedsPcapUDP(t *testing.T) {
+func TestConfig_NeedsUDPStack(t *testing.T) {
 	tcs := []struct {
 		name   string
 		config Config
@@ -160,7 +160,7 @@ func TestConfig_NeedsPcapUDP(t *testing.T) {
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.expect, tc.config.NeedsPcapUDP())
+			assert.Equal(t, tc.expect, tc.config.NeedsUDPStack())
 		})
 	}
 }
