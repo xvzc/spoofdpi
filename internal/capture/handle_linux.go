@@ -1,9 +1,10 @@
 //go:build linux
 
-package packet
+package capture
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -60,11 +61,55 @@ func NewHandle(iface *net.Interface) (Handle, error) {
 	return h, nil
 }
 
+// NewHandleWithReadTimeout is like NewHandle, but ReadPacketData returns an
+// error for which IsReadTimeout is true when no packet arrives within d.
+// d must be positive.
+func NewHandleWithReadTimeout(iface *net.Interface, d time.Duration) (Handle, error) {
+	if d <= 0 {
+		return nil, fmt.Errorf("read timeout must be positive, got %v", d)
+	}
+
+	h, err := NewHandle(iface)
+	if err != nil {
+		return nil, err
+	}
+
+	tv := unix.NsecToTimeval(d.Nanoseconds())
+	lh := h.(*LinuxHandle)
+	if err := unix.SetsockoptTimeval(
+		lh.fd,
+		unix.SOL_SOCKET,
+		unix.SO_RCVTIMEO,
+		&tv,
+	); err != nil {
+		lh.Close()
+		return nil, fmt.Errorf("failed to set read timeout: %w", err)
+	}
+
+	return lh, nil
+}
+
+// IsReadTimeout reports whether err is the error ReadPacketData returns
+// when the read timeout of a handle from NewHandleWithReadTimeout expires.
+func IsReadTimeout(err error) bool {
+	return errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK)
+}
+
 // ReadPacketData reads using unix.Recvfrom
 func (h *LinuxHandle) ReadPacketData() ([]byte, gopacket.CaptureInfo, error) {
-	n, _, err := unix.Recvfrom(h.fd, h.buf, 0)
-	if err != nil {
-		return nil, gopacket.CaptureInfo{}, err
+	var n int
+	for {
+		var err error
+		n, _, err = unix.Recvfrom(h.fd, h.buf, 0)
+		// With SO_RCVTIMEO set, recvfrom can fail with EINTR on a signal
+		// even under SA_RESTART; that is not a read failure.
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		if err != nil {
+			return nil, gopacket.CaptureInfo{}, err
+		}
+		break
 	}
 
 	data := make([]byte, n)

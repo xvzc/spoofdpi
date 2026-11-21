@@ -8,6 +8,7 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/rs/zerolog"
+	"github.com/xvzc/spoofdpi/internal/capture"
 )
 
 var _ Writer = (*UDPWriter)(nil)
@@ -15,14 +16,14 @@ var _ Writer = (*UDPWriter)(nil)
 type UDPWriter struct {
 	logger zerolog.Logger
 
-	handle     Handle
+	handle     capture.Handle
 	iface      *net.Interface
 	gatewayMAC net.HardwareAddr
 }
 
 func NewUDPWriter(
 	logger zerolog.Logger,
-	handle Handle,
+	handle capture.Handle,
 	iface *net.Interface,
 	gatewayMAC net.HardwareAddr,
 ) *UDPWriter {

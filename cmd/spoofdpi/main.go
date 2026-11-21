@@ -13,6 +13,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/xvzc/spoofdpi/internal/cache"
+	"github.com/xvzc/spoofdpi/internal/capture"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/dns"
@@ -256,7 +257,7 @@ func setupPcapIO(
 		Msg(" gateway")
 
 	if cfg.NeedsPcapTCP() {
-		tcpHandle, hErr := packet.NewHandle(&route.Iface)
+		tcpHandle, hErr := capture.NewHandle(&route.Iface)
 		if hErr != nil {
 			err = fmt.Errorf("tcp pcap handle on %s: %w", route.Iface.Name, hErr)
 			return
@@ -274,7 +275,7 @@ func setupPcapIO(
 	}
 
 	if cfg.NeedsPcapUDP() {
-		udpHandle, hErr := packet.NewHandle(&route.Iface)
+		udpHandle, hErr := capture.NewHandle(&route.Iface)
 		if hErr != nil {
 			err = fmt.Errorf("udp pcap handle on %s: %w", route.Iface.Name, hErr)
 			return

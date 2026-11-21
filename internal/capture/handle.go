@@ -1,4 +1,6 @@
-package packet
+// Package capture opens raw packet capture handles and parses captured
+// packets.
+package capture
 
 import (
 	"github.com/google/gopacket"

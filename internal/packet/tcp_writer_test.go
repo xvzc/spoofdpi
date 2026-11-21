@@ -10,6 +10,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xvzc/spoofdpi/internal/capture"
 )
 
 // captureHandle records the frames written to it.
@@ -25,7 +26,7 @@ func (h *captureHandle) WritePacketData(data []byte) error {
 }
 
 func (h *captureHandle) SetBPFRawInstructionFilter(
-	[]BPFInstruction,
+	[]capture.BPFInstruction,
 ) error {
 	return nil
 }

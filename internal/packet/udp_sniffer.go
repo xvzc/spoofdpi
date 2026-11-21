@@ -5,9 +5,9 @@ import (
 	"net"
 
 	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/cache"
+	"github.com/xvzc/spoofdpi/internal/capture"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
@@ -22,12 +22,12 @@ type UDPSniffer struct {
 	nhopCache cache.Cache[netutil.IPKey, HopEntry]
 	hops      HopPolicy
 
-	handle Handle
+	handle capture.Handle
 }
 
 func NewUDPSniffer(
 	logger zerolog.Logger,
-	handle Handle,
+	handle capture.Handle,
 	cache cache.Cache[netutil.IPKey, HopEntry],
 	cfg *config.RuntimeConfig,
 ) *UDPSniffer {
@@ -42,7 +42,7 @@ func NewUDPSniffer(
 // StartCapturing begins monitoring for UDP packets in a background goroutine.
 func (us *UDPSniffer) StartCapturing() {
 	_ = us.handle.ClearBPF()
-	_ = us.handle.SetBPFRawInstructionFilter(generateUdpFilter(us.handle.LinkType()))
+	_ = us.handle.SetBPFRawInstructionFilter(capture.UDPFilter(us.handle.LinkType()))
 
 	packetSource := gopacket.NewPacketSource(us.handle, us.handle.LinkType())
 	packets := packetSource.Packets()
@@ -86,36 +86,13 @@ func (us *UDPSniffer) LearnedHops(key netutil.IPKey) (uint8, bool) {
 func (us *UDPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	logger := logging.WithLocalScope(ctx, us.logger, "sniff")
 
-	udpLayer := p.Layer(layers.LayerTypeUDP)
-	if udpLayer == nil {
+	u, ok := capture.ParseUDP(p)
+	if !ok {
 		return
 	}
 
-	var srcIP, dstIP net.IP
-	var ttlLeft uint8
-
-	if ipLayer := p.Layer(layers.LayerTypeIPv4); ipLayer != nil {
-		ip, _ := ipLayer.(*layers.IPv4)
-		srcIP = ip.SrcIP
-		dstIP = ip.DstIP
-		ttlLeft = ip.TTL
-	} else if ipLayer := p.Layer(layers.LayerTypeIPv6); ipLayer != nil {
-		ip, _ := ipLayer.(*layers.IPv6)
-		srcIP = ip.SrcIP
-		dstIP = ip.DstIP
-		ttlLeft = ip.HopLimit
-	} else {
-		return
-	}
-
-	// A packet from an address to itself is not a reply from a server;
-	// learning from it would record a bogus hop count.
-	if srcIP.Equal(dstIP) {
-		return
-	}
-
-	key := netutil.NewIPKey(srcIP)
-	nhops := estimateHops(ttlLeft)
+	key := netutil.NewIPKey(u.Src)
+	nhops := u.Hops
 
 	prev, exists := us.nhopCache.Get(key)
 	if !exists {
@@ -127,56 +104,7 @@ func (us *UDPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 		logger.Trace().
 			Str("from", key.String()).
 			Uint8("nhops", nhops).
-			Uint8("ttlLeft", ttlLeft).
+			Uint8("ttlLeft", u.TTLLeft).
 			Msgf("ttl(udp) update")
 	}
-}
-
-// generateUdpFilter creates a BPF program for "ip and udp".
-// It supports Ethernet, Null (Loopback/VPN), and Raw IP link types.
-func generateUdpFilter(linkType layers.LinkType) []BPFInstruction {
-	var baseOffset uint32
-
-	switch linkType {
-	case layers.LinkTypeEthernet:
-		baseOffset = 14
-	case layers.LinkTypeNull, layers.LinkTypeLoop:
-		baseOffset = 4
-	case layers.LinkTypeRaw:
-		baseOffset = 0
-	default:
-		baseOffset = 14
-	}
-
-	instructions := []BPFInstruction{}
-
-	// 1. Protocol Verification (IPv4)
-	if linkType == layers.LinkTypeEthernet {
-		instructions = append(
-			instructions,
-			BPFInstruction{Op: 0x28, Jt: 0, Jf: 0, K: 12},
-			BPFInstruction{Op: 0x15, Jt: 0, Jf: 3, K: 0x0800},
-		)
-	} else {
-		instructions = append(
-			instructions,
-			BPFInstruction{Op: 0x30, Jt: 0, Jf: 0, K: baseOffset},
-			BPFInstruction{Op: 0x54, Jt: 0, Jf: 0, K: 0xf0},
-			BPFInstruction{Op: 0x15, Jt: 0, Jf: 3, K: 0x40},
-		)
-	}
-
-	// 2. Check Protocol == UDP (17)
-	instructions = append(instructions,
-		BPFInstruction{Op: 0x30, Jt: 0, Jf: 0, K: baseOffset + 9},
-		BPFInstruction{Op: 0x15, Jt: 0, Jf: 1, K: 17},
-	)
-
-	// 3. Capture
-	instructions = append(instructions,
-		BPFInstruction{Op: 0x6, Jt: 0, Jf: 0, K: 0x00040000},
-		BPFInstruction{Op: 0x6, Jt: 0, Jf: 0, K: 0x00000000},
-	)
-
-	return instructions
 }

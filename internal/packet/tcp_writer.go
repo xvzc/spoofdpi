@@ -9,6 +9,7 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/rs/zerolog"
+	"github.com/xvzc/spoofdpi/internal/capture"
 )
 
 var _ TCPSeqWriter = (*TCPWriter)(nil)
@@ -16,14 +17,14 @@ var _ TCPSeqWriter = (*TCPWriter)(nil)
 type TCPWriter struct {
 	logger zerolog.Logger
 
-	handle     Handle
+	handle     capture.Handle
 	iface      *net.Interface
 	gatewayMAC net.HardwareAddr
 }
 
 func NewTCPWriter(
 	logger zerolog.Logger,
-	handle Handle,
+	handle capture.Handle,
 	iface *net.Interface,
 	gatewayMAC net.HardwareAddr,
 ) *TCPWriter {

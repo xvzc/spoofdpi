@@ -1,0 +1,167 @@
+package capture
+
+import (
+	"net"
+
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+)
+
+// SynAck is a captured TCP SYN/ACK.
+type SynAck struct {
+	Src, Dst         net.IP
+	SrcPort, DstPort uint16
+	Seq, Ack         uint32
+	// TTLLeft is the IPv4 TTL or IPv6 hop limit the packet arrived with,
+	// and Hops the hop count estimated from it (see EstimateHops).
+	TTLLeft, Hops uint8
+}
+
+// ParseSynAck returns the SYN/ACK carried by p. ok is false if p is not an
+// IPv4 or IPv6 TCP packet with both SYN and ACK set, or if it is sent from
+// an address to itself: such a packet is not a reply from a server, and
+// learning from it would record a bogus hop count.
+func ParseSynAck(p gopacket.Packet) (sa SynAck, ok bool) {
+	tcpLayer := p.Layer(layers.LayerTypeTCP)
+	if tcpLayer == nil {
+		return SynAck{}, false
+	}
+
+	tcp, _ := tcpLayer.(*layers.TCP)
+	if !tcp.SYN || !tcp.ACK {
+		return SynAck{}, false
+	}
+
+	var srcIP, dstIP net.IP
+	var ttlLeft uint8
+
+	if ipLayer := p.Layer(layers.LayerTypeIPv4); ipLayer != nil {
+		ip, _ := ipLayer.(*layers.IPv4)
+		srcIP = ip.SrcIP
+		dstIP = ip.DstIP
+		ttlLeft = ip.TTL
+	} else if ipLayer := p.Layer(layers.LayerTypeIPv6); ipLayer != nil {
+		ip, _ := ipLayer.(*layers.IPv6)
+		srcIP = ip.SrcIP
+		dstIP = ip.DstIP
+		ttlLeft = ip.HopLimit
+	} else {
+		return SynAck{}, false
+	}
+
+	if srcIP.Equal(dstIP) {
+		return SynAck{}, false
+	}
+
+	return SynAck{
+		Src:     srcIP,
+		Dst:     dstIP,
+		SrcPort: uint16(tcp.SrcPort),
+		DstPort: uint16(tcp.DstPort),
+		Seq:     tcp.Seq,
+		Ack:     tcp.Ack,
+		TTLLeft: ttlLeft,
+		Hops:    EstimateHops(ttlLeft),
+	}, true
+}
+
+// EstimateHops estimates the number of hops based on TTL, assuming the
+// sender started from the nearest common initial TTL (64, 128 or 255).
+// This logic is based on the hop counting mechanism from GoodbyeDPI.
+// It returns 0 when the TTL is unchanged, i.e. the sender is on the local
+// link.
+func EstimateHops(ttlLeft uint8) uint8 {
+	// Unrecognizable initial TTL
+	estimatedInitialHops := uint8(255)
+	switch {
+	case ttlLeft <= 64:
+		estimatedInitialHops = 64
+	case ttlLeft <= 128:
+		estimatedInitialHops = 128
+	default:
+		estimatedInitialHops = 255
+	}
+
+	return estimatedInitialHops - ttlLeft
+}
+
+// SynAckFilter returns a BPF program that accepts IPv4 TCP SYN/ACKs on the
+// given link type.
+// It supports Ethernet, Null (Loopback/VPN), and Raw IP link types.
+func SynAckFilter(linkType layers.LinkType) []BPFInstruction {
+	var baseOffset uint32
+
+	switch linkType {
+	case layers.LinkTypeEthernet:
+		baseOffset = 14
+	case layers.LinkTypeNull, layers.LinkTypeLoop:
+		baseOffset = 4
+	case layers.LinkTypeRaw:
+		baseOffset = 0
+	default:
+		baseOffset = 14
+	}
+
+	instructions := []BPFInstruction{}
+
+	// 1. Protocol Verification (IPv4)
+	if linkType == layers.LinkTypeEthernet {
+		// Load EtherType (2 bytes at offset 12), then check for IPv4 (0x0800).
+		// On mismatch, jump 8 forward to the reject instruction.
+		instructions = append(
+			instructions,
+			BPFInstruction{Op: 0x28, Jt: 0, Jf: 0, K: 12},
+			BPFInstruction{Op: 0x15, Jt: 0, Jf: 8, K: 0x0800},
+		)
+	} else {
+		// For Null/Loop/Raw link types the packet starts with a 4-byte family
+		// field (Null/Loop) or directly with the IP header (Raw), so there is
+		// no EtherType to check.  Instead, load the first byte of the IP
+		// header (version | IHL), mask the upper nibble with 0xf0, and verify
+		// it equals 0x40 (IP version 4).  The load must come first; without
+		// it the accumulator is 0 and the check always fails, silently
+		// dropping every packet on these link types.
+		// This section emits 3 instructions (vs 2 for Ethernet), so the false
+		// jump offset is 7, not 8.
+		instructions = append(
+			instructions,
+			BPFInstruction{Op: 0x30, Jt: 0, Jf: 0, K: baseOffset}, // ldb [baseOffset]
+			BPFInstruction{Op: 0x54, Jt: 0, Jf: 0, K: 0xf0},       // and #0xf0
+			BPFInstruction{Op: 0x15, Jt: 0, Jf: 7, K: 0x40},       // jeq #0x40
+		)
+	}
+
+	// 2. Check Protocol == TCP (6)
+	instructions = append(instructions,
+		BPFInstruction{Op: 0x30, Jt: 0, Jf: 0, K: baseOffset + 9},
+		BPFInstruction{Op: 0x15, Jt: 0, Jf: 6, K: 6},
+	)
+
+	// 3. Check Fragmentation
+	instructions = append(
+		instructions,
+		BPFInstruction{Op: 0x28, Jt: 0, Jf: 0, K: baseOffset + 6},
+		BPFInstruction{Op: 0x45, Jt: 4, Jf: 0, K: 0x1fff},
+	)
+
+	// 4. Find TCP Header Start
+	instructions = append(instructions,
+		BPFInstruction{Op: 0xb1, Jt: 0, Jf: 0, K: baseOffset},
+	)
+
+	// 5. Check TCP Flags (SYN+ACK)
+	instructions = append(
+		instructions,
+		BPFInstruction{Op: 0x50, Jt: 0, Jf: 0, K: baseOffset + 13},
+		BPFInstruction{Op: 0x54, Jt: 0, Jf: 0, K: 18},
+		BPFInstruction{Op: 0x15, Jt: 0, Jf: 1, K: 18},
+	)
+
+	// 6. Capture
+	instructions = append(instructions,
+		BPFInstruction{Op: 0x6, Jt: 0, Jf: 0, K: 0x00040000},
+		BPFInstruction{Op: 0x6, Jt: 0, Jf: 0, K: 0x00000000},
+	)
+
+	return instructions
+}

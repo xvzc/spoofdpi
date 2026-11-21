@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"github.com/xvzc/spoofdpi/internal/capture"
 )
 
 // ResolveGatewayMAC resolves the MAC address of gwIP via ARP on iface.
@@ -23,7 +24,7 @@ func ResolveGatewayMAC(
 		return nil, fmt.Errorf("non-IPv4 gateway not supported")
 	}
 
-	handle, err := NewHandle(iface)
+	handle, err := capture.NewHandle(iface)
 	if err != nil {
 		return nil, fmt.Errorf("open pcap handle on %s: %w", iface.Name, err)
 	}
@@ -58,7 +59,7 @@ func ResolveGatewayMAC(
 
 func captureARPReply(
 	ctx context.Context,
-	handle Handle,
+	handle capture.Handle,
 	gwIP net.IP,
 	macCh chan<- net.HardwareAddr,
 ) {
@@ -90,7 +91,11 @@ func captureARPReply(
 	}
 }
 
-func sendARPRequest(handle Handle, srcMAC net.HardwareAddr, srcIP, dstIP net.IP) error {
+func sendARPRequest(
+	handle capture.Handle,
+	srcMAC net.HardwareAddr,
+	srcIP, dstIP net.IP,
+) error {
 	eth := layers.Ethernet{
 		SrcMAC:       srcMAC,
 		DstMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
