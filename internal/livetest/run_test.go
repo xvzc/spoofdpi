@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -138,6 +139,9 @@ func TestInterruptedError_ExitStatus(t *testing.T) {
 func TestStopOnSignal(t *testing.T) {
 	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGHUP} {
 		t.Run(sig.String(), func(t *testing.T) {
+			if signal.Ignored(sig) {
+				t.Skip("the test process ignores the signal")
+			}
 			ctx, stop := stopOnSignal(context.Background())
 			defer stop()
 
@@ -216,4 +220,32 @@ func TestInterruptedError_Message(t *testing.T) {
 		(&InterruptedError{Signal: syscall.SIGHUP}).Error(),
 	)
 	assert.Equal(t, "interrupted", (&InterruptedError{}).Error())
+}
+
+func TestStopOnSignal_IgnoredSIGHUP(t *testing.T) {
+	if signal.Ignored(syscall.SIGHUP) {
+		t.Skip("the test process already ignores SIGHUP")
+	}
+	signal.Ignore(syscall.SIGHUP)
+	t.Cleanup(func() {
+		// signal.Reset would leave SIGHUP reported as ignored. Notify
+		// clears that, and Stop then restores the default action.
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, syscall.SIGHUP)
+		signal.Stop(c)
+	})
+	require.True(t, signal.Ignored(syscall.SIGHUP))
+
+	ctx, stop := stopOnSignal(context.Background())
+	defer stop()
+
+	assert.True(t, signal.Ignored(syscall.SIGHUP), "SIGHUP is still ignored")
+	// Were SIGHUP registered, it would no longer be ignored and would
+	// cancel the context.
+	require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGHUP))
+	select {
+	case <-ctx.Done():
+		t.Fatal("an ignored SIGHUP cancelled the context")
+	case <-time.After(200 * time.Millisecond):
+	}
 }

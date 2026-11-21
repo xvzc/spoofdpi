@@ -11,6 +11,7 @@ There are two methods to configure spoofdpi, and both can be used together.
 | :--- | :--- |
 | `spoofdpi run` | Runs the server. |
 | `spoofdpi livetest` | Tests DPI bypass options against real sites. See [Live Test](livetest.md). |
+| `spoofdpi probe` | Measures hop counts to sites, how a DPI blocks them and whether fake packets fool it, and how the servers handle fake packets. See [Probe](probe.md). |
 
 Without a command, spoofdpi runs `run`, so `spoofdpi --tls-disorder` and `spoofdpi run --tls-disorder` are equivalent. `spoofdpi --help` lists the commands, and `spoofdpi help <command>` or `spoofdpi <command> --help` shows the options of a command.
 

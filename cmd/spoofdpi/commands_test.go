@@ -105,6 +105,13 @@ func TestSelectCommand(t *testing.T) {
 			server:   false,
 		},
 		{
+			name:     "help probe",
+			args:     []string{"spoofdpi", "help", "probe"},
+			wantName: "spoofdpi probe",
+			wantArgs: []string{"probe", "--help"},
+			server:   false,
+		},
+		{
 			name:     "help with an unknown command is the server's",
 			args:     []string{"spoofdpi", "help", "foo"},
 			wantName: "spoofdpi",
@@ -151,6 +158,13 @@ func TestSelectCommand(t *testing.T) {
 			args:     []string{"spoofdpi", "livetest", "--url", "x"},
 			wantName: "spoofdpi livetest",
 			wantArgs: []string{"livetest", "--url", "x"},
+			server:   false,
+		},
+		{
+			name:     "probe",
+			args:     []string{"spoofdpi", "probe", "--url", "x"},
+			wantName: "spoofdpi probe",
+			wantArgs: []string{"probe", "--url", "x"},
 			server:   false,
 		},
 	}
@@ -297,6 +311,7 @@ func TestRootHelp(t *testing.T) {
 		"COMMANDS:\n" +
 		"  run       Run the server\n" +
 		"  livetest  Test DPI-bypass options against real sites\n" +
+		"  probe     Measure hop counts and DPI behavior of sites\n" +
 		"\n" +
 		"Without a command, spoofdpi runs 'run'.\n" +
 		"Run 'spoofdpi help <command>' or 'spoofdpi <command> --help' for the options of a command.\n"
@@ -330,7 +345,7 @@ func TestServerHelp(t *testing.T) {
 }
 
 func TestHelpCommand(t *testing.T) {
-	for _, name := range []string{"run", "livetest"} {
+	for _, name := range []string{"run", "livetest", "probe"} {
 		assert.Equal(t,
 			helpOutput(t, "spoofdpi", name, "--help"),
 			helpOutput(t, "spoofdpi", "help", name),
@@ -342,6 +357,14 @@ func TestLivetestHelp(t *testing.T) {
 	out := helpOutput(t, "spoofdpi", "livetest", "--help")
 	assert.Contains(t, out, "USAGE:\n  spoofdpi livetest [options]\n")
 	assert.Contains(t, out, "--url ")
+	assert.NotContains(t, out, "--tls-fake-stutter")
+}
+
+func TestProbeHelp(t *testing.T) {
+	out := helpOutput(t, "spoofdpi", "probe", "--help")
+	assert.Contains(t, out, "USAGE:\n  spoofdpi probe [options]\n")
+	assert.Contains(t, out, "--url ")
+	assert.Contains(t, out, "--dns-mode ")
 	assert.NotContains(t, out, "--tls-fake-stutter")
 }
 

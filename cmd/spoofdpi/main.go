@@ -17,7 +17,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/dns"
-	"github.com/xvzc/spoofdpi/internal/livetest"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
@@ -75,10 +74,10 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "%s: %v\n", selected.cmd.Name, err)
-		// An interrupted livetest exits with the signal's status.
-		var interrupted *livetest.InterruptedError
-		if errors.As(err, &interrupted) {
-			os.Exit(interrupted.ExitStatus())
+		// An interrupted livetest or probe exits with the signal's status.
+		var status interface{ ExitStatus() int }
+		if errors.As(err, &status) {
+			os.Exit(status.ExitStatus())
 		}
 		os.Exit(1)
 	}

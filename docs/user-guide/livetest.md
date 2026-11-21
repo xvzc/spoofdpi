@@ -116,4 +116,4 @@ livetest exits with a non-zero status only when the test cannot run, or when it 
 
 - An invalid option, such as a `--url` without `http://` or `https://`, or a `--out` directory that cannot be created, exits with `1` before any case runs.
 - Once the test runs, it exits with `0` whatever the results, including when a case has ignored arguments or fails to start.
-- Ctrl+C (`SIGINT`), `SIGTERM` or `SIGHUP` stops the running case and prints the report of the results so far. A URL that has no results yet has no row. livetest then exits with 128 plus the signal number: `130` for `SIGINT`, `143` for `SIGTERM` and `129` for `SIGHUP`.
+- Ctrl+C (`SIGINT`), `SIGTERM` or `SIGHUP` stops the running case and prints the report of the results so far. A URL that has no results yet has no row. livetest then exits with 128 plus the signal number: `130` for `SIGINT`, `143` for `SIGTERM` and `129` for `SIGHUP`. A livetest started with `SIGHUP` ignored, for example under `nohup`, keeps ignoring it.

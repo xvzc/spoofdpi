@@ -10,6 +10,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/livetest"
+	"github.com/xvzc/spoofdpi/internal/probe"
 )
 
 // serverRunFunc runs the server with a loaded config.
@@ -57,6 +58,11 @@ func newCommandRegistry(
 				build: func() *cli.Command {
 					return livetest.NewCommand(executable, livetestCaseFlags(runServer))
 				},
+			},
+			{
+				name:  "probe",
+				usage: "Measure hop counts and DPI behavior of sites",
+				build: probe.NewCommand,
 			},
 		},
 	}

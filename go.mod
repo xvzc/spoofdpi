@@ -17,6 +17,7 @@ require (
 	github.com/urfave/cli/v3 v3.6.1
 	golang.org/x/net v0.50.0
 	golang.org/x/sys v0.42.0
+	golang.org/x/term v0.40.0
 	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb
 	gvisor.dev/gvisor v0.0.0-20260401053414-479e1cc2c3d9
 	mvdan.cc/sh v2.6.4+incompatible
@@ -51,7 +52,6 @@ require (
 	golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa // indirect
 	golang.org/x/mod v0.32.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/term v0.40.0 // indirect
 	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	golang.org/x/tools v0.41.0 // indirect

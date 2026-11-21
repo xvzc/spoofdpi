@@ -161,13 +161,25 @@ func Run(ctx context.Context, opts Options, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// notifySignals returns the signals that stop the run: SIGINT, SIGTERM
+// and, unless the process ignores it, SIGHUP. Asking to be notified of an
+// ignored signal would stop ignoring it.
+func notifySignals() []os.Signal {
+	signals := []os.Signal{syscall.SIGINT, syscall.SIGTERM}
+	if !signal.Ignored(syscall.SIGHUP) {
+		signals = append(signals, syscall.SIGHUP)
+	}
+	return signals
+}
+
 // stopOnSignal returns a context that is cancelled, with an
 // *InterruptedError as its cause, when the process gets SIGINT, SIGTERM or
-// SIGHUP.
+// SIGHUP. SIGHUP is left alone when the process ignores it, as under
+// nohup.
 func stopOnSignal(ctx context.Context) (context.Context, func()) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	signal.Notify(signals, notifySignals()...)
 	go func() {
 		select {
 		case sig := <-signals:
