@@ -47,12 +47,11 @@ func (h *TCPHandler) Handle(
 	logger := logging.WithLocalScope(ctx, h.logger, "tcp")
 
 	// Addr-based rule matching using the destination IP
-	cfg := h.cfg
+	var addrRule *config.Rule
 	if h.ruleSet != nil {
 		q := []rule.Query{{Type: rule.MatchTypeAddr, Value: dst.Addrs[0].String()}}
-		if addrRule := h.ruleSet.Search(q); addrRule != nil {
+		if addrRule = h.ruleSet.Search(q); addrRule != nil {
 			logger.Trace().RawJSON("summary", addrRule.JSON()).Msg("addr match")
-			cfg = &addrRule.Config
 		}
 	}
 
@@ -71,10 +70,27 @@ func (h *TCPHandler) Handle(
 	// Check if it's a TLS Handshake (Content Type 0x16)
 	if buf[0] == 0x16 {
 		logger.Debug().Msg("detected tls handshake")
-		if err := h.handleTLS(ctx, logger, lBufferedConn, dst, cfg, sysNet); err != nil {
+		if err := h.handleTLS(
+			ctx,
+			logger,
+			lBufferedConn,
+			dst,
+			addrRule,
+			sysNet,
+		); err != nil {
 			logger.Debug().Err(err).Msg("tls handler failed")
 		}
 		return
+	}
+
+	if addrRule != nil && addrRule.Block {
+		logger.Debug().Msg("request is blocked by policy")
+		return
+	}
+
+	cfg := h.cfg
+	if addrRule != nil {
+		cfg = &addrRule.Config
 	}
 
 	rConn, err := netutil.DialFastest(
@@ -114,7 +130,7 @@ func (h *TCPHandler) handleTLS(
 	logger zerolog.Logger,
 	lConn net.Conn,
 	dst *netutil.Destination,
-	cfg *config.RuntimeConfig,
+	addrRule *config.Rule,
 	sysNet TUNSystemNetwork,
 ) error {
 	// Read ClientHello
@@ -136,13 +152,24 @@ func (h *TCPHandler) handleTLS(
 
 	logger.Trace().Str("value", dst.Host).Msg("extracted sni field")
 
-	// Domain-based matching overrides addr-based cfg when SNI is available
+	// Domain-based matching overrides the addr-based rule when SNI is available
+	matched := addrRule
 	if h.ruleSet != nil && dst.Host != "" {
 		q := []rule.Query{{Type: rule.MatchTypeDomain, Value: dst.Host}}
 		if domainRule := h.ruleSet.Search(q); domainRule != nil {
 			logger.Trace().RawJSON("summary", domainRule.JSON()).Msg("domain match")
-			cfg = &domainRule.Config
+			matched = domainRule
 		}
+	}
+
+	if matched != nil && matched.Block {
+		logger.Debug().Msg("request is blocked by policy")
+		return nil
+	}
+
+	cfg := h.cfg
+	if matched != nil {
+		cfg = &matched.Config
 	}
 
 	// Dial Remote
