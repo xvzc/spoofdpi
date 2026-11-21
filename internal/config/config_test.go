@@ -347,6 +347,7 @@ func TestResolveRules_inheritsFromBase(t *testing.T) {
 	base.HTTPS.FakeCount = 5
 	base.HTTPS.SplitMode = HTTPSSplitModeChunk
 	base.HTTPS.ChunkSize = 99
+	base.HTTPS.RecordSplit = TLSRecordSplit{At: 16, Repeat: 150, Step: 16}
 
 	raw := []map[string]any{
 		{
@@ -377,6 +378,12 @@ func TestResolveRules_inheritsFromBase(t *testing.T) {
 		uint8(99),
 		rule.Config.HTTPS.ChunkSize,
 		"rule inherits chunk-size from base",
+	)
+	assert.Equal(
+		t,
+		base.HTTPS.RecordSplit,
+		rule.Config.HTTPS.RecordSplit,
+		"rule inherits record-split from base",
 	)
 }
 

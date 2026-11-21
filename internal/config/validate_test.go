@@ -93,6 +93,34 @@ func TestCheckGateway(t *testing.T) {
 	}
 }
 
+func TestCheckTLSRecordSplit(t *testing.T) {
+	tcs := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"all fields", "16:150:16", false},
+		{"at only", "1", false},
+		{"zero disables", "0", false},
+		{"empty", "", true},
+		{"empty field", "16::16", true},
+		{"zero repeat", "16:0:16", true},
+		{"negative step", "16:1:-1", true},
+		{"too many fields", "1:2:3:4", true},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkTLSRecordSplit(tc.input)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestCheckCIDR(t *testing.T) {
 	tcs := []struct {
 		name    string

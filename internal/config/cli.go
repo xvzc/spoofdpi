@@ -57,6 +57,7 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 				ChunkSize:          35,
 				CustomSegmentPlans: nil,
 				Skip:               false,
+				RecordSplit:        TLSRecordSplit{At: 0, Repeat: 0, Step: 0},
 			},
 			UDP: UDPOptions{ //exhaustruct:enforce
 				Skip:       false,
@@ -361,6 +362,26 @@ func CreateCommand(
 					sz := uint8(v)
 					cliOverrides = append(cliOverrides, func(cfg *Config) {
 						cfg.HTTPS.ChunkSize = sz
+					})
+					return nil
+				},
+			},
+
+			&cli.StringFlag{
+				Name: "https-record-split",
+				Usage: fmt.Sprintf(`
+				Split the Client Hello TLS record into smaller records, formatted as 
+				'at[:repeat[:step]]'. Cuts are placed at record body offsets at, at+step, ... 
+				at most 'repeat' times (e.g. '16:150:16' produces 16-byte records). 
+				Applied before 'https-split-mode'. '0' disables it. (default: %v)`,
+					defaultCfg.HTTPS.RecordSplit,
+				),
+				OnlyOnce:  true,
+				Validator: checkTLSRecordSplit,
+				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+					rs := MustParseTLSRecordSplit(v)
+					cliOverrides = append(cliOverrides, func(cfg *Config) {
+						cfg.HTTPS.RecordSplit = rs
 					})
 					return nil
 				},

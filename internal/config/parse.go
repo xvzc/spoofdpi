@@ -76,6 +76,41 @@ func MustParseIPv4(s string) net.IP {
 	return ip
 }
 
+// parseTLSRecordSplit parses "at[:repeat[:step]]" (e.g. "16:150:16").
+// repeat defaults to 1 and step to 0; at = 0 disables record splitting.
+func parseTLSRecordSplit(s string) (TLSRecordSplit, error) {
+	parts := strings.Split(s, ":")
+	if len(parts) > 3 {
+		return TLSRecordSplit{}, fmt.Errorf(
+			"value '%s' is invalid (format: at[:repeat[:step]])", s,
+		)
+	}
+
+	checks := []func(int64) error{checkUint16, checkUint16NonZero, checkUint16}
+	vals := []uint16{0, 1, 0}
+	for i, p := range parts {
+		v, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64)
+		if err != nil {
+			return TLSRecordSplit{}, fmt.Errorf("field '%s' is not a number", p)
+		}
+		if err := checks[i](v); err != nil {
+			return TLSRecordSplit{}, err
+		}
+		vals[i] = uint16(v)
+	}
+
+	return TLSRecordSplit{At: vals[0], Repeat: vals[1], Step: vals[2]}, nil
+}
+
+func MustParseTLSRecordSplit(s string) TLSRecordSplit {
+	v, err := parseTLSRecordSplit(s)
+	if err != nil {
+		panic(err)
+	}
+
+	return v
+}
+
 func MustParseLogLevel(s string) zerolog.Level {
 	level, err := zerolog.ParseLevel(s)
 	if err != nil {

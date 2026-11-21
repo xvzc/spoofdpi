@@ -72,9 +72,49 @@ func (d *TLSDesyncer) Desync(
 		}
 	}
 
-	segments := split(logger, msg, httpsOpts)
+	raw, sniOffset := splitClientHelloRecords(logger, msg, httpsOpts.RecordSplit)
+	segments := split(logger, raw, msg.Kind(), sniOffset, httpsOpts)
 
 	return d.sendSegments(conn, logger, segments)
+}
+
+// splitClientHelloRecords applies TLS record splitting to a Client Hello
+// if enabled. It returns the bytes to segment and an SNI locator in those
+// bytes' coordinates: SNI is parsed from the original record and remapped.
+func splitClientHelloRecords(
+	logger zerolog.Logger,
+	msg *proto.TLSMessage,
+	opts config.TLSRecordSplit,
+) ([]byte, func() (int, int, error)) {
+	raw := msg.Raw()
+	if !opts.Enabled() || !msg.IsClientHello() {
+		return raw, msg.ExtractSNIOffset
+	}
+
+	cuts := recordCuts(
+		len(raw)-proto.TLSHeaderLen,
+		int(opts.At),
+		int(opts.Repeat),
+		int(opts.Step),
+	)
+	out, remap, err := splitRecords(raw, cuts)
+	if err != nil {
+		logger.Debug().Err(err).Msg("tls record split failed, sending as is")
+		return raw, msg.ExtractSNIOffset
+	}
+
+	logger.Debug().
+		Int("records", len(cuts)+1).
+		Int("len", len(out)).
+		Msg("tls record split applied")
+
+	return out, func() (int, int, error) {
+		start, end, err := msg.ExtractSNIOffset()
+		if err != nil {
+			return 0, 0, err
+		}
+		return remap(start), remap(end), nil
+	}
 }
 
 // sendSegments sends the segmented Client Hello sequentially.
@@ -120,17 +160,18 @@ func (d *TLSDesyncer) sendSegments(
 
 func split(
 	logger zerolog.Logger,
-	msg *proto.TLSMessage,
+	raw []byte,
+	kind string,
+	sniOffset func() (int, int, error),
 	opts *config.HTTPSOptions,
 ) []Segment {
 	mode := opts.SplitMode
-	raw := msg.Raw()
 	var segments []Segment
 	var err error
 	switch mode {
 	case config.HTTPSSplitModeSNI:
 		var start, end int
-		start, end, err = msg.ExtractSNIOffset()
+		start, end, err = sniOffset()
 		if err != nil {
 			break
 		}
@@ -144,7 +185,7 @@ func split(
 	case config.HTTPSSplitModeFirstByte:
 		segments, err = splitFirstByte(raw, opts.Disorder)
 	case config.HTTPSSplitModeCustom:
-		segments, err = applySegmentPlans(msg, opts.CustomSegmentPlans)
+		segments, err = applySegmentPlans(raw, sniOffset, opts.CustomSegmentPlans)
 	case config.HTTPSSplitModeNone:
 		segments = []Segment{{Packet: raw}}
 	default:
@@ -155,13 +196,13 @@ func split(
 	logger.Debug().
 		Int("len", len(segments)).
 		Str("mode", mode.String()).
-		Str("kind", msg.Kind()).
+		Str("kind", kind).
 		Bool("disorder", opts.Disorder).
 		Msg("segments ready")
 
 	if err != nil {
 		logger.Debug().Err(err).
-			Str("kind", msg.Kind()).
+			Str("kind", kind).
 			Msgf("error processing split mode '%s', fallback to 'none'", mode)
 		segments = []Segment{{Packet: raw}}
 	}
@@ -294,7 +335,8 @@ func (d *TLSDesyncer) sendFakePackets(
 	opts *config.HTTPSOptions,
 ) (int, error) {
 	var totalSent int
-	segments := split(logger, opts.FakePacket, opts)
+	fake := opts.FakePacket
+	segments := split(logger, fake.Raw(), fake.Kind(), fake.ExtractSNIOffset, opts)
 
 	for range opts.FakeCount {
 		for _, v := range segments {
@@ -317,11 +359,11 @@ func (d *TLSDesyncer) sendFakePackets(
 }
 
 func applySegmentPlans(
-	msg *proto.TLSMessage,
+	raw []byte,
+	sniOffset func() (int, int, error),
 	plans []config.SegmentPlan,
 ) ([]Segment, error) {
-	raw := msg.Raw()
-	sniStart, _, err := msg.ExtractSNIOffset()
+	sniStart, _, err := sniOffset()
 	if err != nil {
 		return nil, err
 	}

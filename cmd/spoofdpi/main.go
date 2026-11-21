@@ -148,6 +148,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 		Str("split-mode", cfg.HTTPS.SplitMode.String()).
 		Uint8("chunk-size", uint8(cfg.HTTPS.ChunkSize)).
 		Bool("disorder", cfg.HTTPS.Disorder).
+		Str("record-split", cfg.HTTPS.RecordSplit.String()).
 		Msg(" split")
 
 	logger.Info().

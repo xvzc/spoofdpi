@@ -440,6 +440,7 @@ func TestFromTomlFile(t *testing.T) {
 				split-mode = "chunk"
 				chunk-size = 20
 				skip = true
+				record-split = { at = 16, repeat = 150, step = 16 }
 
 			[[rules]]
 				name = "test-rule"
@@ -464,6 +465,7 @@ func TestFromTomlFile(t *testing.T) {
 					split-mode = "sni",
 					chunk-size = 10,
 					skip = true,
+					record-split = { at = 0 },
 				}
 		`
 		tmpDir := t.TempDir()
@@ -509,6 +511,11 @@ func TestFromTomlFile(t *testing.T) {
 		assert.Equal(t, HTTPSSplitModeChunk, cfg.HTTPS.SplitMode)
 		assert.Equal(t, uint8(20), cfg.HTTPS.ChunkSize)
 		assert.True(t, cfg.HTTPS.Skip)
+		assert.Equal(
+			t,
+			TLSRecordSplit{At: 16, Repeat: 150, Step: 16},
+			cfg.HTTPS.RecordSplit,
+		)
 
 		// Resolve rules on top of the finalized base RuntimeConfig.
 		rules, err := resolveRules(rulesFromMap(m), cfg.RuntimeConfig)
@@ -536,5 +543,10 @@ func TestFromTomlFile(t *testing.T) {
 		assert.Equal(t, HTTPSSplitModeSNI, rule.Config.HTTPS.SplitMode)
 		assert.Equal(t, uint8(10), rule.Config.HTTPS.ChunkSize)
 		assert.True(t, rule.Config.HTTPS.Skip)
+		assert.False(
+			t,
+			rule.Config.HTTPS.RecordSplit.Enabled(),
+			"rule disables record-split",
+		)
 	})
 }

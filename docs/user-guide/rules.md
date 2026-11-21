@@ -84,6 +84,7 @@ Customize how HTTPS connections are established. The available fields mirror the
 | `split-mode`  | String | Split strategy: `"chunk"`, `"sni"`, `"random"`, etc.  |
 | `chunk-size`  | Int    | Size of chunks when `split-mode` is `"chunk"`.        |
 | `skip`        | Bool   | If `true`, bypasses DPI modifications (standard TLS). |
+| `record-split` | Table | Split the Client Hello into TLS records, e.g. `{ at = 16, repeat = 150, step = 16 }`. |
 
 ## Example
 

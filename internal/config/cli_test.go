@@ -45,6 +45,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				assert.Equal(t, HTTPSSplitModeSNI, cfg.HTTPS.SplitMode)
 				assert.Equal(t, uint8(35), cfg.HTTPS.ChunkSize)
 				assert.False(t, cfg.HTTPS.Skip)
+				assert.False(t, cfg.HTTPS.RecordSplit.Enabled())
 				assert.Equal(t, uint8(0), cfg.UDP.FakeCount)
 				assert.Equal(t, 64, len(cfg.UDP.FakePacket))
 			},
@@ -74,6 +75,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				"--https-split-mode", "chunk",
 				"--https-chunk-size", "50",
 				"--https-skip",
+				"--https-record-split", "16:150:16",
 				"--udp-fake-count", "5",
 				"--udp-fake-packet", "0x01, 0x02",
 			},
@@ -109,6 +111,11 @@ func TestCreateCommand_Flags(t *testing.T) {
 				assert.Equal(t, HTTPSSplitModeChunk, cfg.HTTPS.SplitMode)
 				assert.Equal(t, uint8(50), cfg.HTTPS.ChunkSize)
 				assert.True(t, cfg.HTTPS.Skip)
+				assert.Equal(
+					t,
+					TLSRecordSplit{At: 16, Repeat: 150, Step: 16},
+					cfg.HTTPS.RecordSplit,
+				)
 
 				// UDP
 				assert.Equal(t, uint8(5), cfg.UDP.FakeCount)
