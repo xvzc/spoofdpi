@@ -7,7 +7,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/cache"
 	"github.com/xvzc/spoofdpi/internal/capture"
-	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
@@ -34,14 +33,13 @@ func OpenTCPStack(
 	iface *net.Interface,
 	gatewayMAC net.HardwareAddr,
 	hopCache cache.Cache[netutil.IPKey, HopEntry],
-	rc *config.RuntimeConfig,
 ) (*TCPStack, error) {
 	handle, err := capture.NewHandle(iface)
 	if err != nil {
 		return nil, err
 	}
 	seqs := NewSeqTracker(seqEntryTTL)
-	sniffer := NewTCPSniffer(logger, handle, hopCache, seqs, rc)
+	sniffer := NewTCPSniffer(logger, handle, hopCache, seqs)
 	writer := NewTCPWriter(logger, handle, iface, gatewayMAC)
 	sniffer.StartCapturing()
 	return &TCPStack{Sniffer: sniffer, Writer: writer, Seqs: seqs}, nil

@@ -16,6 +16,7 @@ import (
 )
 
 type writtenPacket struct {
+	ttl     uint8
 	payload []byte
 	seq     packet.SeqAck
 	md5     bool
@@ -32,15 +33,17 @@ func (w *recordingWriter) WriteCraftedPacket(
 }
 
 func (w *recordingWriter) WriteCraftedPacketWithSeq(
-	_ context.Context, _, _ net.Addr, _ uint8, payload []byte, fake packet.TCPFake,
+	_ context.Context, _, _ net.Addr, ttl uint8, payload []byte, fake packet.TCPFake,
 ) (int, error) {
 	w.packets = append(
 		w.packets,
-		writtenPacket{payload: payload, seq: fake.SeqAck, md5: fake.BadMD5Sig},
+		writtenPacket{ttl: ttl, payload: payload, seq: fake.SeqAck, md5: fake.BadMD5Sig},
 	)
 	return len(payload), nil
 }
 
+// stubSniffer is a sniffer that has every server registered, with hops
+// learned if hopLearned is set.
 type stubSniffer struct {
 	hopLearned bool
 	hops       uint8
@@ -48,10 +51,17 @@ type stubSniffer struct {
 
 func (stubSniffer) StartCapturing()   {}
 func (stubSniffer) Register([]net.IP) {}
-func (s stubSniffer) LearnedHops(netutil.IPKey) (uint8, bool) {
-	return s.hops, s.hopLearned
+func (s stubSniffer) Hops(netutil.IPKey) (packet.HopEntry, bool) {
+	if !s.hopLearned {
+		return packet.HopEntry{}, true
+	}
+	return packet.HopEntry{Hops: s.hops, Learned: true}, true
 }
-func (stubSniffer) GetOptimalTTL(netutil.IPKey) uint8 { return 8 }
+
+// baseConnOpts are the default hop-count options.
+func baseConnOpts() *config.ConnOptions {
+	return &config.ConnOptions{HopCountDefault: 8, HopCountMax: 255}
+}
 
 // stubConn is a net.Conn with TCP addresses that accepts every write.
 type stubConn struct {
@@ -197,7 +207,7 @@ func TestDesync_UsesLearnedSeqAckWithOffsets(t *testing.T) {
 	opts.FakeSeqOffset = -10000
 	opts.FakeAckOffset = 66000
 
-	_, err := d.Desync(context.Background(), conn, fakeMsg(), opts)
+	_, err := d.Desync(context.Background(), conn, fakeMsg(), opts, baseConnOpts())
 	require.NoError(t, err)
 
 	require.NotEmpty(t, w.packets)
@@ -215,7 +225,9 @@ func TestDesync_UnlearnedFakeSegmentsLineUp(t *testing.T) {
 	opts := tlsOpts(1, 100)
 	opts.SynAckTimeout = 0
 
-	_, err := d.Desync(context.Background(), newStubConn("203.0.113.1"), fakeMsg(), opts)
+	_, err := d.Desync(
+		context.Background(), newStubConn("203.0.113.1"), fakeMsg(), opts, baseConnOpts(),
+	)
 	require.NoError(t, err)
 
 	require.Greater(t, len(w.packets), 1)
@@ -260,7 +272,9 @@ func TestDesync_WaitRules(t *testing.T) {
 			opts.SynAckTimeout = tc.timeout
 
 			start := time.Now()
-			_, err := d.Desync(context.Background(), newStubConn(tc.remote), fakeMsg(), opts)
+			_, err := d.Desync(
+				context.Background(), newStubConn(tc.remote), fakeMsg(), opts, baseConnOpts(),
+			)
 			require.NoError(t, err)
 			elapsed := time.Since(start)
 
@@ -296,6 +310,7 @@ func TestDesync_SkipsFakesOnLocalLink(t *testing.T) {
 				newStubConn("192.168.1.20"),
 				fakeMsg(),
 				opts,
+				baseConnOpts(),
 			)
 			require.NoError(t, err)
 			assert.Equal(
@@ -313,13 +328,15 @@ func TestDesync_SkipsFakesOnLocalLink(t *testing.T) {
 type udpWriter struct {
 	n        int
 	src, dst net.Addr
+	ttl      uint8
 }
 
 func (w *udpWriter) WriteCraftedPacket(
-	_ context.Context, src, dst net.Addr, _ uint8, payload []byte,
+	_ context.Context, src, dst net.Addr, ttl uint8, payload []byte,
 ) (int, error) {
 	w.n++
 	w.src, w.dst = src, dst
+	w.ttl = ttl
 	return len(payload), nil
 }
 
@@ -350,7 +367,7 @@ func TestUDPDesync_SkipsFakesOnLocalLink(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := &udpWriter{}
 			d := NewUDPDesyncer(zerolog.Nop(), w, tc.sniffer)
-			_, err := d.Desync(context.Background(), conn, opts)
+			_, err := d.Desync(context.Background(), conn, opts, baseConnOpts())
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantFakes, w.n)
 		})
@@ -369,6 +386,7 @@ func TestUDPDesync_UsesTheFlowAddresses(t *testing.T) {
 		context.Background(),
 		conn,
 		&config.UDPOptions{FakePreflight: 1, FakePacket: make([]byte, 8)},
+		baseConnOpts(),
 	)
 	require.NoError(t, err)
 	assert.Equal(t, conn.local, w.src, "fakes come from the real flow's local address")

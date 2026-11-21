@@ -20,6 +20,7 @@ type helloSender interface {
 		conn net.Conn,
 		msg *proto.TLSMessage,
 		opts *config.HTTPSOptions,
+		connOpts *config.ConnOptions,
 	) (int, error)
 }
 
@@ -69,6 +70,7 @@ func sendHello(
 			return errCannotSetTTL
 		}
 	}
-	_, err := s.Desync(ctx, conn, msg, opts)
+	// No fake packets are sent, so no hop-count options are needed.
+	_, err := s.Desync(ctx, conn, msg, opts, &config.ConnOptions{})
 	return err
 }

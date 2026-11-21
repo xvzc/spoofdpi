@@ -10,7 +10,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/cache"
-	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
@@ -62,8 +61,11 @@ func (f packetFakes) desyncer(ttl uint8) (helloSender, *fakeLog) {
 	log := &fakeLog{}
 	return desync.NewTLSDesyncer(
 		zerolog.Nop(),
-		recordingWriter{TCPSeqWriter: f.stack.Writer, log: log},
-		fixedTTLSniffer{Sniffer: f.stack.Sniffer, ttl: ttl},
+		recordingWriter{
+			TCPSeqWriter: fixedTTLWriter{TCPSeqWriter: f.stack.Writer, ttl: ttl},
+			log:          log,
+		},
+		unlearnedSniffer{Sniffer: f.stack.Sniffer},
 		f.stack.Seqs,
 	), log
 }
@@ -95,7 +97,6 @@ func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error)
 		&route.Iface,
 		gatewayMAC,
 		hopCache,
-		&config.RuntimeConfig{},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errFakeCapture, err)
@@ -108,19 +109,35 @@ func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error)
 	return packetFakes{stack: stack}, nil
 }
 
-// fixedTTLSniffer is a sniffer whose fake packets leave with ttl, the TTL
-// the probe chose from the actual hop count, rather than the one the
-// sniffer learned.
-type fixedTTLSniffer struct {
+// unlearnedSniffer is a sniffer that reports no hop count for any server,
+// so that the desyncer sends the fake packets to a server whatever hop
+// count the sniffer learned, even one on the local link.
+type unlearnedSniffer struct {
 	packet.Sniffer
+}
+
+func (unlearnedSniffer) Hops(netutil.IPKey) (packet.HopEntry, bool) {
+	return packet.HopEntry{}, false
+}
+
+// fixedTTLWriter is a writer whose fake packets leave with ttl, the TTL
+// the probe chose from the actual hop count, rather than the one the
+// desyncer computed from the sniffer's hop count.
+type fixedTTLWriter struct {
+	packet.TCPSeqWriter
 	ttl uint8
 }
 
-func (s fixedTTLSniffer) GetOptimalTTL(netutil.IPKey) uint8 { return s.ttl }
-
-// LearnedHops reports no learned hop count, so that the desyncer sends the
-// fake packets to a server whatever hop count it learned.
-func (s fixedTTLSniffer) LearnedHops(netutil.IPKey) (uint8, bool) { return 0, false }
+func (w fixedTTLWriter) WriteCraftedPacketWithSeq(
+	ctx context.Context,
+	src net.Addr,
+	dst net.Addr,
+	_ uint8,
+	payload []byte,
+	fake packet.TCPFake,
+) (int, error) {
+	return w.TCPSeqWriter.WriteCraftedPacketWithSeq(ctx, src, dst, w.ttl, payload, fake)
+}
 
 // recordingWriter is a writer that records the fake packets it sends in
 // log: the desyncer goes on with the real ClientHello when they fail.

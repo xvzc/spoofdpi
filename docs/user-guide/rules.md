@@ -91,6 +91,19 @@ Customize how TLS connections are established. The available fields mirror the g
 | `custom-split`    | Array  | Segment plans for `split-mode = "custom"`.                    |
 | `skip`            | Bool   | If `true`, bypasses DPI modifications (standard TLS).         |
 
+## Connection Override (`connection`)
+
+Customize the connection settings of matching connections. The available fields mirror the global [Connection Configuration](connection.md).
+
+| Field               | Type | Description                                                    |
+| :------------------ | :--- | :------------------------------------------------------------- |
+| `hop-count-default` | Int  | Hop count to the server assumed until it is learned.           |
+| `hop-count-offset`  | Int  | Added to a learned hop count before it sets the TTL of fakes.  |
+| `hop-count-min`     | Int  | Lower bound of the hop count used for fake packets.            |
+| `hop-count-max`     | Int  | Upper bound of the hop count used for fake packets.            |
+| `tcp-timeout`       | Int  | Milliseconds to wait for TCP connections.                      |
+| `udp-idle-timeout`  | Int  | Milliseconds a UDP connection may stay idle before it closes.  |
+
 ## Example
 
 ```toml

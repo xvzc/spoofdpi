@@ -3,18 +3,15 @@ package packet
 import (
 	"net"
 
-	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
 type Sniffer interface {
 	StartCapturing()
 	Register(addrs []net.IP)
-	GetOptimalTTL(key netutil.IPKey) uint8
-	// LearnedHops returns the hop count for key and whether it has been
-	// learned from a captured packet, rather than being the registered
-	// default.
-	LearnedHops(key netutil.IPKey) (hops uint8, ok bool)
+	// Hops returns the hop-count cache entry of key, and whether key is
+	// cached (registered or learned).
+	Hops(key netutil.IPKey) (e HopEntry, ok bool)
 }
 
 // HopPolicy turns a cached hop count into the TTL of fake packets.
@@ -25,26 +22,16 @@ type HopPolicy struct {
 	Offset  int8  // added to a learned hop count
 }
 
-// NewHopPolicy builds a HopPolicy from the connection options.
-func NewHopPolicy(o config.ConnOptions) HopPolicy {
-	return HopPolicy{
-		Default: o.HopCountDefault,
-		Min:     o.HopCountMin,
-		Max:     o.HopCountMax,
-		Offset:  o.HopCountOffset,
-	}
-}
-
 // TTL returns the TTL for fake packets to a server whose cache entry is e
-// (ok is false if the server is not cached): the hop count, with Offset
-// added if it was learned, clamped to [Min, Max], minus 1. The result is
-// at least 1.
+// (ok is false if the server is not cached): the learned hop count plus
+// Offset, or Default if it was not learned, clamped to [Min, Max], minus
+// 1. The result is at least 1.
 func (p HopPolicy) TTL(e HopEntry, ok bool) uint8 {
 	hops := 255
 	if ok {
-		hops = int(e.Hops)
+		hops = int(p.Default)
 		if e.Learned {
-			hops += int(p.Offset)
+			hops = int(e.Hops) + int(p.Offset)
 		}
 	}
 	upper := int(p.Max)
@@ -59,6 +46,6 @@ func (p HopPolicy) TTL(e HopEntry, ok bool) uint8 {
 
 // HopEntry is a hop-count cache entry.
 type HopEntry struct {
-	Hops    uint8
-	Learned bool // learned from a captured packet, not the default
+	Hops    uint8 // the learned hop count; 0 until Learned
+	Learned bool  // learned from a captured packet, not only registered
 }

@@ -55,6 +55,7 @@ func (d *TLSDesyncer) Desync(
 	conn net.Conn,
 	msg *proto.TLSMessage,
 	httpsOpts *config.HTTPSOptions,
+	connOpts *config.ConnOptions,
 ) (int, error) {
 	logger := logging.WithLocalScope(ctx, d.logger, "tls_desync")
 
@@ -78,7 +79,7 @@ func (d *TLSDesyncer) Desync(
 			return d.sendSegments(ctx, conn, logger, split(logger, msg, httpsOpts), nil, nil)
 		}
 		seq = &real
-		oTTL := d.sniffer.GetOptimalTTL(key)
+		oTTL := fakeTTL(d.sniffer, key, connOpts)
 		fakes = newFakeSender(d.writer, conn, oTTL, httpsOpts, real)
 		logger.Trace().
 			Uint32("seq", fakes.fakeStart.Seq).
@@ -139,8 +140,22 @@ func (d *TLSDesyncer) learnSeqAck(
 // DPI can sit in between, so fakes are pointless and only risk the
 // connection.
 func onLocalLink(sniffer packet.Sniffer, key netutil.IPKey) bool {
-	hops, ok := sniffer.LearnedHops(key)
-	return ok && hops == 0
+	e, ok := sniffer.Hops(key)
+	return ok && e.Learned && e.Hops == 0
+}
+
+// fakeTTL returns the TTL of fake packets to the server at key, from the
+// hop count the sniffer cached for it and the hop-count options of the
+// connection, which a matched rule may override.
+func fakeTTL(sniffer packet.Sniffer, key netutil.IPKey, o *config.ConnOptions) uint8 {
+	e, ok := sniffer.Hops(key)
+	policy := packet.HopPolicy{
+		Default: o.HopCountDefault,
+		Min:     o.HopCountMin,
+		Max:     o.HopCountMax,
+		Offset:  o.HopCountOffset,
+	}
+	return policy.TTL(e, ok)
 }
 
 // fakeSeqAck adds opts.FakeSeqOffset and opts.FakeAckOffset to the

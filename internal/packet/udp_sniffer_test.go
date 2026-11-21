@@ -107,7 +107,6 @@ func TestUDPSniffer_LearnsHops(t *testing.T) {
 			us := &UDPSniffer{
 				logger:    zerolog.Nop(),
 				nhopCache: cache.NewLRUCache[netutil.IPKey, HopEntry](1, 16, nil),
-				hops:      HopPolicy{Default: 8, Max: 255},
 			}
 			server := net.ParseIP(tc.server)
 			if tc.register {
@@ -119,9 +118,27 @@ func TestUDPSniffer_LearnsHops(t *testing.T) {
 				udpPacket(t, server, net.ParseIP(tc.local), tc.ttl),
 			)
 
-			hops, ok := us.LearnedHops(netutil.NewIPKey(server))
+			hops, ok := learnedHops(us, netutil.NewIPKey(server))
 			assert.Equal(t, tc.wantOK, ok)
 			assert.Equal(t, tc.wantHops, hops)
 		})
 	}
+}
+
+func TestUDPSniffer_DoesNotReinsertEvictedServer(t *testing.T) {
+	server := net.ParseIP("203.0.113.1")
+	us := &UDPSniffer{
+		logger: zerolog.Nop(),
+		nhopCache: evictOnGetCache{
+			cache.NewLRUCache[netutil.IPKey, HopEntry](1, 16, nil),
+		},
+	}
+	us.Register([]net.IP{server})
+
+	us.processPacket(
+		context.Background(),
+		udpPacket(t, server, net.ParseIP("192.168.1.11"), 52),
+	)
+
+	assert.False(t, us.nhopCache.Has(netutil.NewIPKey(server)))
 }

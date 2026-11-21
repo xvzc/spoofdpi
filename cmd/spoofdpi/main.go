@@ -261,7 +261,6 @@ func setupPcapIO(
 			&route.Iface,
 			gatewayMAC,
 			hopCache,
-			&cfg.RuntimeConfig,
 		)
 		if hErr != nil {
 			err = fmt.Errorf("tcp pcap handle on %s: %w", route.Iface.Name, hErr)
@@ -280,7 +279,6 @@ func setupPcapIO(
 			pktLogger,
 			udpHandle,
 			hopCache,
-			&cfg.RuntimeConfig,
 		)
 		udpWriter = packet.NewUDPWriter(pktLogger, udpHandle, &route.Iface, gatewayMAC)
 		udpSniffer.StartCapturing()

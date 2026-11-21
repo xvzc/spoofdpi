@@ -100,7 +100,13 @@ func stutterRunWith(
 	mutate(opts)
 
 	msg := fakeMsg()
-	_, err := d.Desync(context.Background(), eventConn{sc, log}, msg, opts)
+	_, err := d.Desync(
+		context.Background(),
+		eventConn{sc, log},
+		msg,
+		opts,
+		baseConnOpts(),
+	)
 	require.NoError(t, err)
 
 	return log.events, msg.Raw()
@@ -212,6 +218,7 @@ func TestStutter_Disabled(t *testing.T) {
 			eventConn{newStubConn("192.168.1.20"), log},
 			fakeMsg(),
 			opts,
+			baseConnOpts(),
 		)
 		require.NoError(t, err)
 		for _, e := range log.events {

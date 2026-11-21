@@ -40,6 +40,7 @@ func (d *UDPDesyncer) Desync(
 	ctx context.Context,
 	rConn net.Conn,
 	opts *config.UDPOptions,
+	connOpts *config.ConnOptions,
 ) (int, error) {
 	logger := logging.WithLocalScope(ctx, d.logger, "udp_desync")
 
@@ -53,7 +54,7 @@ func (d *UDPDesyncer) Desync(
 		logger.Trace().Msg("server is on the local link, skipping fake packets")
 		return 0, nil
 	}
-	oTTL := d.sniffer.GetOptimalTTL(key)
+	oTTL := fakeTTL(d.sniffer, key, connOpts)
 
 	var totalSent int
 	for range opts.FakePreflight {

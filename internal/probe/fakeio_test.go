@@ -30,8 +30,10 @@ func (s *stubSniffer) Register(
 ) {
 	s.registered = append(s.registered, addrs...)
 }
-func (s *stubSniffer) GetOptimalTTL(netutil.IPKey) uint8       { return 3 }
-func (s *stubSniffer) LearnedHops(netutil.IPKey) (uint8, bool) { return 0, true }
+
+func (s *stubSniffer) Hops(netutil.IPKey) (packet.HopEntry, bool) {
+	return packet.HopEntry{Hops: 0, Learned: true}, true
+}
 
 // sentFake is a fake packet a stubWriter was asked to send.
 type sentFake struct {
@@ -70,15 +72,24 @@ func (w *stubWriter) WriteCraftedPacketWithSeq(
 	return len(payload), nil
 }
 
-func TestFixedTTLSniffer(t *testing.T) {
+func TestUnlearnedSniffer(t *testing.T) {
 	inner := &stubSniffer{}
-	s := fixedTTLSniffer{Sniffer: inner, ttl: 9}
-	key := netutil.NewIPKey(net.IPv4(203, 0, 113, 1))
-	assert.Equal(t, uint8(9), s.GetOptimalTTL(key))
-	_, learned := s.LearnedHops(key)
-	assert.False(t, learned, "the desyncer must not skip the fakes")
+	s := unlearnedSniffer{Sniffer: inner}
+	_, ok := s.Hops(netutil.NewIPKey(net.IPv4(203, 0, 113, 1)))
+	assert.False(t, ok, "the desyncer must not skip the fakes")
 	s.Register([]net.IP{net.IPv4(203, 0, 113, 1)})
 	assert.Len(t, inner.registered, 1, "registration reaches the sniffer")
+}
+
+func TestFixedTTLWriter(t *testing.T) {
+	w := &stubWriter{}
+	fw := fixedTTLWriter{TCPSeqWriter: w, ttl: 9}
+	fake := packet.TCPFake{SeqAck: packet.SeqAck{Seq: 1, Ack: 2}}
+	_, err := fw.WriteCraftedPacketWithSeq(
+		context.Background(), nil, nil, 3, []byte("a"), fake,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, []sentFake{{ttl: 9, payload: []byte("a"), fake: fake}}, w.sent)
 }
 
 func TestRecordingWriter(t *testing.T) {
@@ -149,13 +160,18 @@ func TestFakeDesyncer(t *testing.T) {
 			log := &fakeLog{}
 			d := desync.NewTLSDesyncer(
 				zerolog.Nop(),
-				recordingWriter{TCPSeqWriter: w, log: log},
-				fixedTTLSniffer{Sniffer: &stubSniffer{}, ttl: 7},
+				recordingWriter{
+					TCPSeqWriter: fixedTTLWriter{TCPSeqWriter: w, ttl: 7},
+					log:          log,
+				},
+				unlearnedSniffer{Sniffer: &stubSniffer{}},
 				seqs,
 			)
 			msg, err := buildClientHello("www.example.com")
 			require.NoError(t, err)
-			_, err = d.Desync(context.Background(), client, msg, fakeOpts(v))
+			_, err = d.Desync(
+				context.Background(), client, msg, fakeOpts(v), &config.ConnOptions{},
+			)
 			require.NoError(t, err)
 
 			require.Len(t, w.sent, 1, "one fake, in one piece")

@@ -171,7 +171,7 @@ func (h *UdpAssociateHandler) Handle(
 
 		// Send fake packets before real payload (UDP desync)
 		if h.desyncer != nil && !cfg.UDP.Skip {
-			_, _ = h.desyncer.Desync(ctx, rConn.Conn, &cfg.UDP)
+			_, _ = h.desyncer.Desync(ctx, rConn.Conn, &cfg.UDP, &cfg.Conn)
 		}
 
 		// Start a goroutine to read from the target and forward to the client.

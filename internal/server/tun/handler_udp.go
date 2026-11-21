@@ -75,7 +75,7 @@ func (h *UDPHandler) Handle(
 	lConnWrapped := netutil.NewIdleTimeoutConn(lConn, timeout)
 
 	if !cfg.UDP.Skip {
-		_, _ = h.desyncer.Desync(ctx, rConnWrapped, &cfg.UDP)
+		_, _ = h.desyncer.Desync(ctx, rConnWrapped, &cfg.UDP, &cfg.Conn)
 	}
 
 	logger.Debug().

@@ -355,7 +355,10 @@ func (p *Prober) fakeTry(
 	defer untrack()
 
 	sender, log := stack.desyncer(ttl)
-	if _, err := sender.Desync(ctx, conn, msg, fakeOpts(a.variant)); err != nil {
+	// The stack sends the fakes with ttl, whatever the hop-count options.
+	if _, err := sender.Desync(
+		ctx, conn, msg, fakeOpts(a.variant), &config.ConnOptions{},
+	); err != nil {
 		return errOutcome(err), false
 	}
 	// The desyncer sends the real ClientHello even when the fake fails.

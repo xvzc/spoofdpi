@@ -4,7 +4,21 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/xvzc/spoofdpi/internal/cache"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 )
+
+// evictOnGetCache deletes each key right after returning it, as if LRU
+// eviction ran between a sniffer's lookup and its write.
+type evictOnGetCache struct {
+	cache.Cache[netutil.IPKey, HopEntry]
+}
+
+func (c evictOnGetCache) Get(key netutil.IPKey) (HopEntry, bool) {
+	e, ok := c.Cache.Get(key)
+	c.Delete(key)
+	return e, ok
+}
 
 func TestHopPolicyTTL(t *testing.T) {
 	none := HopPolicy{Default: 8, Max: 255}
@@ -17,7 +31,13 @@ func TestHopPolicyTTL(t *testing.T) {
 		want   uint8
 	}{
 		{"learned hop count minus 1", none, HopEntry{Hops: 19, Learned: true}, true, 18},
-		{"registered default", none, HopEntry{Hops: 8}, true, 7},
+		{"registered default", none, HopEntry{}, true, 7},
+		{
+			"registered default comes from the policy",
+			HopPolicy{Default: 12, Max: 255},
+			HopEntry{},
+			true, 11,
+		},
 		{"unknown server", none, HopEntry{}, false, 254},
 		{"at least 1", none, HopEntry{Hops: 0, Learned: true}, true, 1},
 		{
@@ -29,7 +49,7 @@ func TestHopPolicyTTL(t *testing.T) {
 		{
 			"offset does not apply to the default",
 			HopPolicy{Default: 8, Max: 255, Offset: -5},
-			HopEntry{Hops: 8},
+			HopEntry{},
 			true, 7,
 		},
 		{
@@ -42,6 +62,12 @@ func TestHopPolicyTTL(t *testing.T) {
 			"min raises a small count",
 			HopPolicy{Default: 8, Min: 10, Max: 255},
 			HopEntry{Hops: 5, Learned: true},
+			true, 9,
+		},
+		{
+			"default is clamped too",
+			HopPolicy{Default: 8, Min: 10, Max: 255},
+			HopEntry{},
 			true, 9,
 		},
 		{

@@ -348,6 +348,7 @@ func (s scriptedSender) Desync(
 	conn net.Conn,
 	msg *proto.TLSMessage,
 	opts *config.HTTPSOptions,
+	_ *config.ConnOptions,
 ) (int, error) {
 	local := conn.LocalAddr().(*net.TCPAddr)
 	remote := conn.RemoteAddr().(*net.TCPAddr)
