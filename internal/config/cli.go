@@ -42,7 +42,6 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 				HopCountMin:     0,
 				HopCountMax:     255,
 				HopCountOffset:  0,
-				DNSTimeout:      5000 * time.Millisecond,
 				TCPTimeout:      10000 * time.Millisecond,
 				UDPIdleTimeout:  25000 * time.Millisecond,
 			},
@@ -52,6 +51,7 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 				HTTPSURL: "https://dns.google/dns-query",
 				QType:    DNSQueryIPv4,
 				Cache:    false,
+				Timeout:  5000 * time.Millisecond,
 			},
 			HTTPS: HTTPSOptions{ //exhaustruct:enforce
 				Disorder:      false,
@@ -230,23 +230,6 @@ func CreateCommand(
 				},
 			},
 
-			&cli.StringFlag{
-				Name: "dns-addr",
-				Usage: fmt.Sprintf(`<ip:port>
-				Upstream DNS server address for standard UDP queries. (default: %v)`,
-					defaultCfg.DNS.Addr.String(),
-				),
-				OnlyOnce:  true,
-				Validator: checkHostPort,
-				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-					addr := MustParseTCPAddr(v)
-					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.DNS.Addr = addr
-					})
-					return nil
-				},
-			},
-
 			&cli.BoolFlag{
 				Name: "dns-cache",
 				Usage: fmt.Sprintf(`
@@ -263,86 +246,12 @@ func CreateCommand(
 					return nil
 				},
 			},
-
-			&cli.StringFlag{
-				Name: "dns-mode",
-				Usage: fmt.Sprintf(`%s
-				Default resolution mode for domains that do not match any specific rule.
-				(default: %q)`,
-					enumUsage(availableDNSModeValues),
-					defaultCfg.DNS.Mode.String(),
-				),
-				Value:     "udp",
-				OnlyOnce:  true,
-				Validator: checkDNSMode,
-				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-					mode := MustParseDNSModeType(v)
-					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.DNS.Mode = mode
-					})
-					return nil
-				},
-			},
-
-			&cli.StringFlag{
-				Name: "dns-https-url",
-				Usage: fmt.Sprintf(`<https_url>
-				Endpoint URL for DNS over HTTPS (DoH) queries. 
-				(default: %q)`,
-					defaultCfg.DNS.HTTPSURL,
-				),
-				Value:     "https://dns.google/dns-query",
-				OnlyOnce:  true,
-				Validator: checkHTTPSEndpoint,
-				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-					url := v
-					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.DNS.HTTPSURL = url
-					})
-					return nil
-				},
-			},
-
-			&cli.StringFlag{
-				Name: "dns-qtype",
-				Usage: fmt.Sprintf(`%s
-				Filters DNS queries by record type (A for IPv4, AAAA for IPv6).
-				(default: %q)`,
-					enumUsage(availableDNSQueryValues),
-					defaultCfg.DNS.QType.String(),
-				),
-				Value:     "ipv4",
-				OnlyOnce:  true,
-				Validator: checkDNSQueryType,
-				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-					qtype := MustParseDNSQueryType(v)
-					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.DNS.QType = qtype
-					})
-					return nil
-				},
-			},
-
-			&cli.Int64Flag{
-				Name: "dns-timeout",
-				Usage: fmt.Sprintf(`
-				Timeout for dns connection in milliseconds. 
-				No effect when the value is 0 (default: %v, max: %v)`,
-					defaultCfg.Conn.DNSTimeout.Milliseconds(),
-					math.MaxUint16,
-				),
-				Value:     0,
-				OnlyOnce:  true,
-				Validator: checkUint16,
-				Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
-					dur := time.Duration(v * int64(time.Millisecond))
-					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.Conn.DNSTimeout = dur
-					})
-					return nil
-				},
-			},
 		},
+			DNSFlags(func(apply func(*DNSOptions)) {
+				cliOverrides = append(cliOverrides, func(cfg *Config) {
+					apply(&cfg.DNS)
+				})
+			}),
 			tlsFlags("tls-", false, defaultCfg, &cliOverrides),
 			// TODO(deprecated): --https-* were renamed to --tls-* after
 			// v1.6.0; remove with the [https] fallback (config.go), then
@@ -657,6 +566,112 @@ GLOBAL OPTIONS:
 		"{{.Usage}}",
 		"{{.DefaultText}}",
 	)
+}
+
+// DNSFlags builds the --dns-addr, --dns-mode, --dns-https-url, --dns-qtype
+// and --dns-timeout flags. Each flag the user sets validates its value and
+// passes a closure that writes the parsed value to override; the caller
+// decides when to run it, e.g. after the TOML is loaded so the flags win.
+func DNSFlags(override func(apply func(*DNSOptions))) []cli.Flag {
+	defaultDNS := DefaultConfig().DNS
+
+	return []cli.Flag{
+		&cli.StringFlag{
+			Name: "dns-addr",
+			Usage: fmt.Sprintf(`<ip:port>
+				Upstream DNS server address for standard UDP queries. (default: %v)`,
+				defaultDNS.Addr.String(),
+			),
+			OnlyOnce:  true,
+			Validator: checkHostPort,
+			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+				addr := MustParseTCPAddr(v)
+				override(func(o *DNSOptions) {
+					o.Addr = addr
+				})
+				return nil
+			},
+		},
+
+		&cli.StringFlag{
+			Name: "dns-mode",
+			Usage: fmt.Sprintf(`%s
+				Default resolution mode for domains that do not match any specific rule.
+				(default: %q)`,
+				enumUsage(availableDNSModeValues),
+				defaultDNS.Mode.String(),
+			),
+			Value:     "udp",
+			OnlyOnce:  true,
+			Validator: checkDNSMode,
+			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+				mode := MustParseDNSModeType(v)
+				override(func(o *DNSOptions) {
+					o.Mode = mode
+				})
+				return nil
+			},
+		},
+
+		&cli.StringFlag{
+			Name: "dns-https-url",
+			Usage: fmt.Sprintf(`<https_url>
+				Endpoint URL for DNS over HTTPS (DoH) queries. 
+				(default: %q)`,
+				defaultDNS.HTTPSURL,
+			),
+			Value:     "https://dns.google/dns-query",
+			OnlyOnce:  true,
+			Validator: checkHTTPSEndpoint,
+			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+				url := v
+				override(func(o *DNSOptions) {
+					o.HTTPSURL = url
+				})
+				return nil
+			},
+		},
+
+		&cli.StringFlag{
+			Name: "dns-qtype",
+			Usage: fmt.Sprintf(`%s
+				Filters DNS queries by record type (A for IPv4, AAAA for IPv6).
+				(default: %q)`,
+				enumUsage(availableDNSQueryValues),
+				defaultDNS.QType.String(),
+			),
+			Value:     "ipv4",
+			OnlyOnce:  true,
+			Validator: checkDNSQueryType,
+			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+				qtype := MustParseDNSQueryType(v)
+				override(func(o *DNSOptions) {
+					o.QType = qtype
+				})
+				return nil
+			},
+		},
+
+		&cli.Int64Flag{
+			Name: "dns-timeout",
+			Usage: fmt.Sprintf(`
+				Timeout for each DNS lookup in milliseconds.
+				Must be at least 1 (default: %v, max: %v)`,
+				defaultDNS.Timeout.Milliseconds(),
+				math.MaxUint16,
+			),
+			Value:     0,
+			OnlyOnce:  true,
+			Validator: checkDNSTimeout,
+			Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
+				dur := time.Duration(v * int64(time.Millisecond))
+				override(func(o *DNSOptions) {
+					o.Timeout = dur
+				})
+				return nil
+			},
+		},
+	}
 }
 
 // tlsFlags builds the flags for the [tls] section, named prefix+<option>.

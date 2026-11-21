@@ -26,32 +26,33 @@ type hostname string
 
 func (h hostname) Bytes() []byte { return []byte(h) }
 
-// Client is the top-level DNS resolver. It holds the three backends, a shared
-// cache, and the runtime config. Callers hold *Client directly — it does not
-// implement an interface.
+// Client is the top-level DNS resolver. It holds the three backends and a
+// shared cache; the options of each lookup are passed to Resolve. Callers
+// hold *Client directly — it does not implement an interface.
 type Client struct {
 	logger zerolog.Logger
 	https  *httpsResolver
 	udp    *udpResolver
 	system *systemResolver
 	cache  cache.Cache[hostname, []netip.Addr]
-	cfg    *config.RuntimeConfig
 }
 
+// NewClient creates a Client. opts is only used for the startup log; each
+// lookup uses the options passed to Resolve.
 func NewClient(
 	logger zerolog.Logger,
-	cfg *config.RuntimeConfig,
+	opts *config.DNSOptions,
 ) *Client {
-	https := newHTTPSResolver(logger, cfg)
-	udp := newUDPResolver(logger, cfg)
-	system := newSystemResolver(logger, cfg)
+	https := newHTTPSResolver(logger)
+	udp := newUDPResolver(logger)
+	system := newSystemResolver(logger)
 
 	logger.Info().Msg("dns info")
-	logger.Info().Msgf(" query type '%s'", cfg.DNS.QType.String())
+	logger.Info().Msgf(" query type '%s'", opts.QType.String())
 	logger.Info().Msgf(" resolvers")
 	for _, info := range []struct{ name, dst string }{
-		{"udp", cfg.DNS.Addr.String()},
-		{"https", cfg.DNS.HTTPSURL},
+		{"udp", opts.Addr.String()},
+		{"https", opts.HTTPSURL},
 		{"system", "builtin"},
 		{"cache", "dynamic"},
 	} {
@@ -67,33 +68,33 @@ func NewClient(
 			NumOfShards:     64,
 			CleanupInterval: 3 * time.Minute,
 		}),
-		cfg: cfg,
 	}
 }
 
+// Resolve returns the addresses of domain, looked up as opts says. An IP
+// literal is returned as is. The lookup is bounded by opts.Timeout (an
+// unset, zero Timeout leaves it unbounded).
 func (c *Client) Resolve(
 	ctx context.Context,
-	rule *config.Rule,
+	opts *config.DNSOptions,
 	domain string,
 ) ([]netip.Addr, error) {
-	cfg := c.cfg
-	if rule != nil {
-		cfg = &rule.Config
-	}
-
 	logger := logging.WithLocalScope(ctx, c.logger, "client")
 
 	if ip, err := netip.ParseAddr(domain); err == nil {
 		return []netip.Addr{ip}, nil
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
+	if opts.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
+		defer cancel()
+	}
 
-	resolver := c.pick(cfg.DNS.Mode)
-	qTypes := parseQueryTypes(cfg.DNS.QType)
+	resolver := c.pick(opts.Mode)
+	qTypes := parseQueryTypes(opts.QType)
 
-	useCache := cfg.DNS.Cache && cfg.DNS.Mode != config.DNSModeSystem
+	useCache := opts.Cache && opts.Mode != config.DNSModeSystem
 	if useCache {
 		if addrs, ok := c.cache.Get(hostname(domain)); ok {
 			logger.Debug().Str("domain", domain).Msg("cache hit")
@@ -103,7 +104,7 @@ func (c *Client) Resolve(
 	}
 
 	t1 := time.Now()
-	addrs, ttl, err := resolver.resolve(ctx, c.serverFor(cfg), domain, qTypes)
+	addrs, ttl, err := resolver.resolve(ctx, c.serverFor(opts), domain, qTypes)
 	if err != nil {
 		return nil, err
 	}
@@ -136,16 +137,16 @@ func (c *Client) pick(mode config.DNSModeType) internalResolver {
 	}
 }
 
-func (c *Client) serverFor(cfg *config.RuntimeConfig) string {
-	switch cfg.DNS.Mode {
+func (c *Client) serverFor(opts *config.DNSOptions) string {
+	switch opts.Mode {
 	case config.DNSModeHTTPS:
-		upstream := cfg.DNS.HTTPSURL
+		upstream := opts.HTTPSURL
 		if !strings.HasPrefix(upstream, "https://") {
 			upstream = "https://" + upstream + "/dns-query"
 		}
 		return upstream
 	case config.DNSModeUDP:
-		return cfg.DNS.Addr.String()
+		return opts.Addr.String()
 	default:
 		return ""
 	}

@@ -7,7 +7,6 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/config"
 )
 
 type systemResolver struct {
@@ -15,10 +14,7 @@ type systemResolver struct {
 	*net.Resolver
 }
 
-func newSystemResolver(
-	logger zerolog.Logger,
-	_ *config.RuntimeConfig,
-) *systemResolver {
+func newSystemResolver(logger zerolog.Logger) *systemResolver {
 	return &systemResolver{
 		logger:   logger,
 		Resolver: &net.Resolver{PreferGo: true},

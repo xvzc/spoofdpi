@@ -13,13 +13,23 @@ import (
 // absent from the TOML. The decoded map is returned so callers can extract
 // additional data (e.g. raw rules) without a second file read.
 func fromTomlFile(dir string, cfg *Config) (map[string]any, error) {
+	m, err := decodeTomlFile(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.UnmarshalTOML(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// decodeTomlFile decodes the TOML at `dir` into a map without interpreting
+// any section.
+func decodeTomlFile(dir string) (map[string]any, error) {
 	_ = os.Setenv("BURNTSUSHI_TOML_110", "1") // allow new lines in toml file
 
 	var m map[string]any
 	if _, err := toml.DecodeFile(dir, &m); err != nil {
-		return nil, err
-	}
-	if err := cfg.UnmarshalTOML(m); err != nil {
 		return nil, err
 	}
 	return m, nil

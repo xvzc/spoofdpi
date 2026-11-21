@@ -82,14 +82,12 @@ func TestConnOptions_UnmarshalTOML(t *testing.T) {
 			name: "valid server options",
 			input: map[string]any{
 				"hop-count-default": int64(64),
-				"dns-timeout":       int64(1000),
 				"tcp-timeout":       int64(1000),
 				"udp-idle-timeout":  int64(1000),
 			},
 			wantErr: false,
 			assert: func(t *testing.T, o ConnOptions) {
 				assert.Equal(t, uint8(64), o.HopCountDefault)
-				assert.Equal(t, 1000*time.Millisecond, o.DNSTimeout)
 				assert.Equal(t, 1000*time.Millisecond, o.TCPTimeout)
 				assert.Equal(t, 1000*time.Millisecond, o.UDPIdleTimeout)
 			},
@@ -135,6 +133,7 @@ func TestDNSOptions_UnmarshalTOML(t *testing.T) {
 				"https-url": "https://dns.google/dns-query",
 				"qtype":     "ipv4",
 				"cache":     true,
+				"timeout":   int64(1000),
 			},
 			wantErr: false,
 			assert: func(t *testing.T, o DNSOptions) {
@@ -143,7 +142,13 @@ func TestDNSOptions_UnmarshalTOML(t *testing.T) {
 				assert.Equal(t, "https://dns.google/dns-query", o.HTTPSURL)
 				assert.Equal(t, DNSQueryIPv4, o.QType)
 				assert.True(t, o.Cache)
+				assert.Equal(t, 1000*time.Millisecond, o.Timeout)
 			},
+		},
+		{
+			name:    "timeout out of range",
+			input:   map[string]any{"timeout": int64(70000)},
+			wantErr: true,
 		},
 		{
 			name:    "invalid type",
@@ -469,13 +474,12 @@ func TestEnums_MarshalText_StringForms(t *testing.T) {
 func TestConnOptions_MarshalJSON_durationsAsString(t *testing.T) {
 	o := ConnOptions{
 		HopCountDefault: 8,
-		DNSTimeout:      5000 * time.Millisecond,
 		TCPTimeout:      10000 * time.Millisecond,
 		UDPIdleTimeout:  25000 * time.Millisecond,
 	}
 	b, err := json.Marshal(o)
 	assert.NoError(t, err)
-	const want = `{"hop-count-default":8,"hop-count-min":0,"hop-count-max":0,"hop-count-offset":0,"dns-timeout":"5s",` +
+	const want = `{"hop-count-default":8,"hop-count-min":0,"hop-count-max":0,"hop-count-offset":0,` +
 		`"tcp-timeout":"10s","udp-idle-timeout":"25s"}`
 	assert.JSONEq(t, want, string(b))
 }
@@ -487,12 +491,13 @@ func TestDNSOptions_MarshalJSON_addrAsString(t *testing.T) {
 		HTTPSURL: "https://dns.google/dns-query",
 		QType:    DNSQueryIPv4,
 		Cache:    true,
+		Timeout:  5000 * time.Millisecond,
 	}
 	b, err := json.Marshal(o)
 	assert.NoError(t, err)
 	const want = `{"mode":"https","addr":"8.8.8.8:53",` +
 		`"https-url":"https://dns.google/dns-query",` +
-		`"qtype":"ipv4","cache":true}`
+		`"qtype":"ipv4","cache":true,"timeout":"5s"}`
 	assert.JSONEq(t, want, string(b))
 }
 

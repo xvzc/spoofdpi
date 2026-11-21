@@ -128,3 +128,28 @@ $ spoofdpi --dns-cache
 [dns]
 cache = true
 ```
+
+---
+
+## `timeout`
+
+`type: uint16`
+
+### Description
+
+Specifies the timeout (in milliseconds) for each DNS lookup. `(default: 5000, min: 1, max: 65535)`
+
+A value of `0` is rejected, because a lookup without a timeout can hang forever.
+
+### Usage
+
+**Command-Line Flag**
+```console
+$ spoofdpi --dns-timeout 3000
+```
+
+**TOML Config**
+```toml
+[dns]
+timeout = 3000
+```

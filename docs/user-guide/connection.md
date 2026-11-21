@@ -2,31 +2,6 @@
 
 Settings for network connection timeouts and packet configuration.
 
-## `dns-timeout`
-
-`type: uint16`
-
-### Description
-
-Specifies the timeout (in milliseconds) for DNS connections. `(default: 5000, max: 65535)`
-
-A value of `0` means no timeout.
-
-### Usage
-
-**Command-Line Flag**
-```console
-$ spoofdpi --dns-timeout 3000
-```
-
-**TOML Config**
-```toml
-[connection]
-dns-timeout = 3000
-```
-
----
-
 ## `tcp-timeout`
 
 `type: uint16`

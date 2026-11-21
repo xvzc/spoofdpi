@@ -421,7 +421,6 @@ func TestFromTomlFile(t *testing.T) {
 				mode = "socks5"
 				listen-addr = "127.0.0.1:8080"
 			[connection]
-				dns-timeout = 1000
 				tcp-timeout = 1000
 				udp-idle-timeout = 1000
 				hop-count-default = 100
@@ -432,6 +431,7 @@ func TestFromTomlFile(t *testing.T) {
 				mode = "https"
 				https-url = "https://1.1.1.1/dns-query"
 				qtype = "ipv4"
+				timeout = 1000
 
 			[tls]
 				disorder = true
@@ -484,7 +484,7 @@ func TestFromTomlFile(t *testing.T) {
 		assert.NoError(t, cfg.Finalize())
 
 		assert.Equal(t, "127.0.0.1:8080", cfg.App.ListenAddr.String())
-		assert.Equal(t, time.Duration(1000*time.Millisecond), cfg.Conn.DNSTimeout)
+		assert.Equal(t, time.Duration(1000*time.Millisecond), cfg.DNS.Timeout)
 		assert.Equal(t, time.Duration(1000*time.Millisecond), cfg.Conn.TCPTimeout)
 		assert.Equal(
 			t,

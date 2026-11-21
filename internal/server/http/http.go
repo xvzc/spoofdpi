@@ -154,7 +154,12 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 			{Type: rule.MatchTypeDomain, Value: host},
 		})
 
-		netAddrs, err := p.dns.Resolve(ctx, nameMatch, host)
+		dnsOpts := &p.cfg.DNS
+		if nameMatch != nil {
+			dnsOpts = &nameMatch.Config.DNS
+		}
+
+		netAddrs, err := p.dns.Resolve(ctx, dnsOpts, host)
 		if err != nil {
 			_ = proto.HTTPBadGatewayResponse().Write(conn)
 			logger.Error().Err(err).Msgf("dns lookup failed for %s", host)

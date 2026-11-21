@@ -69,14 +69,7 @@ func loadTOML(cmd *cli.Command, cfg *Config) (string, []map[string]any, error) {
 		return "", nil, nil
 	}
 
-	const configFilename = "spoofdpi.toml"
-	configDirs := []string{
-		path.Join(string(os.PathSeparator), "etc", configFilename),
-		path.Join(os.Getenv("XDG_CONFIG_HOME"), "spoofdpi", configFilename),
-		path.Join(determineRealHome(), ".config", "spoofdpi", configFilename),
-	}
-
-	configPath, err := searchTomlFile(cmd.String("config"), configDirs)
+	configPath, err := findConfigFile(cmd.String("config"))
 	if err != nil {
 		return "", nil, err
 	}
@@ -90,6 +83,49 @@ func loadTOML(cmd *cli.Command, cfg *Config) (string, []map[string]any, error) {
 	}
 
 	return configPath, rulesFromMap(m), nil
+}
+
+// LoadDNS builds DNSOptions from the defaults overlaid with the [dns]
+// section of the TOML config, found the same way as by Load: explicitPath
+// if not empty, otherwise the first of the default locations that exists.
+// All other sections, including [[rules]], are ignored and not validated.
+// Returns the options and the path of the file used ("" if none).
+func LoadDNS(explicitPath string) (DNSOptions, string, error) {
+	opts := DefaultConfig().DNS
+
+	configPath, err := findConfigFile(explicitPath)
+	if err != nil {
+		return DNSOptions{}, "", err
+	}
+	if configPath == "" {
+		return opts, "", nil
+	}
+
+	m, err := decodeTomlFile(configPath)
+	if err == nil {
+		if v, ok := m["dns"]; ok {
+			err = opts.UnmarshalTOML(v)
+		}
+	}
+	if err != nil {
+		return DNSOptions{}, "", fmt.Errorf("error parsing '%s': %w", configPath, err)
+	}
+
+	return opts, configPath, nil
+}
+
+// findConfigFile returns explicitPath if it is not empty (an error if it
+// does not exist), otherwise the first default TOML config location that
+// exists, or "" if there is none.
+func findConfigFile(explicitPath string) (string, error) {
+	const configFilename = "spoofdpi.toml"
+	configDirs := []string{
+		path.Join(string(os.PathSeparator), "etc", configFilename),
+		path.Join(os.Getenv("XDG_CONFIG_HOME"), "spoofdpi", configFilename),
+		path.Join(determineRealHome(), ".config", "spoofdpi", configFilename),
+	}
+
+	return searchTomlFile(explicitPath, configDirs)
 }
 
 // rulesFromMap extracts raw [[rules]] entries from an already-decoded TOML

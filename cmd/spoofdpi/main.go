@@ -172,9 +172,9 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 		Str("syn-ack-timeout", fmt.Sprintf("%dms", cfg.HTTPS.SynAckTimeout.Milliseconds())).
 		Msg(" fake")
 
-	if cfg.Conn.DNSTimeout > 0 {
+	if cfg.DNS.Timeout > 0 {
 		logger.Info().
-			Str("value", fmt.Sprintf("%dms", cfg.Conn.DNSTimeout.Milliseconds())).
+			Str("value", fmt.Sprintf("%dms", cfg.DNS.Timeout.Milliseconds())).
 			Msgf("dns connection timeout")
 	}
 	if cfg.Conn.TCPTimeout > 0 {
@@ -308,7 +308,7 @@ func createServer(
 	// --- DNS resolver ---
 	resolver := dns.NewClient(
 		logging.WithScope(logger, "dns"),
-		&cfg.RuntimeConfig,
+		&cfg.DNS,
 	)
 
 	// Clean up stale network state before route discovery so a crashed TUN

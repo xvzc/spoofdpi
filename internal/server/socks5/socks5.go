@@ -152,8 +152,13 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 			{Type: rule.MatchTypeDomain, Value: req.FQDN},
 		})
 
+		dnsOpts := &p.cfg.DNS
+		if nameMatch != nil {
+			dnsOpts = &nameMatch.Config.DNS
+		}
+
 		// Resolve Domain
-		netAddrs, err := p.dns.Resolve(ctx, nameMatch, req.FQDN)
+		netAddrs, err := p.dns.Resolve(ctx, dnsOpts, req.FQDN)
 		if err != nil {
 			logger.Error().Str("domain", req.FQDN).Err(err).Msgf("dns lookup failed")
 			return

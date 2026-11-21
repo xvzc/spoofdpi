@@ -14,7 +14,6 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"golang.org/x/net/http2"
 )
@@ -24,13 +23,14 @@ type httpsResolver struct {
 	client *http.Client
 }
 
-func newHTTPSResolver(logger zerolog.Logger, cfg *config.RuntimeConfig) *httpsResolver {
+// newHTTPSResolver creates an httpsResolver whose client has no overall
+// timeout of its own: each lookup is bounded by its request's context.
+func newHTTPSResolver(logger zerolog.Logger) *httpsResolver {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			NextProtos: []string{"h2", "http/1.1"},
 		},
 		DialContext: (&net.Dialer{
-			Timeout:   cfg.Conn.DNSTimeout,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
 		TLSHandshakeTimeout: 9 * time.Second,
@@ -49,7 +49,6 @@ func newHTTPSResolver(logger zerolog.Logger, cfg *config.RuntimeConfig) *httpsRe
 		logger: logger,
 		client: &http.Client{
 			Transport: tr,
-			Timeout:   cfg.Conn.DNSTimeout,
 		},
 	}
 }

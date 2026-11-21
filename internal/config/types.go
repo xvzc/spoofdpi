@@ -112,7 +112,6 @@ type ConnOptions struct {
 	HopCountMin     uint8         `toml:"hop-count-min"`
 	HopCountMax     uint8         `toml:"hop-count-max"`
 	HopCountOffset  int8          `toml:"hop-count-offset"`
-	DNSTimeout      time.Duration `toml:"dns-timeout"`
 	TCPTimeout      time.Duration `toml:"tcp-timeout"`
 	UDPIdleTimeout  time.Duration `toml:"udp-idle-timeout"`
 }
@@ -125,7 +124,6 @@ func (o ConnOptions) MarshalJSON() ([]byte, error) {
 		HopCountMin     uint8  `json:"hop-count-min"`
 		HopCountMax     uint8  `json:"hop-count-max"`
 		HopCountOffset  int8   `json:"hop-count-offset"`
-		DNSTimeout      string `json:"dns-timeout"`
 		TCPTimeout      string `json:"tcp-timeout"`
 		UDPIdleTimeout  string `json:"udp-idle-timeout"`
 	}{
@@ -133,7 +131,6 @@ func (o ConnOptions) MarshalJSON() ([]byte, error) {
 		HopCountMin:     o.HopCountMin,
 		HopCountMax:     o.HopCountMax,
 		HopCountOffset:  o.HopCountOffset,
-		DNSTimeout:      o.DNSTimeout.String(),
 		TCPTimeout:      o.TCPTimeout.String(),
 		UDPIdleTimeout:  o.UDPIdleTimeout.String(),
 	})
@@ -191,17 +188,6 @@ func (o *ConnOptions) UnmarshalTOML(data any) (err error) {
 		err,
 	) {
 		o.HopCountOffset = *p
-	}
-	if p := findFrom(
-		v,
-		"dns-timeout",
-		parseIntFn[uint16](checkUint16),
-		&err,
-	); isOk(
-		p,
-		err,
-	) {
-		o.DNSTimeout = time.Duration(*p) * time.Millisecond
 	}
 	if p := findFrom(
 		v,
@@ -277,11 +263,13 @@ type DNSOptions struct {
 	HTTPSURL string       `toml:"https-url"`
 	QType    DNSQueryType `toml:"qtype"`
 	Cache    bool         `toml:"cache"`
+	// Timeout bounds each DNS lookup; it must be at least 1ms.
+	Timeout time.Duration `toml:"timeout"`
 }
 
 // MarshalJSON renders Addr as "host:port" (net.TCPAddr's default
-// JSON dumps each field separately) and lets the enums use their
-// MarshalText for string output.
+// JSON dumps each field separately), Timeout via String() (e.g. "5s")
+// and lets the enums use their MarshalText for string output.
 func (o DNSOptions) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		Mode     DNSModeType  `json:"mode"`
@@ -289,12 +277,14 @@ func (o DNSOptions) MarshalJSON() ([]byte, error) {
 		HTTPSURL string       `json:"https-url"`
 		QType    DNSQueryType `json:"qtype"`
 		Cache    bool         `json:"cache"`
+		Timeout  string       `json:"timeout"`
 	}{
 		Mode:     o.Mode,
 		Addr:     o.Addr.String(),
 		HTTPSURL: o.HTTPSURL,
 		QType:    o.QType,
 		Cache:    o.Cache,
+		Timeout:  o.Timeout.String(),
 	})
 }
 
@@ -326,6 +316,17 @@ func (o *DNSOptions) UnmarshalTOML(data any) (err error) {
 	}
 	if p := findFrom(m, "cache", parseBoolFn(), &err); isOk(p, err) {
 		o.Cache = *p
+	}
+	if p := findFrom(
+		m,
+		"timeout",
+		parseIntFn[uint16](checkDNSTimeout),
+		&err,
+	); isOk(
+		p,
+		err,
+	) {
+		o.Timeout = time.Duration(*p) * time.Millisecond
 	}
 
 	return
