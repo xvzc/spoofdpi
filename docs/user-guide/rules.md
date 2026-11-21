@@ -7,7 +7,7 @@ By defining rules, you can granularly control how spoofdpi handles connections t
 
 ## Structure
 
-The top-level `[[rules]]` array contains one table per rule. Each rule consists of matching criteria (`match`) and per-section overrides (`dns`, `https`, `udp`, `connection`).
+The top-level `[[rules]]` array contains one table per rule. Each rule consists of matching criteria (`match`) and per-section overrides (`dns`, `tls`, `udp`, `connection`).
 
 ## Rule Fields
 
@@ -64,6 +64,10 @@ tls = { fake-preflight = 5 }
 
 UDP traffic is matched per destination, so one flow of datagrams can use different settings for different destinations. In TUN mode and for SOCKS5 `UDP ASSOCIATE`, each destination address is matched against `cidrs`. When a SOCKS5 client sends a domain name instead of an address, that name is also matched against `domains`, and the higher-priority match wins. The name is resolved with the system resolver, so `dns` overrides do not apply to it.
 
+A matching rule with `block = true` drops the datagrams to that destination. In TUN mode the flow is closed; a SOCKS5 association stays open for the client's other destinations.
+
+A SOCKS5 association keeps one flow per resolved address and port, and its settings come from the first datagram that opens it. When several names resolve to the same address and port, the first name to reach it decides the flow's settings for all of them. Only `block` is checked again for every datagram sent to a name, so a blocked name stays blocked even when another name already opened the flow.
+
 ## DNS Override (`dns`)
 
 Customize how domain names are resolved for matched traffic. The available fields mirror the global [DNS Configuration](dns.md).
@@ -94,6 +98,16 @@ Customize how TLS connections are established. The available fields mirror the g
 | `split-mode`      | String | Split strategy: `"sni"`, `"chunk:N"`, `"random"`, etc.        |
 | `custom-split`    | Array  | Segment plans for `split-mode = "custom"`.                    |
 | `skip`            | Bool   | If `true`, bypasses DPI modifications (standard TLS).         |
+
+## UDP Override (`udp`)
+
+Customize how UDP traffic is sent to matched destinations. The available fields mirror the global [UDP Configuration](udp.md).
+
+| Field            | Type  | Description                                                   |
+| :--------------- | :---- | :------------------------------------------------------------ |
+| `skip`           | Bool  | If `true`, bypasses DPI modifications (no fake packets).      |
+| `fake-preflight` | Int   | Number of fake packets to send before the real datagrams.     |
+| `fake-packet`    | Array | List of bytes for the fake packet (e.g., `[0x00, 0x01]`).     |
 
 ## Connection Override (`connection`)
 

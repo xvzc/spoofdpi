@@ -126,6 +126,26 @@ func (c *LRUCache[K, V]) Delete(key K) {
 	}
 }
 
+func (c *LRUCache[K, V]) DeleteIf(key K, match func(V) bool) bool {
+	s := c.shard(key)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	elem, ok := s.items[key]
+	if !ok {
+		return false
+	}
+	e := elem.Value.(*lruEntry[K, V])
+	if !match(e.value) {
+		return false
+	}
+	s.list.Remove(elem)
+	delete(s.items, e.key)
+	if c.onInvalidate != nil {
+		c.onInvalidate(e.key, e.value)
+	}
+	return true
+}
+
 func (c *LRUCache[K, V]) Has(key K) bool {
 	s := c.shard(key)
 	s.mu.Lock()

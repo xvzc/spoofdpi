@@ -51,6 +51,11 @@ func (h *UDPHandler) Handle(
 			[]rule.Query{{Type: rule.MatchTypeAddr, Value: dst.Addrs[0].String()}},
 		); matched != nil {
 			logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
+			if matched.Block {
+				// Returning closes lConn, which ends the flow.
+				logger.Debug().Msg("request is blocked by policy")
+				return
+			}
 			cfg = &matched.Config
 		}
 	}

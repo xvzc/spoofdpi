@@ -8,20 +8,21 @@ import (
 	"github.com/xvzc/spoofdpi/internal/cache"
 )
 
-// ConnRegistry manages UDP connections with LRU eviction policy and idle timeout.
+// connRegistryCleanupInterval is how often RunCleanupLoop sweeps for
+// expired connections. Each connection carries its own idle timeout, so the
+// sweep can't be derived from one; it only backs up the readers, which
+// evict a connection as soon as its read deadline passes.
+const connRegistryCleanupInterval = 10 * time.Second
+
+// ConnRegistry manages UDP connections with LRU eviction policy and a
+// per-connection idle timeout.
 type ConnRegistry[K cache.Key] struct {
 	storage cache.Cache[K, *IdleTimeoutConn]
-	timeout time.Duration
 }
 
-// NewConnRegistry creates a new pool with the specified capacity and timeout.
-func NewConnRegistry[K cache.Key](
-	capacity int,
-	timeout time.Duration,
-) *ConnRegistry[K] {
-	p := &ConnRegistry[K]{
-		timeout: timeout,
-	}
+// NewConnRegistry creates a new pool with the specified capacity.
+func NewConnRegistry[K cache.Key](capacity int) *ConnRegistry[K] {
+	p := &ConnRegistry[K]{}
 
 	onInvalidate := func(_ K, v *IdleTimeoutConn) {
 		_ = v.Conn.Close()
@@ -35,12 +36,8 @@ func NewConnRegistry[K cache.Key](
 // RunCleanupLoop runs the background cleanup goroutine.
 // It exits when appctx is cancelled, closing all remaining cached connections.
 func (p *ConnRegistry[K]) RunCleanupLoop(appctx context.Context) {
-	cleanupInterval := p.timeout / 2
-	cleanupInterval = max(cleanupInterval, 10*time.Second)
-	cleanupInterval = min(cleanupInterval, 60*time.Second)
-
 	go func() {
-		ticker := time.NewTicker(cleanupInterval)
+		ticker := time.NewTicker(connRegistryCleanupInterval)
 		defer ticker.Stop()
 
 		for {
@@ -55,10 +52,15 @@ func (p *ConnRegistry[K]) RunCleanupLoop(appctx context.Context) {
 	}()
 }
 
-// Store adds a connection to the cache and returns the wrapped connection.
-// If capacity is full, evicts the least recently used connection.
-func (p *ConnRegistry[K]) Store(key K, rawConn net.Conn) *IdleTimeoutConn {
-	wrapper := NewIdleTimeoutConn(rawConn, p.timeout)
+// Store adds a connection to the cache and returns the wrapped connection,
+// which expires after timeout without reads or writes (never when timeout
+// is 0). If capacity is full, evicts the least recently used connection.
+func (p *ConnRegistry[K]) Store(
+	key K,
+	rawConn net.Conn,
+	timeout time.Duration,
+) *IdleTimeoutConn {
+	wrapper := NewIdleTimeoutConn(rawConn, timeout)
 	wrapper.Key = key
 
 	wrapper.onActivity = func() {
@@ -66,7 +68,7 @@ func (p *ConnRegistry[K]) Store(key K, rawConn net.Conn) *IdleTimeoutConn {
 	}
 
 	wrapper.onClose = func() {
-		p.Evict(key)
+		p.EvictIf(key, wrapper)
 	}
 
 	p.storage.Set(key, wrapper, nil)
@@ -82,6 +84,15 @@ func (p *ConnRegistry[K]) Fetch(key K) (*IdleTimeoutConn, bool) {
 // Evict closes and removes the connection from the pool.
 func (p *ConnRegistry[K]) Evict(key K) {
 	p.storage.Delete(key)
+}
+
+// EvictIf closes and removes the connection stored under key only if it is
+// conn. A connection that was replaced under the same key can't evict its
+// replacement this way.
+func (p *ConnRegistry[K]) EvictIf(key K, conn *IdleTimeoutConn) bool {
+	return p.storage.DeleteIf(key, func(v *IdleTimeoutConn) bool {
+		return v == conn
+	})
 }
 
 // Has checks if the connection exists in the cache.
@@ -108,14 +119,14 @@ func (p *ConnRegistry[K]) CloseAll() {
 
 func (p *ConnRegistry[K]) evictExpired() {
 	now := time.Now()
-	var toRemove []K
+	toRemove := make(map[K]*IdleTimeoutConn)
 	_ = p.storage.ForEach(func(key K, conn *IdleTimeoutConn) error {
 		if conn.IsExpired(now) {
-			toRemove = append(toRemove, key)
+			toRemove[key] = conn
 		}
 		return nil
 	})
-	for _, k := range toRemove {
-		p.Evict(k)
+	for k, conn := range toRemove {
+		p.EvictIf(k, conn)
 	}
 }

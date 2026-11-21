@@ -125,6 +125,18 @@ func (c *TTLCache[K, V]) Delete(key K) {
 	shard.mu.Unlock()
 }
 
+func (c *TTLCache[K, V]) DeleteIf(key K, match func(V) bool) bool {
+	shard := c.getShard(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+	i, ok := shard.items[key]
+	if !ok || !match(i.value) {
+		return false
+	}
+	delete(shard.items, key)
+	return true
+}
+
 func (c *TTLCache[K, V]) Has(key K) bool {
 	shard := c.getShard(key)
 	shard.mu.RLock()

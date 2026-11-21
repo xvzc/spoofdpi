@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -22,6 +23,10 @@ type UdpAssociateHandler struct {
 	desyncer *desync.UDPDesyncer
 	ruleSet  *rule.RuleSet
 	cfg      *config.RuntimeConfig
+
+	// resolveUDPAddr resolves the destinations that clients send as domain
+	// names.
+	resolveUDPAddr func(network, address string) (*net.UDPAddr, error)
 }
 
 func NewUdpAssociateHandler(
@@ -37,6 +42,8 @@ func NewUdpAssociateHandler(
 		desyncer: desyncer,
 		ruleSet:  ruleSet,
 		cfg:      cfg,
+
+		resolveUDPAddr: net.ResolveUDPAddr,
 	}
 }
 
@@ -87,6 +94,10 @@ func (h *UdpAssociateHandler) Handle(
 		_ = lUDPConn.Close()              // Force ReadFromUDP to unblock and avoid goroutine leak
 	}()
 
+	// The remote flows this association created end with it.
+	flows := newAssociationFlows(h.pool)
+	defer flows.releaseAll()
+
 	buf := make([]byte, 65535)
 	rTCPAddr := lConn.RemoteAddr().(*net.TCPAddr).IP
 
@@ -122,8 +133,29 @@ func (h *UdpAssociateHandler) Handle(
 			continue
 		}
 
+		dstHost, _, _ := net.SplitHostPort(dstAddrStr)
+		isName := net.ParseIP(dstHost) == nil
+
+		// A domain name is matched before it is resolved, so a name that is
+		// blocked whatever it resolves to is never looked up.
+		var nameMatch *config.Rule
+		if isName {
+			if dstHost == "" {
+				logger.Debug().Msg("dropped udp packet with an empty domain name")
+				continue
+			}
+
+			nameMatch = h.matchDomain(dstHost)
+			if h.blockedByName(nameMatch) {
+				// Drop only this datagram; the association stays up for the
+				// client's other destinations.
+				logger.Debug().Str("addr", dstAddrStr).Msg("request is blocked by policy")
+				continue
+			}
+		}
+
 		// Resolve address to construct Destination
-		dstAddr, err := net.ResolveUDPAddr("udp", dstAddrStr)
+		dstAddr, err := h.resolveUDPAddr("udp", dstAddrStr)
 		if err != nil {
 			logger.Warn().
 				Err(err).
@@ -131,12 +163,33 @@ func (h *UdpAssociateHandler) Handle(
 				Msg("failed to resolve udp target")
 			continue
 		}
+		if dstAddr.IP == nil || dstAddr.IP.IsUnspecified() {
+			logger.Debug().
+				Str("addr", dstAddrStr).
+				Msg("dropped udp packet to an unspecified address")
+			continue
+		}
 
 		// Key: Client Addr -> Target Addr (Zero Allocation Struct)
 		key := netutil.NewNATKey(srcAddr.IP, srcAddr.Port, dstAddr.IP, dstAddr.Port)
 
 		// Check if connection already exists in the pool
-		if cachedConn, ok := h.pool.Fetch(key); ok {
+		cachedConn, cached := h.pool.Fetch(key)
+
+		// The pool is keyed by the resolved address, so a flow may have been
+		// created for another name of it. A name's block decision therefore
+		// applies to every datagram sent to that name, not just the first.
+		var cfg *config.RuntimeConfig
+		if !cached || isName {
+			var blocked bool
+			cfg, blocked = h.destinationConfig(logger, nameMatch, dstAddr.IP)
+			if blocked {
+				logger.Debug().Str("addr", dstAddrStr).Msg("request is blocked by policy")
+				continue
+			}
+		}
+
+		if cached {
 			logger.Debug().
 				Str("key", fmt.Sprintf("%s > %s", srcAddr.String(), dstAddr.String())).
 				Msg("session cache hit")
@@ -146,14 +199,11 @@ func (h *UdpAssociateHandler) Handle(
 				logger.Warn().Err(err).Msg("failed to write udp to target")
 			}
 			continue
-		} else {
-			logger.Debug().
-				Str("key", fmt.Sprintf("%s > %s", srcAddr.String(), dstAddr.String())).
-				Msg("session cache miss")
 		}
 
-		dstHost, _, _ := net.SplitHostPort(dstAddrStr)
-		cfg := h.destinationConfig(logger, dstHost, dstAddr.IP)
+		logger.Debug().
+			Str("key", fmt.Sprintf("%s > %s", srcAddr.String(), dstAddr.String())).
+			Msg("session cache miss")
 
 		pktDst := &netutil.Destination{
 			Addrs: []net.IP{dstAddr.IP},
@@ -172,7 +222,12 @@ func (h *UdpAssociateHandler) Handle(
 		// Add to pool (pool handles LRU eviction and deadline)
 		// returns IdleTimeoutConn with the actual net.Conn inside
 		// Fakes share the flow, so the ICMP replies to them reach this socket.
-		rConn := h.pool.Store(key, netutil.NewICMPTolerantConn(rRawConn))
+		rConn := h.pool.Store(
+			key,
+			netutil.NewICMPTolerantConn(rRawConn),
+			cfg.Conn.UDPIdleTimeout,
+		)
+		flows.add(key, rConn)
 
 		// Send fake packets before real payload (UDP desync)
 		if h.desyncer != nil && !cfg.UDP.Skip {
@@ -184,7 +239,7 @@ func (h *UdpAssociateHandler) Handle(
 		// Using rConn.Read() (via IdleTimeoutConn) properly extends the idle deadline
 		// on each inbound packet, preventing premature timeout on asymmetric flows.
 		// dstAddr is already *net.UDPAddr (resolved above), same as rConn.RemoteAddr().
-		go h.relayInboundUDP(logger, lUDPConn, rConn, srcAddr, dstAddr, key)
+		go h.relayInboundUDP(logger, lUDPConn, rConn, srcAddr, dstAddr, key, flows)
 
 		// Write payload to target
 		if _, err := rConn.Write(payload); err != nil {
@@ -193,31 +248,49 @@ func (h *UdpAssociateHandler) Handle(
 	}
 }
 
+// matchDomain returns the rule matching a destination name, or nil.
+func (h *UdpAssociateHandler) matchDomain(name string) *config.Rule {
+	if h.ruleSet == nil {
+		return nil
+	}
+
+	return h.ruleSet.Search([]rule.Query{{Type: rule.MatchTypeDomain, Value: name}})
+}
+
+// blockedByName reports whether nameMatch blocks its destination whatever
+// address the name resolves to. destinationConfig lets an address match
+// win at the same or a higher priority, so the name decides alone only
+// while no CIDR rule reaches its priority.
+func (h *UdpAssociateHandler) blockedByName(nameMatch *config.Rule) bool {
+	return nameMatch != nil &&
+		nameMatch.Block &&
+		!h.ruleSet.HasCIDRRuleAtOrAbove(nameMatch.Priority)
+}
+
 // destinationConfig returns the config for one destination of an
-// association. Rules match the way they do for CONNECT: by the resolved
-// address and, when the client sent a domain name, by that name; the
-// higher-priority match wins.
+// association, and whether the matched rule blocks that destination.
+// Rules match the way they do for CONNECT: by the resolved address and,
+// when the client sent a domain name, by that name (nameMatch, from
+// matchDomain); the higher-priority match wins, the address on a tie.
 func (h *UdpAssociateHandler) destinationConfig(
 	logger zerolog.Logger,
-	host string,
+	nameMatch *config.Rule,
 	addr net.IP,
-) *config.RuntimeConfig {
+) (cfg *config.RuntimeConfig, blocked bool) {
 	if h.ruleSet == nil {
-		return h.cfg
+		return h.cfg, false
 	}
 
-	queries := []rule.Query{{Type: rule.MatchTypeAddr, Value: addr.String()}}
-	if net.ParseIP(host) == nil {
-		queries = append(queries, rule.Query{Type: rule.MatchTypeDomain, Value: host})
-	}
-
-	matched := h.ruleSet.Search(queries)
+	addrMatch := h.ruleSet.Search(
+		[]rule.Query{{Type: rule.MatchTypeAddr, Value: addr.String()}},
+	)
+	matched := rule.HigherPriority(addrMatch, nameMatch)
 	if matched == nil {
-		return h.cfg
+		return h.cfg, false
 	}
 
 	logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
-	return &matched.Config
+	return &matched.Config, matched.Block
 }
 
 func (h *UdpAssociateHandler) relayInboundUDP(
@@ -227,8 +300,9 @@ func (h *UdpAssociateHandler) relayInboundUDP(
 	clientAddr *net.UDPAddr,
 	targetAddr *net.UDPAddr,
 	key netutil.NATKey,
+	flows *associationFlows,
 ) {
-	defer h.pool.Evict(key)
+	defer flows.release(key, rConn)
 
 	respBuf := make([]byte, 65535)
 	for {
@@ -250,6 +324,57 @@ func (h *UdpAssociateHandler) relayInboundUDP(
 			logger.Warn().Err(err).Msg("failed to write udp to client")
 			return
 		}
+	}
+}
+
+// associationFlows tracks the remote flows that one UDP association put in
+// the pool, so they can end with the association: "A UDP association
+// terminates when the TCP connection that the UDP ASSOCIATE request arrived
+// on terminates" (RFC 1928, section 6).
+type associationFlows struct {
+	pool *netutil.ConnRegistry[netutil.NATKey]
+
+	mu    sync.Mutex
+	conns map[netutil.NATKey]*netutil.IdleTimeoutConn
+}
+
+func newAssociationFlows(
+	pool *netutil.ConnRegistry[netutil.NATKey],
+) *associationFlows {
+	return &associationFlows{
+		pool:  pool,
+		conns: make(map[netutil.NATKey]*netutil.IdleTimeoutConn),
+	}
+}
+
+func (f *associationFlows) add(key netutil.NATKey, conn *netutil.IdleTimeoutConn) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.conns[key] = conn
+}
+
+// release stops tracking conn and evicts it from the pool, which closes it.
+// A newer flow stored under the same key is left alone.
+func (f *associationFlows) release(key netutil.NATKey, conn *netutil.IdleTimeoutConn) {
+	f.mu.Lock()
+	if f.conns[key] == conn {
+		delete(f.conns, key)
+	}
+	f.mu.Unlock()
+
+	f.pool.EvictIf(key, conn)
+}
+
+// releaseAll evicts every flow still tracked; their relay goroutines exit
+// once their connections are closed.
+func (f *associationFlows) releaseAll() {
+	f.mu.Lock()
+	conns := f.conns
+	f.conns = make(map[netutil.NATKey]*netutil.IdleTimeoutConn)
+	f.mu.Unlock()
+
+	for key, conn := range conns {
+		f.pool.EvictIf(key, conn)
 	}
 }
 

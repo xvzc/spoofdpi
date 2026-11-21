@@ -43,6 +43,10 @@ type Cache[K Key, V any] interface {
 	Get(key K) (V, bool)
 	Set(key K, value V, opts *options) bool
 	Delete(key K)
+	// DeleteIf deletes key only while match reports true for its current
+	// value, and reports whether it deleted it. The check and the delete
+	// happen atomically.
+	DeleteIf(key K, match func(V) bool) bool
 	Has(key K) bool
 	ForEach(f func(key K, value V) error) error
 	Size() int
