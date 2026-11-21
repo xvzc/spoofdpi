@@ -125,6 +125,19 @@ func TestResolveRules_dnsTimeout(t *testing.T) {
 	)
 }
 
+func TestResolveRules_rejectsZeroConnTimeout(t *testing.T) {
+	for _, key := range []string{"tcp-timeout", "udp-idle-timeout"} {
+		t.Run(key, func(t *testing.T) {
+			raw := []map[string]any{
+				{"connection": map[string]any{key: int64(0)}},
+			}
+
+			_, err := resolveRules(raw, DefaultConfig().RuntimeConfig)
+			assert.ErrorContains(t, err, "value 0 out of range[1-65535]")
+		})
+	}
+}
+
 func TestDNSFlags(t *testing.T) {
 	run := func(args ...string) (DNSOptions, error) {
 		opts := DefaultConfig().DNS

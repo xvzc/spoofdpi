@@ -93,6 +93,16 @@ func TestConnOptions_UnmarshalTOML(t *testing.T) {
 			},
 		},
 		{
+			name:    "zero tcp-timeout",
+			input:   map[string]any{"tcp-timeout": int64(0)},
+			wantErr: true,
+		},
+		{
+			name:    "zero udp-idle-timeout",
+			input:   map[string]any{"udp-idle-timeout": int64(0)},
+			wantErr: true,
+		},
+		{
 			name:    "invalid type",
 			input:   "invalid",
 			wantErr: true,

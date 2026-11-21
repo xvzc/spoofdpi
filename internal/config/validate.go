@@ -57,7 +57,10 @@ var (
 	checkInt8   = int64Range(math.MinInt8, math.MaxInt8)
 	checkUint16 = int64Range(0, math.MaxUint16)
 	// checkDNSTimeout rejects 0 because an unbounded lookup can hang forever.
-	checkDNSTimeout   = int64Range(1, math.MaxUint16)
+	checkDNSTimeout = int64Range(1, math.MaxUint16)
+	// checkConnTimeout rejects 0 because a dial without a timeout can hang
+	// forever and an idle UDP flow would never be closed.
+	checkConnTimeout  = int64Range(1, math.MaxUint16)
 	checkUint8NonZero = int64Range(1, math.MaxUint8)
 	// checkSeqOffset accepts offsets with |N| < 2^32.
 	checkSeqOffset    = int64Range(-math.MaxUint32, math.MaxUint32)

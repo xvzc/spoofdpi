@@ -349,13 +349,13 @@ func CreateCommand(
 					Name: "udp-idle-timeout",
 					Usage: fmt.Sprintf(`
 				Idle timeout for udp connection in milliseconds. 
-				No effect when the value is 0 (default: %v, max: %v)`,
+				Must be at least 1 (default: %v, max: %v)`,
 						defaultCfg.Conn.UDPIdleTimeout.Milliseconds(),
 						math.MaxUint16,
 					),
 					Value:     0,
 					OnlyOnce:  true,
-					Validator: checkUint16,
+					Validator: checkConnTimeout,
 					Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
 						dur := time.Duration(v * int64(time.Millisecond))
 						cliOverrides = append(cliOverrides, func(cfg *Config) {
@@ -450,13 +450,13 @@ func CreateCommand(
 					Name: "tcp-timeout",
 					Usage: fmt.Sprintf(`
 				Timeout for tcp connection in milliseconds. 
-				No effect when the value is 0 (default: %v, max: %v)`,
+				Must be at least 1 (default: %v, max: %v)`,
 						defaultCfg.Conn.TCPTimeout.Milliseconds(),
 						math.MaxUint16,
 					),
 					Value:     0,
 					OnlyOnce:  true,
-					Validator: checkUint16,
+					Validator: checkConnTimeout,
 					Action: func(ctx context.Context, cmd *cli.Command, v int64) error {
 						dur := time.Duration(v * int64(time.Millisecond))
 						cliOverrides = append(cliOverrides, func(cfg *Config) {

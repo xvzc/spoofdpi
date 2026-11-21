@@ -181,6 +181,23 @@ func TestCreateCommand_Flags(t *testing.T) {
 	}
 }
 
+func TestCreateCommand_RejectsZeroConnTimeout(t *testing.T) {
+	for _, flag := range []string{"--tcp-timeout", "--udp-idle-timeout"} {
+		t.Run(flag, func(t *testing.T) {
+			ran := false
+			runFunc := func(ctx context.Context, configDir string, cfg *Config) error {
+				ran = true
+				return nil
+			}
+
+			cmd := CreateCommand(runFunc, "v0.0.0", "commit", "build")
+			err := cmd.Run(context.Background(), []string{"spoofdpi", "--clean", flag, "0"})
+			assert.ErrorContains(t, err, "value 0 out of range[1-65535]")
+			assert.False(t, ran)
+		})
+	}
+}
+
 func TestCreateCommand_OverrideTOML(t *testing.T) {
 	tomlContent := `
 [app]

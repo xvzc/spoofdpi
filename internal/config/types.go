@@ -192,7 +192,7 @@ func (o *ConnOptions) UnmarshalTOML(data any) (err error) {
 	if p := findFrom(
 		v,
 		"tcp-timeout",
-		parseIntFn[uint16](checkUint16),
+		parseIntFn[uint16](checkConnTimeout),
 		&err,
 	); isOk(
 		p,
@@ -203,7 +203,7 @@ func (o *ConnOptions) UnmarshalTOML(data any) (err error) {
 	if p := findFrom(
 		v,
 		"udp-idle-timeout",
-		parseIntFn[uint16](checkUint16),
+		parseIntFn[uint16](checkConnTimeout),
 		&err,
 	); isOk(
 		p,

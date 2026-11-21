@@ -8,9 +8,7 @@ Settings for network connection timeouts and packet configuration.
 
 ### Description
 
-Specifies the timeout (in milliseconds) for TCP connections. `(default: 10000, max: 65535)`
-
-A value of `0` means no timeout.
+Specifies the timeout (in milliseconds) for TCP connections. `(default: 10000, min: 1, max: 65535)`
 
 ### Usage
 
@@ -33,11 +31,9 @@ tcp-timeout = 5000
 
 ### Description
 
-Specifies the idle timeout (in milliseconds) for UDP connections. `(default: 25000, max: 65535)`
+Specifies the idle timeout (in milliseconds) for UDP connections. `(default: 25000, min: 1, max: 65535)`
 
 The connection will be closed if there is no read/write activity for this duration. Each read or write operation resets the timeout.
-
-A value of `0` means no timeout.
 
 ### Usage
 
