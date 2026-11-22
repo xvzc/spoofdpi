@@ -41,10 +41,10 @@ func TestTCPHandler_Handle_Block(t *testing.T) {
 			Match:    &config.MatchAttrs{CIDRs: []string{dstCIDR}},
 		}
 	}
-	domainRule := func(domain string, block bool) *config.Rule {
+	domainRule := func(domain string, priority uint16, block bool) *config.Rule {
 		return &config.Rule{
 			Name:     "domain",
-			Priority: 5,
+			Priority: priority,
 			Block:    block,
 			Match:    &config.MatchAttrs{Domains: []string{domain}},
 		}
@@ -59,20 +59,44 @@ func TestTCPHandler_Handle_Block(t *testing.T) {
 		{"address block, plain tcp", []*config.Rule{addrRule(true)}, plain, 0},
 		{
 			"address block, tls without a domain match",
-			[]*config.Rule{addrRule(true), domainRule("other.test", false)},
+			[]*config.Rule{addrRule(true), domainRule("other.test", 20, false)},
 			clientHello,
 			0,
 		},
-		{"domain block by sni", []*config.Rule{domainRule(sni, true)}, clientHello, 0},
+		{"domain block by sni", []*config.Rule{domainRule(sni, 5, true)}, clientHello, 0},
 		{
-			"domain block by sni over an allowing address rule",
-			[]*config.Rule{addrRule(false), domainRule(sni, true)},
+			"higher-priority sni domain block overrides an address allow",
+			[]*config.Rule{addrRule(false), domainRule(sni, 20, true)},
 			clientHello,
 			0,
 		},
 		{
-			"sni domain rule overrides an address block",
-			[]*config.Rule{addrRule(true), domainRule(sni, false)},
+			"lower-priority sni domain block loses to an address allow",
+			[]*config.Rule{addrRule(false), domainRule(sni, 5, true)},
+			clientHello,
+			1,
+		},
+		{
+			"higher-priority sni domain allow overrides an address block",
+			[]*config.Rule{addrRule(true), domainRule(sni, 20, false)},
+			clientHello,
+			1,
+		},
+		{
+			"lower-priority sni domain allow loses to an address block",
+			[]*config.Rule{addrRule(true), domainRule(sni, 5, false)},
+			clientHello,
+			0,
+		},
+		{
+			"address block wins a priority tie with an sni domain allow",
+			[]*config.Rule{addrRule(true), domainRule(sni, 10, false)},
+			clientHello,
+			0,
+		},
+		{
+			"address allow wins a priority tie with an sni domain block",
+			[]*config.Rule{addrRule(false), domainRule(sni, 10, true)},
 			clientHello,
 			1,
 		},

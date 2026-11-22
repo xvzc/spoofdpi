@@ -152,15 +152,16 @@ func (h *TCPHandler) handleTLS(
 
 	logger.Trace().Str("value", dst.Host).Msg("extracted sni field")
 
-	// Domain-based matching overrides the addr-based rule when SNI is available
-	matched := addrRule
+	// The SNI is matched as the domain; the higher-priority match wins, the
+	// address on a tie.
+	var domainRule *config.Rule
 	if h.ruleSet != nil && dst.Host != "" {
 		q := []rule.Query{{Type: rule.MatchTypeDomain, Value: dst.Host}}
-		if domainRule := h.ruleSet.Search(q); domainRule != nil {
+		if domainRule = h.ruleSet.Search(q); domainRule != nil {
 			logger.Trace().RawJSON("summary", domainRule.JSON()).Msg("domain match")
-			matched = domainRule
 		}
 	}
+	matched := rule.HigherPriority(addrRule, domainRule)
 
 	if matched != nil && matched.Block {
 		logger.Debug().Msg("request is blocked by policy")
