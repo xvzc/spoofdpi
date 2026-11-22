@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -13,13 +12,22 @@ import (
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
+// bindAcceptTimeout bounds the wait for the incoming connection. RFC 1928
+// sets no limit, but SOCKS4 requires one, with 2 minutes as its example; a
+// client that drops while waiting is otherwise only noticed at shutdown.
+const bindAcceptTimeout = 2 * time.Minute
+
 type BindHandler struct {
 	logger zerolog.Logger
+
+	// acceptTimeout bounds the wait for the incoming connection.
+	acceptTimeout time.Duration
 }
 
 func NewBindHandler(logger zerolog.Logger) *BindHandler {
 	return &BindHandler{
-		logger: logger,
+		logger:        logger,
+		acceptTimeout: bindAcceptTimeout,
 	}
 }
 
@@ -28,143 +36,150 @@ func (h *BindHandler) Handle(
 	conn net.Conn,
 	req *proto.SOCKS5Request,
 ) error {
-	logger := logging.WithLocalScope(ctx, h.logger, "bind")
+	c := &bindConn{h: h, conn: conn, req: req}
+	return c.serve(ctx)
+}
 
-	// Listen on the same IP as the proxy's client-facing address so the
-	// advertised address in the first reply is reachable by the client.
-	localIP := conn.LocalAddr().(*net.TCPAddr).IP
-	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: localIP, Port: 0})
-	if err != nil {
-		logger.Error().Err(err).Msg("failed to create bind listener")
-		_ = proto.SOCKS5FailureResponse().Write(conn)
+// bindConn is one BIND request. It owns the listener it opens and the
+// incoming connection it accepts, and closes them when serve returns.
+type bindConn struct {
+	h      *BindHandler
+	conn   net.Conn
+	req    *proto.SOCKS5Request
+	logger zerolog.Logger
+
+	listener *net.TCPListener
+	remote   net.Conn
+}
+
+func (c *bindConn) serve(ctx context.Context) error {
+	c.logger = logging.WithLocalScope(ctx, c.h.logger, "bind")
+
+	if err := c.listen(); err != nil {
 		return err
 	}
-	defer func() { _ = listener.Close() }()
+	defer func() { _ = c.listener.Close() }()
 
-	lAddr := listener.Addr().(*net.TCPAddr)
+	lAddr := c.listener.Addr().(*net.TCPAddr)
 
-	logger.Debug().Str("addr", lAddr.String()).Msg("new listener")
+	c.logger.Debug().Str("addr", lAddr.String()).Msg("new listener")
 
 	// 1. First reply: advertise listening address
 	if err := proto.SOCKS5SuccessResponse().
 		Bind(lAddr.IP).
 		Port(lAddr.Port).
-		Write(conn); err != nil {
-		logger.Error().Err(err).Msg("failed to write first bind reply")
+		Write(c.conn); err != nil {
+		c.logger.Error().Err(err).Msg("failed to write first bind reply")
 		return err
 	}
 
-	logger.Debug().Str("bind_addr", lAddr.String()).Msg("waiting for incoming connection")
+	c.logger.Debug().
+		Str("bind_addr", lAddr.String()).
+		Msg("waiting for incoming connection")
 
-	// Close the listener (unblocking Accept) if the client TCP connection drops.
-	// The monitoring goroutine must exit before tunneling begins to avoid
-	// stealing bytes; stopMonitor + SetReadDeadline achieves this.
-	stopMonitor := make(chan struct{})
-	var monitorWg sync.WaitGroup
-	monitorWg.Add(1)
-	go func() {
-		defer monitorWg.Done()
-		b := [1]byte{}
-		for {
-			_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
-			_, err := conn.Read(b[:])
-			if err != nil {
-				select {
-				case <-stopMonitor:
-					return // accept succeeded; don't touch listener
-				default:
-				}
-				// Read deadline expires every 200ms while waiting for Accept;
-				// that's expected — keep polling. Only a real drop closes the listener.
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue
-				}
-				_ = listener.Close()
-				return
-			}
-			select {
-			case <-stopMonitor:
-				return
-			default:
-			}
-		}
-	}()
+	// 2. Accept
+	if err := c.accept(ctx); err != nil {
+		return err
+	}
+	defer netutil.CloseConns(c.remote)
 
-	// 2. Accept with context cancellation support
+	rAddr := c.remote.RemoteAddr().(*net.TCPAddr)
+
+	// 3. Verify connecting host matches DST.ADDR from the BIND request (RFC 1928)
+	if c.req.IP != nil && !c.req.IP.IsUnspecified() && !rAddr.IP.Equal(c.req.IP) {
+		c.logger.Warn().
+			Str("expected", c.req.IP.String()).
+			Str("actual", rAddr.IP.String()).
+			Msg("rejecting connection from unexpected host")
+		_ = proto.SOCKS5FailureResponse().Write(c.conn)
+		return fmt.Errorf("bind: unexpected connecting host %s", rAddr.IP)
+	}
+
+	c.logger.Debug().
+		Str("remote_addr", rAddr.String()).
+		Msg("accepted incoming connection")
+
+	// 4. Second reply: report the connecting host's address
+	if err := proto.SOCKS5SuccessResponse().
+		Bind(rAddr.IP).
+		Port(rAddr.Port).
+		Write(c.conn); err != nil {
+		c.logger.Error().Err(err).Msg("failed to write second bind reply")
+		return err
+	}
+
+	// 5. Tunnel
+	return c.tunnel(ctx)
+}
+
+// listen opens the listener for the incoming connection, and writes the
+// failure reply when it can't.
+func (c *bindConn) listen() error {
+	// Listen on the same IP as the proxy's client-facing address so the
+	// advertised address in the first reply is reachable by the client.
+	localIP := c.conn.LocalAddr().(*net.TCPAddr).IP
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: localIP, Port: 0})
+	if err != nil {
+		c.logger.Error().Err(err).Msg("failed to create bind listener")
+		_ = proto.SOCKS5FailureResponse().Write(c.conn)
+		return err
+	}
+	c.listener = listener
+
+	return nil
+}
+
+// accept waits for the incoming connection until ctx is cancelled or the
+// accept timeout passes, and writes the failure reply when it can't accept.
+func (c *bindConn) accept(ctx context.Context) error {
+	_ = c.listener.SetDeadline(time.Now().Add(c.h.acceptTimeout))
+
 	type result struct {
 		conn net.Conn
 		err  error
 	}
 	ch := make(chan result, 1)
 	go func() {
-		c, err := listener.Accept()
-		ch <- result{c, err}
+		conn, err := c.listener.Accept()
+		ch <- result{conn, err}
 	}()
 
-	var remoteConn net.Conn
 	select {
 	case <-ctx.Done():
 		// Close the listener to unblock Accept, then drain ch to close any
 		// conn that was accepted concurrently before the listener closed.
-		_ = listener.Close()
+		_ = c.listener.Close()
 		if res := <-ch; res.conn != nil {
 			_ = res.conn.Close()
 		}
 		return ctx.Err()
 	case res := <-ch:
 		if res.err != nil {
-			logger.Error().Err(res.err).Msg("failed to accept incoming connection")
-			_ = proto.SOCKS5FailureResponse().Write(conn)
+			c.logger.Error().Err(res.err).Msg("failed to accept incoming connection")
+			_ = proto.SOCKS5FailureResponse().Write(c.conn)
 			return res.err
 		}
-		remoteConn = res.conn
-	}
-	defer netutil.CloseConns(remoteConn)
-
-	// Stop monitoring and wait for the goroutine to exit before tunneling.
-	close(stopMonitor)
-	_ = conn.SetReadDeadline(time.Now()) // unblock any in-progress Read immediately
-	monitorWg.Wait()
-	_ = conn.SetReadDeadline(time.Time{}) // restore for tunneling
-
-	rAddr := remoteConn.RemoteAddr().(*net.TCPAddr)
-
-	// 3. Verify connecting host matches DST.ADDR from the BIND request (RFC 1928)
-	if req.IP != nil && !req.IP.IsUnspecified() && !rAddr.IP.Equal(req.IP) {
-		logger.Warn().
-			Str("expected", req.IP.String()).
-			Str("actual", rAddr.IP.String()).
-			Msg("rejecting connection from unexpected host")
-		_ = proto.SOCKS5FailureResponse().Write(conn)
-		return fmt.Errorf("bind: unexpected connecting host %s", rAddr.IP)
+		c.remote = res.conn
 	}
 
-	logger.Debug().Str("remote_addr", rAddr.String()).Msg("accepted incoming connection")
+	return nil
+}
 
-	// 4. Second reply: report the connecting host's address
-	if err := proto.SOCKS5SuccessResponse().
-		Bind(rAddr.IP).
-		Port(rAddr.Port).
-		Write(conn); err != nil {
-		logger.Error().Err(err).Msg("failed to write second bind reply")
-		return err
-	}
-
-	// 5. Tunnel
+func (c *bindConn) tunnel(ctx context.Context) error {
 	resCh := make(chan netutil.TransferResult, 2)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	startedAt := time.Now()
-	go netutil.TunnelConns(ctx, resCh, remoteConn, conn, netutil.TunnelDirOut)
-	go netutil.TunnelConns(ctx, resCh, conn, remoteConn, netutil.TunnelDirIn)
+	go netutil.TunnelConns(ctx, resCh, c.remote, c.conn, netutil.TunnelDirOut)
+	go netutil.TunnelConns(ctx, resCh, c.conn, c.remote, netutil.TunnelDirIn)
 
 	return netutil.WaitForTunnelCompletion(
 		ctx,
-		logger,
+		c.logger,
 		resCh,
 		startedAt,
-		netutil.DescribeRoute(conn, remoteConn),
+		netutil.DescribeRoute(c.conn, c.remote),
 		nil,
 	)
 }

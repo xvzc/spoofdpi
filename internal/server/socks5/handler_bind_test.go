@@ -6,6 +6,9 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"os"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,9 +33,14 @@ type bindSession struct {
 	logs *bytes.Buffer
 }
 
-// startBind runs a BindHandler for req on a loopback control connection
-// and reads the first reply, which must be a success.
-func startBind(t *testing.T, req *proto.SOCKS5Request) *bindSession {
+// startBind runs a BindHandler, changed by each of opts, for req on a
+// loopback control connection and reads the first reply, which must be a
+// success.
+func startBind(
+	t *testing.T,
+	req *proto.SOCKS5Request,
+	opts ...func(*BindHandler),
+) *bindSession {
 	t.Helper()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -47,6 +55,9 @@ func startBind(t *testing.T, req *proto.SOCKS5Request) *bindSession {
 
 	logs := &bytes.Buffer{}
 	h := NewBindHandler(zerolog.New(zerolog.SyncWriter(logs)))
+	for _, opt := range opts {
+		opt(h)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -218,18 +229,43 @@ func TestBindHandler_Handle_TunnelEnds(t *testing.T) {
 	})
 }
 
+// withAcceptTimeout sets the handler's accept timeout to d.
+func withAcceptTimeout(d time.Duration) func(*BindHandler) {
+	return func(h *BindHandler) { h.acceptTimeout = d }
+}
+
+func TestNewBindHandler_AcceptTimeout(t *testing.T) {
+	assert.Equal(t, 2*time.Minute, NewBindHandler(zerolog.Nop()).acceptTimeout)
+}
+
 func TestBindHandler_Handle_EndsWhileWaiting(t *testing.T) {
+	const timeout = 300 * time.Millisecond
+
+	t.Run("accept times out", func(t *testing.T) {
+		start := time.Now()
+		s := startBind(t, &proto.SOCKS5Request{}, withAcceptTimeout(timeout))
+
+		code, _ := readBindReply(t, s.client)
+		assert.Equal(t, byte(proto.SOCKS5RCodeGenFailure), code)
+
+		err := s.wait(t)
+		assert.ErrorIs(t, err, os.ErrDeadlineExceeded)
+		assert.GreaterOrEqual(t, time.Since(start), timeout)
+		s.assertListenerClosed(t)
+		// The timeout is reported as a failed accept.
+		assert.Contains(t, s.logs.String(), `"level":"error"`)
+		assert.Contains(t, s.logs.String(), "failed to accept incoming connection")
+	})
+
 	t.Run("client closes", func(t *testing.T) {
-		s := startBind(t, &proto.SOCKS5Request{})
+		s := startBind(t, &proto.SOCKS5Request{}, withAcceptTimeout(timeout))
 
 		_ = s.client.Close()
 
+		// The drop isn't noticed; the wait ends at the timeout.
 		err := s.wait(t)
-		assert.ErrorIs(t, err, net.ErrClosed)
+		assert.ErrorIs(t, err, os.ErrDeadlineExceeded)
 		s.assertListenerClosed(t)
-		// The listener closing is reported as a failed accept.
-		assert.Contains(t, s.logs.String(), `"level":"error"`)
-		assert.Contains(t, s.logs.String(), "failed to accept incoming connection")
 	})
 
 	t.Run("context is cancelled", func(t *testing.T) {
@@ -244,15 +280,12 @@ func TestBindHandler_Handle_EndsWhileWaiting(t *testing.T) {
 	})
 }
 
-// TestBindHandler_Handle_BytesBeforeSecondReply pins that bytes the client
-// sends while BIND waits for the incoming connection are read off the
-// control connection to watch for its closing, and are not relayed.
 func TestBindHandler_Handle_BytesBeforeSecondReply(t *testing.T) {
 	s := startBind(t, &proto.SOCKS5Request{})
 
 	_, err := s.client.Write([]byte("early"))
 	require.NoError(t, err)
-	// Give the watch on the control connection time to read them.
+	// Let the bytes reach the proxy while it waits.
 	time.Sleep(300 * time.Millisecond)
 
 	remote, code, _ := s.connectIncoming(t)
@@ -260,5 +293,35 @@ func TestBindHandler_Handle_BytesBeforeSecondReply(t *testing.T) {
 
 	_, err = s.client.Write([]byte("late"))
 	require.NoError(t, err)
-	assert.Equal(t, "late", readString(t, remote, "late"))
+	// Bytes sent while waiting are relayed too.
+	assert.Equal(t, "earlylate", readString(t, remote, "earlylate"))
+}
+
+// goroutinesIn returns the number of goroutines running code from file, a
+// path suffix such as "/socks5/handler_bind.go".
+func goroutinesIn(file string) int {
+	buf := make([]byte, 1<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	n := 0
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		if strings.Contains(g, file) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestBindHandler_Handle_NoGoroutineOutlivesHandle(t *testing.T) {
+	s := startBind(t, &proto.SOCKS5Request{})
+
+	// Handle returns while the control connection stays open; the caller
+	// closes it only later.
+	s.cancel()
+	require.ErrorIs(t, s.wait(t), context.Canceled)
+
+	assert.Zero(
+		t,
+		goroutinesIn("/socks5/handler_bind.go"),
+		"a BIND goroutine outlived Handle",
+	)
 }
