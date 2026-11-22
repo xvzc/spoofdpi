@@ -3,6 +3,7 @@ package netutil
 import (
 	"net"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -72,21 +73,44 @@ func TestConnRegistry_EvictExpired(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestConnRegistry_EvictIf(t *testing.T) {
+func TestConnRegistry_EvictExpired_RefreshedAfterScan(t *testing.T) {
+	p := NewConnRegistry[NATKey](8)
+
+	raw := dialLoopbackUDP(t)
+	conn := p.Store(testKey(1), raw, 50*time.Millisecond)
+
+	time.Sleep(100 * time.Millisecond)
+	require.True(t, conn.IsExpired(time.Now()))
+
+	// Activity refreshes the connection after the sweep found it expired
+	// but before the sweep evicts it.
+	atomic.StoreInt64(&conn.expiredAt, time.Now().Add(time.Hour).UnixNano())
+
+	assert.False(t, p.evictIfExpired(testKey(1), conn))
+	assert.True(t, p.Has(testKey(1)))
+	// Its socket's own deadline has passed, but it isn't closed.
+	_, err := raw.Write([]byte{0})
+	assert.NotErrorIs(t, err, net.ErrClosed)
+}
+
+func TestConnRegistry_EvictFunc(t *testing.T) {
 	p := NewConnRegistry[NATKey](8)
 
 	oldRaw := dialLoopbackUDP(t)
 	newRaw := dialLoopbackUDP(t)
 	oldConn := p.Store(testKey(1), oldRaw, time.Hour)
 	newConn := p.Store(testKey(1), newRaw, time.Hour)
+	is := func(conn *IdleTimeoutConn) func(*IdleTimeoutConn) bool {
+		return func(v *IdleTimeoutConn) bool { return v == conn }
+	}
 
 	// The replaced connection can't evict its replacement.
-	assert.False(t, p.EvictIf(testKey(1), oldConn))
+	assert.False(t, p.EvictFunc(testKey(1), is(oldConn)))
 	assert.True(t, p.Has(testKey(1)))
 	_, err := newRaw.Write([]byte{0})
 	assert.NoError(t, err)
 
-	assert.True(t, p.EvictIf(testKey(1), newConn))
+	assert.True(t, p.EvictFunc(testKey(1), is(newConn)))
 	assert.False(t, p.Has(testKey(1)))
 	_, err = newRaw.Write([]byte{0})
 	assert.ErrorIs(t, err, net.ErrClosed)

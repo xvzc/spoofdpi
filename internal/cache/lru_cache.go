@@ -126,7 +126,7 @@ func (c *LRUCache[K, V]) Delete(key K) {
 	}
 }
 
-func (c *LRUCache[K, V]) DeleteIf(key K, match func(V) bool) bool {
+func (c *LRUCache[K, V]) DeleteFunc(key K, del func(V) bool) bool {
 	s := c.shard(key)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -135,7 +135,7 @@ func (c *LRUCache[K, V]) DeleteIf(key K, match func(V) bool) bool {
 		return false
 	}
 	e := elem.Value.(*lruEntry[K, V])
-	if !match(e.value) {
+	if !del(e.value) {
 		return false
 	}
 	s.list.Remove(elem)

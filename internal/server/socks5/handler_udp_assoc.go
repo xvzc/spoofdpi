@@ -362,7 +362,7 @@ func (f *associationFlows) release(key netutil.NATKey, conn *netutil.IdleTimeout
 	}
 	f.mu.Unlock()
 
-	f.pool.EvictIf(key, conn)
+	f.pool.EvictFunc(key, func(v *netutil.IdleTimeoutConn) bool { return v == conn })
 }
 
 // releaseAll evicts every flow still tracked; their relay goroutines exit
@@ -374,7 +374,7 @@ func (f *associationFlows) releaseAll() {
 	f.mu.Unlock()
 
 	for key, conn := range conns {
-		f.pool.EvictIf(key, conn)
+		f.pool.EvictFunc(key, func(v *netutil.IdleTimeoutConn) bool { return v == conn })
 	}
 }
 

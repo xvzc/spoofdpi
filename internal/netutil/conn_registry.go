@@ -68,7 +68,7 @@ func (p *ConnRegistry[K]) Store(
 	}
 
 	wrapper.onClose = func() {
-		p.EvictIf(key, wrapper)
+		p.EvictFunc(key, func(v *IdleTimeoutConn) bool { return v == wrapper })
 	}
 
 	p.storage.Set(key, wrapper, nil)
@@ -86,13 +86,13 @@ func (p *ConnRegistry[K]) Evict(key K) {
 	p.storage.Delete(key)
 }
 
-// EvictIf closes and removes the connection stored under key only if it is
-// conn. A connection that was replaced under the same key can't evict its
-// replacement this way.
-func (p *ConnRegistry[K]) EvictIf(key K, conn *IdleTimeoutConn) bool {
-	return p.storage.DeleteIf(key, func(v *IdleTimeoutConn) bool {
-		return v == conn
-	})
+// EvictFunc closes and removes the connection stored under key if evict
+// reports true for it, and reports whether it did. Comparing the stored
+// connection with one's own keeps a replaced connection from evicting its
+// replacement. evict runs under the pool's lock and must not call back into
+// the pool.
+func (p *ConnRegistry[K]) EvictFunc(key K, evict func(*IdleTimeoutConn) bool) bool {
+	return p.storage.DeleteFunc(key, evict)
 }
 
 // Has checks if the connection exists in the cache.
@@ -127,6 +127,14 @@ func (p *ConnRegistry[K]) evictExpired() {
 		return nil
 	})
 	for k, conn := range toRemove {
-		p.EvictIf(k, conn)
+		p.evictIfExpired(k, conn)
 	}
+}
+
+// evictIfExpired evicts conn from key unless it was replaced or refreshed
+// by activity since it was found expired.
+func (p *ConnRegistry[K]) evictIfExpired(key K, conn *IdleTimeoutConn) bool {
+	return p.EvictFunc(key, func(v *IdleTimeoutConn) bool {
+		return v == conn && v.IsExpired(time.Now())
+	})
 }
