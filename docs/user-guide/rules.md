@@ -86,6 +86,8 @@ A SOCKS5 association selects and applies a rule for each datagram, and keeps one
 - Fake packets are sent only at the start of a flow, with the `udp` and `connection` settings of the rule its first datagram selects.
 - The flow's `udp-idle-timeout` follows the rule of its latest datagram.
 
+A SOCKS5 association keeps at most 256 flows; opening another closes the one used least recently. All of its flows close when the association ends.
+
 ## DNS Override (`dns`)
 
 Customize how domain names are resolved for matched traffic. The available fields mirror the global [DNS Configuration](dns.md).

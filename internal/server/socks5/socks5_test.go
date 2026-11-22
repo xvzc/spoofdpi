@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
-	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
@@ -24,12 +23,10 @@ func TestSOCKS5Proxy_HandleConnection_UDPAssociateWithName(t *testing.T) {
 	// sets up the association.
 	for _, name := range []string{"x", "unresolvable.invalid"} {
 		t.Run(name, func(t *testing.T) {
-			pool := netutil.NewConnRegistry[netutil.NATKey](16)
 			p := &SOCKS5Proxy{
 				logger: zerolog.Nop(),
 				udpAssociateHandler: newRelayingUdpAssociateHandler(
 					t,
-					pool,
 					&config.RuntimeConfig{},
 				),
 			}
@@ -171,7 +168,6 @@ func TestSOCKS5Proxy_ServeStopsWithOpenConnection(t *testing.T) {
 				bindHandler: NewBindHandler(logger),
 				udpAssociateHandler: newRelayingUdpAssociateHandler(
 					t,
-					netutil.NewConnRegistry[netutil.NATKey](16),
 					&config.RuntimeConfig{},
 				),
 				listenAddr: net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)},

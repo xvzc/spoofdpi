@@ -395,8 +395,6 @@ func createServer(
 		), nil
 
 	case config.AppModeSOCKS5:
-		udpPool := netutil.NewConnRegistry[netutil.NATKey](4096)
-		udpPool.RunCleanupLoop(appctx)
 		return socks5.NewSOCKS5Proxy(
 			logging.WithScope(logger, "srv"),
 			socks5.NewConnectHandler(
@@ -410,7 +408,6 @@ func createServer(
 			socks5.NewBindHandler(logging.WithScope(logger, "hnd")),
 			socks5.NewUdpAssociateHandler(
 				logging.WithScope(logger, "hnd"),
-				udpPool,
 				udpDesyncer,
 				ruleSet,
 				&cfg.RuntimeConfig,

@@ -1,6 +1,7 @@
 package socks5
 
 import (
+	"container/list"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -20,32 +22,36 @@ import (
 	"github.com/xvzc/spoofdpi/internal/server"
 )
 
+// maxUDPFlows is how many remote flows one UDP association keeps open.
+// Opening another closes the one used least recently.
+const maxUDPFlows = 256
+
 type UdpAssociateHandler struct {
 	logger   zerolog.Logger
-	pool     *netutil.ConnRegistry[netutil.NATKey]
 	desyncer *desync.UDPDesyncer
 	ruleSet  *rule.RuleSet
 	cfg      *config.RuntimeConfig
 
 	// resolver resolves the destinations that clients send as domain names.
 	resolver dns.Resolver
+	// maxFlows is how many remote flows one association keeps open.
+	maxFlows int
 }
 
 func NewUdpAssociateHandler(
 	logger zerolog.Logger,
-	pool *netutil.ConnRegistry[netutil.NATKey],
 	desyncer *desync.UDPDesyncer,
 	ruleSet *rule.RuleSet,
 	cfg *config.RuntimeConfig,
 ) *UdpAssociateHandler {
 	return &UdpAssociateHandler{
 		logger:   logger,
-		pool:     pool,
 		desyncer: desyncer,
 		ruleSet:  ruleSet,
 		cfg:      cfg,
 
 		resolver: dns.SystemResolver{},
+		maxFlows: maxUDPFlows,
 	}
 }
 
@@ -54,197 +60,398 @@ func (h *UdpAssociateHandler) Handle(
 	lConn net.Conn,
 	req *proto.SOCKS5Request,
 ) error {
-	logger := logging.WithLocalScope(ctx, h.logger, "udp_associate")
+	c := newUdpAssociateConn(h, lConn, req)
+	return c.serve(ctx)
+}
 
-	// 1. Listen on a random UDP port
-	lTCPAddr := lConn.LocalAddr().(*net.TCPAddr) // SOCKS5 listens on TCP
-	lUDPConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: lTCPAddr.IP, Port: 0})
-	if err != nil {
-		logger.Error().Err(err).Msg("failed to create udp listener")
-		_ = proto.SOCKS5FailureResponse().Write(lConn)
+// udpAssociateConn is one UDP association. It owns the relay socket and the
+// remote flows it opens, and closes them all when serve returns: "A UDP
+// association terminates when the TCP connection that the UDP ASSOCIATE
+// request arrived on terminates" (RFC 1928, section 6).
+type udpAssociateConn struct {
+	h      *UdpAssociateHandler
+	conn   net.Conn
+	req    *proto.SOCKS5Request
+	logger zerolog.Logger
+
+	relay *net.UDPConn
+	// controlDone is closed when the control connection ends.
+	controlDone chan struct{}
+	// wg tracks the goroutines serve starts.
+	wg sync.WaitGroup
+
+	mu sync.Mutex
+	// flows holds the open flows by client address and destination.
+	flows map[netutil.NATKey]*udpFlow
+	// lru orders the flows from the most to the least recently used.
+	lru *list.List
+}
+
+func newUdpAssociateConn(
+	h *UdpAssociateHandler,
+	conn net.Conn,
+	req *proto.SOCKS5Request,
+) *udpAssociateConn {
+	return &udpAssociateConn{
+		h:     h,
+		conn:  conn,
+		req:   req,
+		flows: make(map[netutil.NATKey]*udpFlow),
+		lru:   list.New(),
+	}
+}
+
+// udpFlow is a connected socket to one destination, for one client address.
+type udpFlow struct {
+	key  netutil.NATKey
+	conn *netutil.IdleTimeoutConn
+	elem *list.Element
+}
+
+func (c *udpAssociateConn) serve(ctx context.Context) error {
+	c.logger = logging.WithLocalScope(ctx, c.h.logger, "udp_associate")
+
+	if err := c.listen(); err != nil {
 		return err
 	}
-	defer netutil.CloseConns(lUDPConn)
+	defer c.release()
 
-	logger.Debug().
-		Str("addr", lUDPConn.LocalAddr().String()).
-		Str("network", lUDPConn.LocalAddr().Network()).
+	// Reply with the bound address
+	lUDPAddr := c.relay.LocalAddr().(*net.UDPAddr)
+	err := proto.SOCKS5SuccessResponse().
+		Bind(lUDPAddr.IP).
+		Port(lUDPAddr.Port).
+		Write(c.conn)
+	if err != nil {
+		c.logger.Error().Err(err).Msg("failed to write socks5 success reply")
+		return err
+	}
+
+	c.watchControl()
+
+	return c.relayOutbound(ctx)
+}
+
+// listen opens the relay socket on a random port, and writes the failure
+// reply when it can't.
+func (c *udpAssociateConn) listen() error {
+	lTCPAddr := c.conn.LocalAddr().(*net.TCPAddr) // SOCKS5 listens on TCP
+	relay, err := net.ListenUDP("udp", &net.UDPAddr{IP: lTCPAddr.IP, Port: 0})
+	if err != nil {
+		c.logger.Error().Err(err).Msg("failed to create udp listener")
+		_ = proto.SOCKS5FailureResponse().Write(c.conn)
+		return err
+	}
+	c.relay = relay
+
+	c.logger.Debug().
+		Str("addr", relay.LocalAddr().String()).
+		Str("network", relay.LocalAddr().Network()).
 		Msg("new conn")
 
-	lUDPAddr := lUDPConn.LocalAddr().(*net.UDPAddr)
-
-	logger.Debug().
-		Str("bind_addr", lUDPAddr.String()).
+	c.logger.Debug().
+		Str("bind_addr", relay.LocalAddr().String()).
 		Msg("socks5 udp associate established")
 
-		// 2. Reply with the bound address
-	err = proto.SOCKS5SuccessResponse().Bind(lUDPAddr.IP).Port(lUDPAddr.Port).Write(lConn)
-	if err != nil {
-		logger.Error().Err(err).Msg("failed to write socks5 success reply")
-		return err
+	return nil
+}
+
+// watchControl closes the relay socket when the control connection ends,
+// which ends relayOutbound.
+func (c *udpAssociateConn) watchControl() {
+	c.controlDone = make(chan struct{})
+	c.wg.Go(func() {
+		_, _ = io.Copy(io.Discard, c.conn) // Block until TCP closes
+		close(c.controlDone)
+		_ = c.relay.Close()
+	})
+}
+
+// release closes the relay socket and every flow, and waits for the
+// goroutines serve started to return.
+func (c *udpAssociateConn) release() {
+	_ = c.relay.Close()
+
+	c.mu.Lock()
+	for key, f := range c.flows {
+		_ = f.conn.Close()
+		delete(c.flows, key)
 	}
+	c.lru.Init()
+	c.mu.Unlock()
 
-	// 3. Keep TCP Alive & Relay
-	// According to [RFC1928](https://datatracker.ietf.org/doc/html/rfc1928#section-6),
-	// > A UDP association terminates when the TCP connection that the UDP
-	// > ASSOCIATE request arrived on terminates.
-	// Therefore, we need to monitor TCP for closure.
-	done := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(io.Discard, lConn) // Block until TCP closes
-		close(done)                       // Close the channel to signal UDP handler to exit
-		_ = lUDPConn.Close()              // Force ReadFromUDP to unblock and avoid goroutine leak
-	}()
+	// Unblock watchControl if the control connection is still open.
+	_ = c.conn.SetReadDeadline(time.Now())
+	c.wg.Wait()
+	_ = c.conn.SetReadDeadline(time.Time{})
+}
 
-	// The remote flows this association created end with it.
-	flows := newAssociationFlows(h.pool)
-	defer flows.releaseAll()
-
+// relayOutbound relays the client's datagrams to their destinations until
+// the relay socket is closed.
+func (c *udpAssociateConn) relayOutbound(ctx context.Context) error {
 	buf := make([]byte, 65535)
-	rTCPAddr := lConn.RemoteAddr().(*net.TCPAddr).IP
+	clientIP := c.conn.RemoteAddr().(*net.TCPAddr).IP
 
 	for {
 		// Wait for data
-		n, srcAddr, err := lUDPConn.ReadFromUDP(buf)
+		n, srcAddr, err := c.relay.ReadFromUDP(buf)
 		if err != nil {
 			// Normal closure check
 			select {
-			case <-done:
+			case <-c.controlDone:
 				return nil
 			default:
 				if err != io.EOF {
-					logger.Debug().Err(err).Msg("error reading from udp")
+					c.logger.Debug().Err(err).Msg("error reading from udp")
 				}
 				return err
 			}
 		}
 
 		// Security: Only accept UDP packets from the same IP that established the TCP connection
-		if !srcAddr.IP.Equal(rTCPAddr) {
-			logger.Debug().
-				Str("expected", rTCPAddr.String()).
+		if !srcAddr.IP.Equal(clientIP) {
+			c.logger.Debug().
+				Str("expected", clientIP.String()).
 				Str("actual", srcAddr.IP.String()).
 				Msg("dropped udp packet from unexpected ip")
 			continue
 		}
 
-		// Outbound: Client -> Proxy -> Target
-		dstAddrStr, payload, err := parseUDPHeader(buf[:n])
-		if err != nil {
-			logger.Warn().Err(err).Msg("failed to parse socks5 udp header")
-			continue
-		}
+		c.handleDatagram(ctx, srcAddr, buf[:n])
+	}
+}
 
-		// parseUDPHeader writes the host and a numeric port.
-		dstHost, dstPortStr, _ := net.SplitHostPort(dstAddrStr)
-		if dstHost == "" {
-			logger.Debug().Msg("dropped udp packet with an empty domain name")
-			continue
-		}
-		dstPort, _ := strconv.Atoi(dstPortStr)
+// handleDatagram relays one datagram from the client at srcAddr to the
+// destination in its header, with the rule that destination selects.
+func (c *udpAssociateConn) handleDatagram(
+	ctx context.Context,
+	srcAddr *net.UDPAddr,
+	datagram []byte,
+) {
+	// Outbound: Client -> Proxy -> Target
+	dstAddrStr, payload, err := parseUDPHeader(datagram)
+	if err != nil {
+		c.logger.Warn().Err(err).Msg("failed to parse socks5 udp header")
+		return
+	}
 
-		// A domain name is resolved first, then matched together with the
-		// address it resolves to. The rule is selected the way it is for
-		// CONNECT, but the system resolver resolves the name to one address.
-		dstIPs, dstRule, err := h.resolveUDPTarget(ctx, dstHost)
-		if err != nil {
-			logger.Warn().
-				Err(err).
-				Str("addr", dstAddrStr).
-				Msg("failed to resolve udp target")
-			continue
-		}
-		if len(dstIPs) == 0 || dstIPs[0].IsUnspecified() {
-			logger.Debug().
-				Str("addr", dstAddrStr).
-				Msg("dropped udp packet to an unspecified address")
-			continue
-		}
-		dstAddr := &net.UDPAddr{IP: dstIPs[0], Port: dstPort}
+	dstAddr, cfg, ok := c.selectRule(ctx, dstAddrStr)
+	if !ok {
+		return
+	}
 
-		matched, cfg := server.SelectRule(
-			h.ruleSet,
-			h.cfg,
-			"",
-			[]net.IP{dstAddr.IP},
-			dstRule,
-		)
-		if matched != nil {
-			logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
-		}
-		if matched != nil && matched.Block {
-			// Drop only this datagram; the association stays up for the
-			// client's other destinations.
-			logger.Debug().Str("addr", dstAddrStr).Msg("request is blocked by policy")
-			continue
-		}
+	// Key: Client Addr -> Target Addr (Zero Allocation Struct). Names
+	// that resolve to the same address share the flow, whichever rule
+	// each selects.
+	key := netutil.NewNATKey(srcAddr.IP, srcAddr.Port, dstAddr.IP, dstAddr.Port)
 
-		// Key: Client Addr -> Target Addr (Zero Allocation Struct). Names
-		// that resolve to the same address share the flow, whichever rule
-		// each selects.
-		key := netutil.NewNATKey(srcAddr.IP, srcAddr.Port, dstAddr.IP, dstAddr.Port)
-
-		// Check if connection already exists in the pool
-		cachedConn, cached := h.pool.Fetch(key)
-		if cached {
-			logger.Debug().
-				Str("key", fmt.Sprintf("%s > %s", srcAddr.String(), dstAddr.String())).
-				Msg("session cache hit")
-
-			// The flow idles out after the timeout of the rule its latest
-			// datagram selected.
-			cachedConn.SetTimeout(cfg.Conn.UDPIdleTimeout)
-
-			// Write payload to target
-			if _, err := cachedConn.Write(payload); err != nil {
-				logger.Warn().Err(err).Msg("failed to write udp to target")
-			}
-			continue
-		}
-
-		logger.Debug().
+	if f, ok := c.fetchFlow(key); ok {
+		c.logger.Debug().
 			Str("key", fmt.Sprintf("%s > %s", srcAddr.String(), dstAddr.String())).
-			Msg("session cache miss")
+			Msg("session cache hit")
 
-		pktDst := &netutil.Destination{
-			Addrs: []net.IP{dstAddr.IP},
-			Port:  dstAddr.Port,
-		}
-
-		// Register destination for TTL learning when fakes will be sent.
-		h.desyncer.PrepareHopTrack(pktDst.Addrs, &cfg.UDP)
-
-		rRawConn, err := netutil.DialFastest(ctx, pktDst, "udp", 0, nil)
-		if err != nil {
-			logger.Warn().Err(err).Str("addr", dstAddrStr).Msg("failed to dial udp target")
-			continue
-		}
-
-		// Add to pool (pool handles LRU eviction and deadline)
-		// returns IdleTimeoutConn with the actual net.Conn inside
-		// Fakes share the flow, so the ICMP replies to them reach this socket.
-		rConn := h.pool.Store(
-			key,
-			netutil.NewICMPTolerantConn(rRawConn),
-			cfg.Conn.UDPIdleTimeout,
-		)
-		flows.add(key, rConn)
-
-		// Send fake packets before real payload (UDP desync)
-		if h.desyncer != nil && !cfg.UDP.Skip {
-			_, _ = h.desyncer.Desync(ctx, rConn.Conn, &cfg.UDP, &cfg.Conn)
-		}
-
-		// Start a goroutine to read from the target and forward to the client.
-		// rConn is a connected UDP socket, so all responses come from the single remote.
-		// Using rConn.Read() (via IdleTimeoutConn) properly extends the idle deadline
-		// on each inbound packet, preventing premature timeout on asymmetric flows.
-		// dstAddr is already *net.UDPAddr (resolved above), same as rConn.RemoteAddr().
-		go h.relayInboundUDP(logger, lUDPConn, rConn, srcAddr, dstAddr, key, flows)
+		// The flow idles out after the timeout of the rule its latest
+		// datagram selected.
+		f.conn.SetTimeout(cfg.Conn.UDPIdleTimeout)
 
 		// Write payload to target
-		if _, err := rConn.Write(payload); err != nil {
-			logger.Warn().Err(err).Msg("failed to write udp to target")
+		if _, err := f.conn.Write(payload); err != nil {
+			c.logger.Warn().Err(err).Msg("failed to write udp to target")
+		}
+		return
+	}
+
+	c.logger.Debug().
+		Str("key", fmt.Sprintf("%s > %s", srcAddr.String(), dstAddr.String())).
+		Msg("session cache miss")
+
+	f, err := c.openFlow(ctx, key, srcAddr, dstAddr, cfg)
+	if err != nil {
+		c.logger.Warn().Err(err).Str("addr", dstAddrStr).Msg("failed to dial udp target")
+		return
+	}
+
+	// Write payload to target
+	if _, err := f.conn.Write(payload); err != nil {
+		c.logger.Warn().Err(err).Msg("failed to write udp to target")
+	}
+}
+
+// selectRule resolves a datagram's destination and selects its rule. It
+// reports false when the datagram is to be dropped.
+func (c *udpAssociateConn) selectRule(
+	ctx context.Context,
+	dstAddrStr string,
+) (*net.UDPAddr, *config.RuntimeConfig, bool) {
+	// parseUDPHeader writes the host and a numeric port.
+	dstHost, dstPortStr, _ := net.SplitHostPort(dstAddrStr)
+	if dstHost == "" {
+		c.logger.Debug().Msg("dropped udp packet with an empty domain name")
+		return nil, nil, false
+	}
+	dstPort, _ := strconv.Atoi(dstPortStr)
+
+	// A domain name is resolved first, then matched together with the
+	// address it resolves to. The rule is selected the way it is for
+	// CONNECT, but the system resolver resolves the name to one address.
+	dstIPs, dstRule, err := c.h.resolveUDPTarget(ctx, dstHost)
+	if err != nil {
+		c.logger.Warn().
+			Err(err).
+			Str("addr", dstAddrStr).
+			Msg("failed to resolve udp target")
+		return nil, nil, false
+	}
+	if len(dstIPs) == 0 || dstIPs[0].IsUnspecified() {
+		c.logger.Debug().
+			Str("addr", dstAddrStr).
+			Msg("dropped udp packet to an unspecified address")
+		return nil, nil, false
+	}
+	dstAddr := &net.UDPAddr{IP: dstIPs[0], Port: dstPort}
+
+	matched, cfg := server.SelectRule(
+		c.h.ruleSet,
+		c.h.cfg,
+		"",
+		[]net.IP{dstAddr.IP},
+		dstRule,
+	)
+	if matched != nil {
+		c.logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
+	}
+	if matched != nil && matched.Block {
+		// Drop only this datagram; the association stays up for the
+		// client's other destinations.
+		c.logger.Debug().Str("addr", dstAddrStr).Msg("request is blocked by policy")
+		return nil, nil, false
+	}
+
+	return dstAddr, cfg, true
+}
+
+// fetchFlow returns the open flow for key and marks it the most recently
+// used.
+func (c *udpAssociateConn) fetchFlow(key netutil.NATKey) (*udpFlow, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	f, ok := c.flows[key]
+	if ok {
+		c.lru.MoveToFront(f.elem)
+	}
+	return f, ok
+}
+
+// openFlow dials dstAddr for the client at srcAddr, sends the fakes of cfg,
+// and starts relaying the replies to the client. When the association
+// already has its maximum of flows, it closes the least recently used one.
+func (c *udpAssociateConn) openFlow(
+	ctx context.Context,
+	key netutil.NATKey,
+	srcAddr *net.UDPAddr,
+	dstAddr *net.UDPAddr,
+	cfg *config.RuntimeConfig,
+) (*udpFlow, error) {
+	pktDst := &netutil.Destination{
+		Addrs: []net.IP{dstAddr.IP},
+		Port:  dstAddr.Port,
+	}
+
+	// Register destination for TTL learning when fakes will be sent.
+	c.h.desyncer.PrepareHopTrack(pktDst.Addrs, &cfg.UDP)
+
+	rRawConn, err := netutil.DialFastest(ctx, pktDst, "udp", 0, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fakes share the flow, so the ICMP replies to them reach this socket.
+	f := &udpFlow{
+		key: key,
+		conn: netutil.NewIdleTimeoutConn(
+			netutil.NewICMPTolerantConn(rRawConn),
+			cfg.Conn.UDPIdleTimeout,
+		),
+	}
+	c.addFlow(f)
+
+	// Send fake packets before real payload (UDP desync)
+	if c.h.desyncer != nil && !cfg.UDP.Skip {
+		_, _ = c.h.desyncer.Desync(ctx, f.conn.Conn, &cfg.UDP, &cfg.Conn)
+	}
+
+	// f.conn is a connected UDP socket, so all responses come from the
+	// single remote, dstAddr.
+	c.wg.Go(func() { c.relayInbound(f, srcAddr, dstAddr) })
+
+	return f, nil
+}
+
+// addFlow adds f as the most recently used flow, closing the least recently
+// used one if the association has its maximum of flows.
+func (c *udpAssociateConn) addFlow(f *udpFlow) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.h.maxFlows > 0 && c.lru.Len() >= c.h.maxFlows {
+		oldest := c.lru.Remove(c.lru.Back()).(*udpFlow)
+		delete(c.flows, oldest.key)
+		_ = oldest.conn.Close()
+	}
+
+	f.elem = c.lru.PushFront(f)
+	c.flows[f.key] = f
+}
+
+// removeFlow closes f and stops tracking it. A newer flow under the same
+// key is left alone.
+func (c *udpAssociateConn) removeFlow(f *udpFlow) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.flows[f.key] == f {
+		delete(c.flows, f.key)
+		c.lru.Remove(f.elem)
+	}
+	// Closed under mu, so a flow no longer tracked is always closed.
+	_ = f.conn.Close()
+}
+
+// relayInbound relays the replies on f to the client at clientAddr until f
+// is closed or idles out.
+func (c *udpAssociateConn) relayInbound(
+	f *udpFlow,
+	clientAddr *net.UDPAddr,
+	targetAddr *net.UDPAddr,
+) {
+	defer c.removeFlow(f)
+
+	respBuf := make([]byte, 65535)
+	for {
+		// Read via IdleTimeoutConn so each inbound packet extends the deadline.
+		n, err := f.conn.Read(respBuf)
+		if err != nil {
+			// Connection closed, idled out, or network issues
+			return
+		}
+
+		c.mu.Lock()
+		if c.flows[f.key] == f {
+			c.lru.MoveToFront(f.elem)
+		}
+		c.mu.Unlock()
+
+		// Inbound: Target -> Proxy -> Client
+		// Wrap with SOCKS5 Header
+		header := createUDPHeaderFromAddr(targetAddr)
+		response := append(header, respBuf[:n]...)
+
+		if _, err := c.relay.WriteToUDP(response, clientAddr); err != nil {
+			// If we can't write back to the client, it might be gone or network issue.
+			// Exit this goroutine to avoid busy looping.
+			c.logger.Warn().Err(err).Msg("failed to write udp to client")
+			return
 		}
 	}
 }
@@ -269,91 +476,6 @@ func (h *UdpAssociateHandler) resolveUDPTarget(
 	}
 
 	return netutil.IPsFromAddrs(resolved), nameRule, nil
-}
-
-func (h *UdpAssociateHandler) relayInboundUDP(
-	logger zerolog.Logger,
-	lUDPConn *net.UDPConn,
-	rConn *netutil.IdleTimeoutConn,
-	clientAddr *net.UDPAddr,
-	targetAddr *net.UDPAddr,
-	key netutil.NATKey,
-	flows *associationFlows,
-) {
-	defer flows.release(key, rConn)
-
-	respBuf := make([]byte, 65535)
-	for {
-		// Read via IdleTimeoutConn so each inbound packet extends the deadline.
-		n, err := rConn.Read(respBuf)
-		if err != nil {
-			// Connection closed or network issues
-			return
-		}
-
-		// Inbound: Target -> Proxy -> Client
-		// Wrap with SOCKS5 Header
-		header := createUDPHeaderFromAddr(targetAddr)
-		response := append(header, respBuf[:n]...)
-
-		if _, err := lUDPConn.WriteToUDP(response, clientAddr); err != nil {
-			// If we can't write back to the client, it might be gone or network issue.
-			// Exit this goroutine to avoid busy looping.
-			logger.Warn().Err(err).Msg("failed to write udp to client")
-			return
-		}
-	}
-}
-
-// associationFlows tracks the remote flows that one UDP association put in
-// the pool, so they can end with the association: "A UDP association
-// terminates when the TCP connection that the UDP ASSOCIATE request arrived
-// on terminates" (RFC 1928, section 6).
-type associationFlows struct {
-	pool *netutil.ConnRegistry[netutil.NATKey]
-
-	mu    sync.Mutex
-	conns map[netutil.NATKey]*netutil.IdleTimeoutConn
-}
-
-func newAssociationFlows(
-	pool *netutil.ConnRegistry[netutil.NATKey],
-) *associationFlows {
-	return &associationFlows{
-		pool:  pool,
-		conns: make(map[netutil.NATKey]*netutil.IdleTimeoutConn),
-	}
-}
-
-func (f *associationFlows) add(key netutil.NATKey, conn *netutil.IdleTimeoutConn) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.conns[key] = conn
-}
-
-// release stops tracking conn and evicts it from the pool, which closes it.
-// A newer flow stored under the same key is left alone.
-func (f *associationFlows) release(key netutil.NATKey, conn *netutil.IdleTimeoutConn) {
-	f.mu.Lock()
-	if f.conns[key] == conn {
-		delete(f.conns, key)
-	}
-	f.mu.Unlock()
-
-	f.pool.EvictFunc(key, func(v *netutil.IdleTimeoutConn) bool { return v == conn })
-}
-
-// releaseAll evicts every flow still tracked; their relay goroutines exit
-// once their connections are closed.
-func (f *associationFlows) releaseAll() {
-	f.mu.Lock()
-	conns := f.conns
-	f.conns = make(map[netutil.NATKey]*netutil.IdleTimeoutConn)
-	f.mu.Unlock()
-
-	for key, conn := range conns {
-		f.pool.EvictFunc(key, func(v *netutil.IdleTimeoutConn) bool { return v == conn })
-	}
 }
 
 func parseUDPHeader(b []byte) (string, []byte, error) {
