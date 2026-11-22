@@ -77,7 +77,6 @@ func dnsOptionsFor(s *fakeDNSServer) config.DNSOptions {
 	opts.Mode = config.DNSModeUDP
 	opts.Addr = s.addr
 	opts.QType = config.DNSQueryIPv4
-	opts.Cache = false
 	opts.Timeout = 2 * time.Second
 	return opts
 }

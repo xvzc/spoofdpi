@@ -262,7 +262,6 @@ type DNSOptions struct {
 	Addr     net.TCPAddr  `toml:"addr"`
 	HTTPSURL string       `toml:"https-url"`
 	QType    DNSQueryType `toml:"qtype"`
-	Cache    bool         `toml:"cache"`
 	// Timeout bounds each DNS lookup; it must be at least 1ms.
 	Timeout time.Duration `toml:"timeout"`
 }
@@ -276,14 +275,12 @@ func (o DNSOptions) MarshalJSON() ([]byte, error) {
 		Addr     string       `json:"addr"`
 		HTTPSURL string       `json:"https-url"`
 		QType    DNSQueryType `json:"qtype"`
-		Cache    bool         `json:"cache"`
 		Timeout  string       `json:"timeout"`
 	}{
 		Mode:     o.Mode,
 		Addr:     o.Addr.String(),
 		HTTPSURL: o.HTTPSURL,
 		QType:    o.QType,
-		Cache:    o.Cache,
 		Timeout:  o.Timeout.String(),
 	})
 }
@@ -314,8 +311,11 @@ func (o *DNSOptions) UnmarshalTOML(data any) (err error) {
 	if p := findFrom(m, "qtype", parseStringFn(checkDNSQueryType), &err); isOk(p, err) {
 		o.QType = MustParseDNSQueryType(*p)
 	}
-	if p := findFrom(m, "cache", parseBoolFn(), &err); isOk(p, err) {
-		o.Cache = *p
+	// TODO(deprecated): DNS answers are always cached since the 'cache'
+	// option was removed after v1.6.0. Remove this warning with
+	// --dns-cache (cli.go).
+	if _, ok := m["cache"]; ok {
+		AddWarnMsg("'dns.cache' is deprecated and ignored; DNS answers are always cached")
 	}
 	if p := findFrom(
 		m,

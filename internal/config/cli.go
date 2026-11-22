@@ -50,7 +50,6 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 				Addr:     net.TCPAddr{IP: net.ParseIP("8.8.8.8"), Port: 53, Zone: ""},
 				HTTPSURL: "https://dns.google/dns-query",
 				QType:    DNSQueryIPv4,
-				Cache:    false,
 				Timeout:  5000 * time.Millisecond,
 			},
 			HTTPS: HTTPSOptions{ //exhaustruct:enforce
@@ -232,19 +231,18 @@ func CreateCommand(
 				},
 			},
 
+			// Deprecated and ignored: DNS answers are always cached.
+			//
+			// TODO(deprecated): removed after v1.6.0; remove with the
+			// 'cache' key of DNSOptions (types.go).
 			&cli.BoolFlag{
-				Name: "dns-cache",
-				Usage: fmt.Sprintf(`
-				If set, DNS records will be cached. (default: %v)`,
-					defaultCfg.DNS.Cache,
-				),
-				Value:    false,
+				Name:     "dns-cache",
+				Hidden:   true,
 				OnlyOnce: true,
 				Action: func(ctx context.Context, cmd *cli.Command, v bool) error {
-					cache := v
-					cliOverrides = append(cliOverrides, func(cfg *Config) {
-						cfg.DNS.Cache = cache
-					})
+					AddWarnMsg(
+						"'--dns-cache' is deprecated and ignored; DNS answers are always cached",
+					)
 					return nil
 				},
 			},

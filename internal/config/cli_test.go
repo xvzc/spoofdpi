@@ -39,7 +39,6 @@ func TestCreateCommand_Flags(t *testing.T) {
 				assert.Equal(t, DNSModeUDP, cfg.DNS.Mode)
 				assert.Equal(t, "https://dns.google/dns-query", cfg.DNS.HTTPSURL)
 				assert.Equal(t, DNSQueryIPv4, cfg.DNS.QType)
-				assert.False(t, cfg.DNS.Cache)
 				assert.Equal(t, uint8(0), cfg.HTTPS.FakePreflight)
 				assert.False(t, cfg.HTTPS.Disorder)
 				assert.Equal(t, HTTPSSplitModeSNI, cfg.HTTPS.SplitMode)
@@ -98,7 +97,6 @@ func TestCreateCommand_Flags(t *testing.T) {
 					cfg.DNS.HTTPSURL,
 				)
 				assert.Equal(t, DNSQueryIPv6, cfg.DNS.QType)
-				assert.True(t, cfg.DNS.Cache)
 				assert.Equal(t, 6000*time.Millisecond, cfg.DNS.Timeout)
 
 				// HTTPS
@@ -307,7 +305,6 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
 
 	// DNS
 	assert.Equal(t, "1.1.1.1:53", capturedCfg.DNS.Addr.String())
-	assert.False(t, capturedCfg.DNS.Cache)
 	assert.Equal(t, DNSModeUDP, capturedCfg.DNS.Mode)
 	assert.Equal(t, "https://8.8.8.8/dns-query", capturedCfg.DNS.HTTPSURL)
 	assert.Equal(t, DNSQueryIPv6, capturedCfg.DNS.QType)

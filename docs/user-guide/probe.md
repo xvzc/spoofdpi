@@ -305,7 +305,7 @@ On a narrow terminal the words are dropped from the end first, then the bar, and
 Host names are resolved the way `spoofdpi run` resolves them, with the `[dns]` section of the config file it would load: the file given with `--config` or `$SPOOFDPI_CONFIG`, or otherwise the first file found in the [default locations](overview.md#config-file-path). `--clean` reads no config file. The `--dns-addr`, `--dns-mode`, `--dns-https-url` and `--dns-timeout` options override the file, as for the server. The first line on the standard error shows the DNS used and the file it was read from.
 
 - The rest of the config file, including `[[rules]]`, is not read, so DNS settings of a rule do not apply. Use the `--dns-*` options, or an IP address in `--url`, to probe the address a rule resolves to.
-- Lookups always ask for IPv4 addresses (there is no `--dns-qtype`), and their results are not cached.
+- Lookups always ask for IPv4 addresses (there is no `--dns-qtype`). Each run starts with an empty DNS cache; within a run, targets with the same host share one answer.
 - The first IPv4 address of a host is probed and shown next to the URL.
 
 ## Root and Packet Capture

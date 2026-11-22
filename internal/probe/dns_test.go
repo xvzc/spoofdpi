@@ -44,7 +44,6 @@ func TestDNSOptions_FromConfig(t *testing.T) {
 		Addr:     net.TCPAddr{IP: net.ParseIP("192.0.2.53"), Port: 53},
 		HTTPSURL: "https://192.0.2.53/dns-query",
 		QType:    config.DNSQueryIPv4,
-		Cache:    false,
 		Timeout:  time.Second,
 	}, normalizeIP(got))
 }

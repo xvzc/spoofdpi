@@ -51,7 +51,6 @@ func TestCreateProxy_NoPcap(t *testing.T) {
 		Addr:     net.TCPAddr{IP: net.ParseIP("8.8.8.8"), Port: 53},
 		HTTPSURL: "https://dns.google/dns-query",
 		QType:    config.DNSQueryIPv4,
-		Cache:    false,
 	}
 
 	logger := zerolog.Nop()
@@ -105,7 +104,6 @@ func TestCreateProxy_WithRules(t *testing.T) {
 		Addr:     net.TCPAddr{IP: net.ParseIP("8.8.8.8"), Port: 53},
 		HTTPSURL: "https://dns.google/dns-query",
 		QType:    config.DNSQueryIPv4,
-		Cache:    false,
 	}
 
 	logger := zerolog.Nop()

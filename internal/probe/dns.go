@@ -8,8 +8,7 @@ import (
 // file they were read from ("" if none): the defaults overlaid with the
 // [dns] section of the config file that spoofdpi run would load, unless
 // clean is set, then with the given flag overrides. Lookups are always
-// IPv4 and uncached, since only an IPv4 address is probed and each run
-// should see the resolver's current answer.
+// IPv4, since only an IPv4 address is probed.
 func dnsOptions(
 	clean bool,
 	configFile string,
@@ -28,7 +27,6 @@ func dnsOptions(
 		apply(&opts)
 	}
 	opts.QType = config.DNSQueryIPv4
-	opts.Cache = false
 	return opts, path, nil
 }
 

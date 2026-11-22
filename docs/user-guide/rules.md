@@ -98,7 +98,6 @@ Customize how domain names are resolved for matched traffic. The available field
 | `addr`      | String | Custom upstream server (e.g., `8.8.8.8:53`).     |
 | `https-url` | String | Custom DoH URL (e.g., `https://dns.google/dns-query`). |
 | `qtype`     | String | Query type: `"ipv4"`, `"ipv6"`, or `"all"`.      |
-| `cache`     | Bool   | If `true`, enables caching for this rule.        |
 | `timeout`   | Int    | Milliseconds to wait for each DNS lookup.        |
 
 ## TLS Override (`tls`)

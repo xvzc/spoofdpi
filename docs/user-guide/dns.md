@@ -14,7 +14,13 @@ Specifies the default resolution mode for domains that do not match any specific
 
 - `udp`: Standard DNS over UDP.
 - `https`: DNS over HTTPS (DoH).
-- `system`: Use the system's default resolver.
+- `system`: Use the operating system's resolver.
+
+What `system` uses depends on the OS:
+
+- **macOS**: the system resolver (`getaddrinfo`), so mDNSResponder's cache, split DNS, VPN resolvers and `/etc/resolver/*` apply.
+- **Linux and FreeBSD, builds without cgo** (such as the official Linux release binaries): Go's built-in resolver, which reads `/etc/hosts` and `/etc/resolv.conf` and sends the queries itself. NSS modules, such as mDNS (`.local` names), are not used.
+- **Linux and FreeBSD, builds with cgo** (such as a build from source as the [installation guide](../getting-started/install.md) describes): Go may use the system's `getaddrinfo` instead, depending on `/etc/nsswitch.conf`, and NSS modules then apply.
 
 ### Usage
 
@@ -110,26 +116,16 @@ qtype = "all"
 
 ---
 
-## `cache`
+## Caching
 
-`type: boolean`
+DNS answers are always cached:
 
-### Description
+- In the `udp` and `https` modes, for the TTL of the records, but at most one day. An answer with a TTL of 0 is not cached. When `qtype` is `"all"` and one of the two queries fails, the addresses of the other are cached for at most 30 seconds.
+- In the `system` mode, for 30 seconds, since the system resolver does not report TTLs.
 
-If set, DNS records will be cached to improve performance and reduce latency. `(default: false)`
+An answer is cached for the options it was looked up with: `mode`, `addr` or `https-url`, and `qtype`. A [rule](rules.md#dns-override-dns) with other DNS settings looks the name up again rather than using that answer. Failed lookups are not cached.
 
-### Usage
-
-**Command-Line Flag**
-```console
-$ spoofdpi --dns-cache
-```
-
-**TOML Config**
-```toml
-[dns]
-cache = true
-```
+The `cache` option (`--dns-cache`, and `cache` in `[dns]` and in rules) is deprecated. It is ignored with a warning.
 
 ---
 

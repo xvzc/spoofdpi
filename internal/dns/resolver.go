@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/miekg/dns"
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -164,6 +165,13 @@ loop:
 			if result.msg == nil {
 				continue
 			}
+			// A server failure, such as SERVFAIL, is a failed query; a name
+			// that doesn't exist, or has no such records, is an answer.
+			if rcode := result.msg.Rcode; rcode != dns.RcodeSuccess &&
+				rcode != dns.RcodeNameError {
+				errs = append(errs, fmt.Errorf("rcode %s", dns.RcodeToString[rcode]))
+				continue
+			}
 
 			resultAddrs, ttl, ok := parseMsg(result.msg)
 			if ok {
@@ -175,6 +183,11 @@ loop:
 
 	if len(addrs) > 0 {
 		addrselect.SortByRFC6724(addrs)
+		if len(errs) > 0 {
+			// Some queries failed: the answer may lack the addresses of
+			// their record types.
+			minTTL = min(minTTL, uint32(partialAnswerTTL/time.Second))
+		}
 		return addrs, minTTL, nil
 	}
 
