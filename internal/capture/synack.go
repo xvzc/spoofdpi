@@ -107,11 +107,11 @@ func SynAckFilter(linkType layers.LinkType) []BPFInstruction {
 	// 1. Protocol Verification (IPv4)
 	if linkType == layers.LinkTypeEthernet {
 		// Load EtherType (2 bytes at offset 12), then check for IPv4 (0x0800).
-		// On mismatch, jump 8 forward to the reject instruction.
+		// On mismatch, jump 9 forward to the reject instruction.
 		instructions = append(
 			instructions,
 			BPFInstruction{Op: 0x28, Jt: 0, Jf: 0, K: 12},
-			BPFInstruction{Op: 0x15, Jt: 0, Jf: 8, K: 0x0800},
+			BPFInstruction{Op: 0x15, Jt: 0, Jf: 9, K: 0x0800},
 		)
 	} else {
 		// For Null/Loop/Raw link types the packet starts with a 4-byte family
@@ -121,27 +121,27 @@ func SynAckFilter(linkType layers.LinkType) []BPFInstruction {
 		// it equals 0x40 (IP version 4).  The load must come first; without
 		// it the accumulator is 0 and the check always fails, silently
 		// dropping every packet on these link types.
-		// This section emits 3 instructions (vs 2 for Ethernet), so the false
-		// jump offset is 7, not 8.
+		// The false jump lands on the reject instruction, 9 forward, as it
+		// does for Ethernet.
 		instructions = append(
 			instructions,
 			BPFInstruction{Op: 0x30, Jt: 0, Jf: 0, K: baseOffset}, // ldb [baseOffset]
 			BPFInstruction{Op: 0x54, Jt: 0, Jf: 0, K: 0xf0},       // and #0xf0
-			BPFInstruction{Op: 0x15, Jt: 0, Jf: 7, K: 0x40},       // jeq #0x40
+			BPFInstruction{Op: 0x15, Jt: 0, Jf: 9, K: 0x40},       // jeq #0x40
 		)
 	}
 
 	// 2. Check Protocol == TCP (6)
 	instructions = append(instructions,
 		BPFInstruction{Op: 0x30, Jt: 0, Jf: 0, K: baseOffset + 9},
-		BPFInstruction{Op: 0x15, Jt: 0, Jf: 6, K: 6},
+		BPFInstruction{Op: 0x15, Jt: 0, Jf: 7, K: 6},
 	)
 
 	// 3. Check Fragmentation
 	instructions = append(
 		instructions,
 		BPFInstruction{Op: 0x28, Jt: 0, Jf: 0, K: baseOffset + 6},
-		BPFInstruction{Op: 0x45, Jt: 4, Jf: 0, K: 0x1fff},
+		BPFInstruction{Op: 0x45, Jt: 5, Jf: 0, K: 0x1fff},
 	)
 
 	// 4. Find TCP Header Start
