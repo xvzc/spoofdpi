@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -17,6 +18,11 @@ type NetworkJob struct {
 	Description string `json:"description"`
 	Apply       string `json:"apply,omitempty"`
 	Reset       string `json:"reset,omitempty"`
+	// Optional marks a job whose failure is logged and skipped instead of
+	// rolling back the jobs before it.
+	Optional bool `json:"optional,omitempty"`
+	// Warning is logged at WARN level once Apply has succeeded.
+	Warning string `json:"warning,omitempty"`
 }
 
 type jobState struct {
@@ -57,7 +63,9 @@ func LoadJobs(path string) ([]NetworkJob, bool, error) {
 }
 
 // ApplyJobs reads the state file at path and executes each Apply command in
-// order. On failure it calls ResetJobs to roll back before returning the error.
+// order. When a required job fails it calls ResetJobs to roll back before
+// returning the error. When an optional job fails it logs the failure, drops
+// the job from the state file and goes on with the next job.
 // No-op when path is empty or the file does not exist.
 func ApplyJobs(logger zerolog.Logger, path string) error {
 	if path == "" {
@@ -70,17 +78,40 @@ func ApplyJobs(logger zerolog.Logger, path string) error {
 	if !exists {
 		return nil
 	}
-	for _, job := range jobs {
-		if cmd := job.Apply; cmd != "" {
-			if out, err := executil.Command(cmd); err != nil {
-				ResetJobs(logger, path)
-				return fmt.Errorf(
-					"job %q: %s: %w",
-					job.Description,
-					strings.TrimSpace(out),
-					err,
-				)
+	for i := 0; i < len(jobs); i++ {
+		job := jobs[i]
+		if job.Apply == "" {
+			continue
+		}
+		out, err := executil.Command(job.Apply)
+		if err == nil {
+			if job.Warning != "" {
+				logger.Warn().Msg(job.Warning)
 			}
+			continue
+		}
+		if !job.Optional {
+			ResetJobs(logger, path)
+			return fmt.Errorf(
+				"job %q: %s: %w",
+				job.Description,
+				strings.TrimSpace(out),
+				err,
+			)
+		}
+
+		logger.Warn().Err(err).
+			Str("job", job.Description).
+			Str("out", strings.TrimSpace(out)).
+			Msg("optional network job failed; skipped")
+		// The failed job changed nothing, so it must not be reset: its Reset
+		// could undo a matching configuration that it does not own, such as
+		// the existing route that made it fail.
+		jobs = slices.Delete(jobs, i, i+1)
+		i--
+		if err := SaveJobs(path, jobs); err != nil {
+			ResetJobs(logger, path)
+			return fmt.Errorf("failed to save state: %w", err)
 		}
 	}
 	return nil

@@ -5,6 +5,7 @@ package tun
 import (
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -27,6 +28,8 @@ type tunNetworkInfoLinux struct {
 	TunLocalIP       string
 	TunRemoteIP      string
 	RouteTargetCIDRs []string
+	HasIPv6Egress    bool
+	TunIPv6Disabled  bool
 }
 
 var (
@@ -76,6 +79,12 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 	_, tunCIDR, _ := net.ParseCIDR(tunLocalIP + "/30")
 	routeTargetCIDRs := []string{tunCIDR.String(), "0.0.0.0/1", "128.0.0.0/1"}
 
+	// Runs before the TUN routes exist, so it sees the system's own route.
+	_, hasIPv6Egress := netutil.IPv6Egress()
+	tunIPv6Disabled := ipv6Disabled(
+		fmt.Sprintf("/proc/sys/net/ipv6/conf/%s/disable_ipv6", tunName),
+	)
+
 	return &tunNetworkInfoLinux{ //exhaustruct:enforce
 		RouteTableID:     routeTableID,
 		GatewayIP:        gatewayIP,
@@ -85,6 +94,8 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 		TunLocalIP:       tunLocalIP,
 		TunRemoteIP:      tunRemoteIP,
 		RouteTargetCIDRs: routeTargetCIDRs,
+		HasIPv6Egress:    hasIPv6Egress,
+		TunIPv6Disabled:  tunIPv6Disabled,
 	}, nil
 }
 
@@ -93,7 +104,12 @@ func (n *tunSystemNetworkLinux) BuildJobs() ([]server.NetworkJob, error) {
 	if err != nil {
 		return nil, err
 	}
+	return buildJobs(info), nil
+}
 
+// buildJobs returns the jobs that route traffic into the TUN described by
+// info.
+func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 	var jobs []server.NetworkJob
 
 	jobs = append(jobs, server.NetworkJob{
@@ -170,7 +186,27 @@ func (n *tunSystemNetworkLinux) BuildJobs() ([]server.NetworkJob, error) {
 		})
 	}
 
-	return jobs, nil
+	// The TUN server refuses IPv6, so applications fall back to IPv4. The
+	// route is optional: IPv4 keeps working without it.
+	if info.HasIPv6Egress && !info.TunIPv6Disabled {
+		jobs = append(jobs, server.NetworkJob{
+			Description: fmt.Sprintf("add IPv6 route %s via TUN", ipv6CaptureCIDR),
+			Apply: fmt.Sprintf(
+				"ip -6 route add %s dev %s",
+				ipv6CaptureCIDR,
+				info.TUNName,
+			),
+			Reset: fmt.Sprintf(
+				"ip -6 route del %s dev %s",
+				ipv6CaptureCIDR,
+				info.TUNName,
+			),
+			Optional: true,
+			Warning:  ipv6RejectWarning,
+		})
+	}
+
+	return jobs
 }
 
 // tunSystemNetworkLinux implements TUNSystemNetwork for Linux
@@ -272,6 +308,14 @@ func (n *tunSystemNetworkLinux) BindDialer(
 	}
 
 	return nil
+}
+
+// ipv6Disabled reports whether the disable_ipv6 sysctl file at path reads 1.
+// An unreadable file reports false, which leaves the decision to the route
+// job, as it is optional.
+func ipv6Disabled(path string) bool {
+	b, err := os.ReadFile(path)
+	return err == nil && strings.TrimSpace(string(b)) == "1"
 }
 
 func getOrAllocateTableID() (int, error) {

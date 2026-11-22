@@ -19,6 +19,17 @@ Specifies the proxy mode. `(default: "http")`
 !!! warning
     **SOCKS5** and **TUN** modes are currently Experimental. You might encounter unexpected behaviors or bugs. Feedback and bug reports are highly appreciated!
 
+### IPv6 in TUN Mode
+
+TUN mode does not proxy IPv6 yet. When [`auto-configure-network`](#auto-configure-network) sets up the TUN routes and the system has an IPv6 route to the internet, spoofdpi also routes global IPv6 addresses (`2000::/3`) into the TUN interface and refuses every connection to them: TCP connections are reset, and UDP datagrams get an ICMPv6 "port unreachable". Applications that support both IP versions, such as browsers and curl, then fall back to IPv4, which spoofdpi proxies. spoofdpi logs a warning at startup when it adds this route.
+
+- Destinations reachable only over IPv6 are unreachable in TUN mode.
+- A DNS server at a global IPv6 address is refused too; the system then uses its other DNS servers, if it has any.
+- Link-local, unique local (`fc00::/7`) and multicast IPv6 addresses keep their normal routes.
+- Pings to global IPv6 addresses get replies, but spoofdpi sends them itself; a reply does not mean IPv6 works.
+- When the system has no IPv6 route to the internet, spoofdpi adds no IPv6 route. On Linux it also adds none when IPv6 is disabled on the TUN interface.
+- If the system refuses the IPv6 route, spoofdpi logs a warning and keeps running with IPv4 only; IPv6 traffic then bypasses spoofdpi.
+
 ### Usage
 
 **Command-Line Flag**

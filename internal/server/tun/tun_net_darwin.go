@@ -23,6 +23,7 @@ type tunNetworkInfoDarwin struct {
 	TunLocalIP       string
 	TunRemoteIP      string
 	RouteTargetCIDRs []string
+	HasIPv6Egress    bool
 }
 
 func createTunDevice() (tun.Device, error) {
@@ -52,6 +53,9 @@ func collectNetworkInfo(sysNet *tunSystemNetworkDarwin) (*tunNetworkInfoDarwin, 
 	_, tunCIDR, _ := net.ParseCIDR(tunLocalIP + "/30")
 	routeTargetCIDRs := []string{tunCIDR.String(), "0.0.0.0/1", "128.0.0.0/1"}
 
+	// Runs before the TUN routes exist, so it sees the system's own route.
+	_, hasIPv6Egress := netutil.IPv6Egress()
+
 	return &tunNetworkInfoDarwin{ //exhaustruct:enforce
 		GatewayIP:        sysNet.defaultRoute.Gateway.String(),
 		PhysIfaceName:    sysNet.defaultRoute.Iface.Name,
@@ -59,6 +63,7 @@ func collectNetworkInfo(sysNet *tunSystemNetworkDarwin) (*tunNetworkInfoDarwin, 
 		TunLocalIP:       tunLocalIP,
 		TunRemoteIP:      tunRemoteIP,
 		RouteTargetCIDRs: routeTargetCIDRs,
+		HasIPv6Egress:    hasIPv6Egress,
 	}, nil
 }
 
@@ -67,7 +72,12 @@ func (n *tunSystemNetworkDarwin) BuildJobs() ([]server.NetworkJob, error) {
 	if err != nil {
 		return nil, err
 	}
+	return buildJobs(info), nil
+}
 
+// buildJobs returns the jobs that route traffic into the TUN described by
+// info.
+func buildJobs(info *tunNetworkInfoDarwin) []server.NetworkJob {
 	var jobs []server.NetworkJob
 
 	jobs = append(jobs, server.NetworkJob{
@@ -107,7 +117,27 @@ func (n *tunSystemNetworkDarwin) BuildJobs() ([]server.NetworkJob, error) {
 		})
 	}
 
-	return jobs, nil
+	// The TUN server refuses IPv6, so applications fall back to IPv4. The
+	// route is optional: IPv4 keeps working without it.
+	if info.HasIPv6Egress {
+		jobs = append(jobs, server.NetworkJob{
+			Description: fmt.Sprintf("add IPv6 route %s via TUN", ipv6CaptureCIDR),
+			Apply: fmt.Sprintf(
+				"route -n add -inet6 -net %s -interface %s",
+				ipv6CaptureCIDR,
+				info.TUNName,
+			),
+			Reset: fmt.Sprintf(
+				"route -n delete -inet6 -net %s -interface %s",
+				ipv6CaptureCIDR,
+				info.TUNName,
+			),
+			Optional: true,
+			Warning:  ipv6RejectWarning,
+		})
+	}
+
+	return jobs
 }
 
 // tunSystemNetworkDarwin implements TUNSystemNetwork for Darwin
