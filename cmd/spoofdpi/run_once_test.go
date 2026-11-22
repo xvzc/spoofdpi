@@ -75,3 +75,57 @@ func TestRunOnceWhenDone_RunNowWaitsForRunningFn(t *testing.T) {
 	<-returned
 	assert.True(t, finished.Load())
 }
+
+func TestShutdownAfter_ServeCtxEndsAfterFn(t *testing.T) {
+	type key struct{}
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), key{}, "v"))
+	started := make(chan struct{})
+	release := make(chan struct{})
+
+	serveCtx, restore := shutdownAfter(ctx, func() {
+		close(started)
+		<-release
+	})
+	defer restore()
+	assert.Equal(t, "v", serveCtx.Value(key{}), "the server keeps ctx's values")
+
+	cancel()
+	<-started
+	select {
+	case <-serveCtx.Done():
+		t.Fatal("the server context ended before fn returned")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case <-serveCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("the server context did not end after fn returned")
+	}
+}
+
+func TestShutdownAfter_RestoreBeforeCtxIsDone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var runs atomic.Int32
+
+	serveCtx, restore := shutdownAfter(ctx, func() { runs.Add(1) })
+
+	restore()
+	assert.EqualValues(t, 1, runs.Load())
+	assert.Error(t, serveCtx.Err(), "restore ends the server context")
+
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+	assert.EqualValues(t, 1, runs.Load(), "fn must not run again when ctx is done")
+}
+
+func TestShutdownAfter_RestoreTwice(t *testing.T) {
+	var runs atomic.Int32
+	_, restore := shutdownAfter(context.Background(), func() { runs.Add(1) })
+
+	restore()
+	restore()
+	assert.EqualValues(t, 1, runs.Load())
+}

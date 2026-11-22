@@ -196,6 +196,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	// livetest waits for this message to know that spoofdpi is ready
 	// (internal/livetest/case.go).
 	logger.Info().Msgf("server started on %s", srv.Addr())
+	serveCtx := appctx
 	if cfg.App.AutoConfigureNetwork {
 		if stateFile, acErr := srv.SetupNetworkJobs(appctx); acErr != nil {
 			// Non-fatal: server is running, just couldn't auto-set
@@ -204,17 +205,42 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 		} else if acErr := server.ApplyJobs(logger, stateFile); acErr != nil {
 			logger.Error().Err(acErr).Msg("failed to apply network config")
 		} else {
-			// Restore the network config as soon as shutdown starts, not
-			// after the server has drained its connections.
-			defer runOnceWhenDone(appctx, func() {
+			// Restore the network config as soon as shutdown starts, and
+			// only then shut the server down: closing a TUN device removes
+			// its routes, which would make their reset commands fail.
+			var restore func()
+			serveCtx, restore = shutdownAfter(appctx, func() {
 				server.ResetJobs(logger, stateFile)
-			})()
+			})
+			defer restore()
 		}
 	}
 
 	sw.SetWriter(writer)
 
-	return srv.Serve(appctx)
+	return srv.Serve(serveCtx)
+}
+
+// shutdownAfterLimit bounds how long shutdownAfter holds the server up while
+// fn runs, so a hung reset command cannot keep the server from stopping.
+const shutdownAfterLimit = 5 * time.Second
+
+// shutdownAfter returns a context for the server that ends once ctx is done
+// and fn has returned, or shutdownAfterLimit after ctx is done, so fn runs
+// while the server is still up. It keeps ctx's values. The returned func runs
+// fn now if it has not run yet, and ends the context.
+func shutdownAfter(ctx context.Context, fn func()) (context.Context, func()) {
+	serveCtx, stop := context.WithCancel(context.WithoutCancel(ctx))
+	runNow := runOnceWhenDone(ctx, func() {
+		limit := time.AfterFunc(shutdownAfterLimit, stop)
+		defer limit.Stop()
+		defer stop()
+		fn()
+	})
+	return serveCtx, func() {
+		defer stop()
+		runNow()
+	}
 }
 
 // runOnceWhenDone runs fn once, as soon as ctx is done, and returns a func
