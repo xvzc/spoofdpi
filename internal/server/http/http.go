@@ -16,7 +16,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/rule"
 	"github.com/xvzc/spoofdpi/internal/server"
-	"github.com/xvzc/spoofdpi/internal/session"
 )
 
 type HTTPProxy struct {
@@ -82,7 +81,11 @@ func (p *HTTPProxy) ListenAndServe(
 				continue
 			}
 
-			go p.handleNewConnection(session.WithNewTraceID(context.Background()), conn)
+			go func() {
+				ctx, cancel := server.ConnContext(appctx)
+				defer cancel()
+				p.handleNewConnection(ctx, conn)
+			}()
 		}
 	}()
 

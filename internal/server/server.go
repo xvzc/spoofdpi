@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"time"
+
+	"github.com/xvzc/spoofdpi/internal/session"
 )
 
 // Server represents a core component that processes network traffic.
@@ -33,4 +35,18 @@ func BackoffOnError(delay time.Duration) time.Duration {
 	time.Sleep(delay)
 
 	return delay
+}
+
+// ConnContext returns the context of one connection. It starts from a fresh
+// root so the connection gets its own trace ID, and it is cancelled when
+// parent (the server's context) ends. The caller must call the returned
+// cancel when the connection is done.
+func ConnContext(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	stop := context.AfterFunc(parent, cancel)
+
+	return session.WithNewTraceID(ctx), func() {
+		stop()
+		cancel()
+	}
 }

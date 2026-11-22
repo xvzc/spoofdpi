@@ -16,7 +16,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/server"
-	"github.com/xvzc/spoofdpi/internal/session"
 	"golang.zx2c4.com/wireguard/tun"
 	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"
@@ -144,12 +143,11 @@ func (s *TunServer) ListenAndServe(
 			_ = conn.Close()
 			return
 		}
-		go s.tcpHandler.Handle(
-			session.WithNewTraceID(context.Background()),
-			conn,
-			dst,
-			s.sysNet,
-		)
+		go func() {
+			ctx, cancel := server.ConnContext(appctx)
+			defer cancel()
+			s.tcpHandler.Handle(ctx, conn, dst, s.sysNet)
+		}()
 	})
 	stk.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpFwd.HandlePacket)
 
@@ -172,12 +170,11 @@ func (s *TunServer) ListenAndServe(
 			_ = conn.Close()
 			return true
 		}
-		go s.udpHandler.Handle(
-			session.WithNewTraceID(context.Background()),
-			conn,
-			dst,
-			s.sysNet,
-		)
+		go func() {
+			ctx, cancel := server.ConnContext(appctx)
+			defer cancel()
+			s.udpHandler.Handle(ctx, conn, dst, s.sysNet)
+		}()
 		return true
 	})
 	stk.SetTransportProtocolHandler(udp.ProtocolNumber, udpFwd.HandlePacket)

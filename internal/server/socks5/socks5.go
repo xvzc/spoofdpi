@@ -16,7 +16,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/server"
-	"github.com/xvzc/spoofdpi/internal/session"
 )
 
 type SOCKS5Proxy struct {
@@ -76,7 +75,11 @@ func (p *SOCKS5Proxy) ListenAndServe(
 				continue
 			}
 
-			go p.handleConnection(session.WithNewTraceID(appctx), conn)
+			go func() {
+				ctx, cancel := server.ConnContext(appctx)
+				defer cancel()
+				p.handleConnection(ctx, conn)
+			}()
 		}
 	}()
 
