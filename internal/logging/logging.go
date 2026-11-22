@@ -2,7 +2,6 @@ package logging
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -118,36 +117,4 @@ func (h ctxHook) Run(e *zerolog.Event, level zerolog.Level, msg string) {
 	// Scope is expected to be added at the component's creation time.
 	traceID, _ := TraceIDFromContext(ctx)
 	e.Str(traceIDFieldName, traceID)
-}
-
-type joinableError interface {
-	Unwrap() []error
-}
-
-// ErrorErrs tries to unwrap an error and prints each error separately.
-// If the error is not joined, it logs the single error normally.
-func ErrorErrs(logger *zerolog.Logger, err error, msg string) {
-	logErrs(logger, zerolog.ErrorLevel, err, msg)
-}
-
-func WarnErrs(logger *zerolog.Logger, err error, msg string) {
-	logErrs(logger, zerolog.WarnLevel, err, msg)
-}
-
-func TraceErrs(logger *zerolog.Logger, err error, msg string) {
-	logErrs(logger, zerolog.TraceLevel, err, msg)
-}
-
-func logErrs(logger *zerolog.Logger, level zerolog.Level, err error, msg string) {
-	var joinedErrs joinableError
-
-	if errors.As(err, &joinedErrs) {
-		for _, e := range joinedErrs.Unwrap() {
-			logger.WithLevel(level).Err(e).Msg(msg)
-		}
-
-		return
-	}
-
-	logger.WithLevel(level).Err(err).Msg(msg)
 }

@@ -134,11 +134,6 @@ type HTTPResponse struct {
 	*http.Response
 }
 
-func NewHTTPResponse(proto string, code int) *HTTPResponse {
-	res := &http.Response{Proto: proto, StatusCode: code}
-	return &HTTPResponse{Response: res}
-}
-
 func HTTPBadGatewayResponse() *HTTPResponse {
 	return &HTTPResponse{
 		&http.Response{
