@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"strconv"
 	"sync"
 	"time"
@@ -291,6 +292,17 @@ func (c *udpAssociateConn) selectRule(
 		return nil, nil, false
 	}
 	dstPort, _ := strconv.Atoi(dstPortStr)
+
+	// Flows are dialed and keyed without a zone, so a zoned literal sent as
+	// a name, and a link-local address, which is reachable only with a zone,
+	// are dropped instead of being looked up or dialed.
+	if addr, err := netip.ParseAddr(dstHost); err == nil &&
+		(addr.Zone() != "" || netutil.NeedsZone(addr.AsSlice())) {
+		c.logger.Debug().
+			Str("addr", dstAddrStr).
+			Msg("dropped udp packet to a link-local or zoned address")
+		return nil, nil, false
+	}
 
 	// A domain name is resolved first, then matched together with the
 	// address it resolves to. The rule is selected the way it is for

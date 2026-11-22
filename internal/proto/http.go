@@ -73,17 +73,29 @@ func ReadHttpRequest(rdr io.Reader) (*HTTPRequest, error) {
 }
 
 // ExtractHost returns the host without port information, and an IPv6
-// literal without its brackets, with or without a port.
+// literal without its brackets, with or without a port. The zone of an IPv6
+// literal is returned after "%", also when the host has it encoded as
+// "%25" (RFC 6874).
 func (r *HTTPRequest) ExtractHost() string {
 	host, _, err := net.SplitHostPort(r.Host)
 	if err == nil {
-		return host
+		return unescapeZone(host)
 	}
 	if len(r.Host) > 2 && strings.HasPrefix(r.Host, "[") &&
 		strings.HasSuffix(r.Host, "]") {
-		return r.Host[1 : len(r.Host)-1]
+		return unescapeZone(r.Host[1 : len(r.Host)-1])
 	}
 	return r.Host
+}
+
+// unescapeZone decodes the "%25" that separates an IPv6 literal from its
+// zone in a URI, as in "fe80::1%25en0". A Host header carries it so, while
+// the host of a request URI has already been decoded.
+func unescapeZone(host string) string {
+	if !strings.Contains(host, ":") {
+		return host
+	}
+	return strings.Replace(host, "%25", "%", 1)
 }
 
 // ExtractPort returns the port from the host or empty string if not specified

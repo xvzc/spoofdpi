@@ -451,6 +451,29 @@ func TestUdpAssociateHandler_Handle_NameResolvedOnce(t *testing.T) {
 	assert.Equal(t, int32(1), dnsServer.queries.Load())
 }
 
+func TestUdpAssociateHandler_SelectRule_LinkLocalDropped(t *testing.T) {
+	resolver := &stubResolver{names: map[string]net.IP{}}
+	h := NewUdpAssociateHandler(
+		zerolog.Nop(),
+		nil,
+		resolver,
+		rule.NewRuleSet(),
+		&config.RuntimeConfig{},
+	)
+	c := newUdpAssociateConn(h, nil, nil)
+	c.logger = zerolog.Nop()
+
+	for _, dst := range []string{
+		"[fe80::1%en0]:53", // a zoned literal sent as a name
+		"[fe80::1]:53",     // a link-local address, which needs a zone
+		"[2001:db8::1%en0]:53",
+	} {
+		_, _, ok := c.selectRule(context.Background(), dst)
+		assert.False(t, ok, dst)
+	}
+	assert.Equal(t, int32(0), resolver.lookups.Load(), "a literal is not looked up")
+}
+
 func TestUdpAssociateHandler_Handle_NameBlock(t *testing.T) {
 	const name = "blocked.test"
 

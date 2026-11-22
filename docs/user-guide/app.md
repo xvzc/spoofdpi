@@ -30,6 +30,14 @@ TUN mode does not proxy IPv6 yet. When [`auto-configure-network`](#auto-configur
 - When the system has no IPv6 route to the internet, spoofdpi adds no IPv6 route. On Linux it also adds none when IPv6 is disabled on the TUN interface.
 - If the system refuses the IPv6 route, spoofdpi logs a warning and keeps running with IPv4 only; IPv6 traffic then bypasses spoofdpi.
 
+### IPv6 Link-Local Destinations
+
+A link-local IPv6 address (`fe80::/10`) is reachable only through the interface its zone names, as in `fe80::1%en0`.
+
+- In HTTP mode, write the zone in the request target with `%25` for `%` (RFC 6874), for example `CONNECT [fe80::1%25en0]:443`.
+- In SOCKS5 mode, an IPv6 address has no zone. Send a zoned address as a domain name instead, for example `fe80::1%en0`. A `CONNECT` to a link-local address without a zone gets the reply "address type not supported" (`0x08`).
+- SOCKS5 `UDP ASSOCIATE` drops datagrams to a link-local address, and to any address sent with a zone.
+
 ### Usage
 
 **Command-Line Flag**

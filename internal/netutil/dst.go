@@ -13,7 +13,11 @@ import (
 type Destination struct {
 	Host  string
 	Addrs []net.IP
-	Port  int
+	// Zone is the IPv6 zone, such as an interface name, that the link-local
+	// addresses in Addrs are dialed with. net.IP has no zone, so it is
+	// kept here; it is set only for an address given as a literal.
+	Zone string
+	Port int
 }
 
 func (d *Destination) String() string {

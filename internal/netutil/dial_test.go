@@ -449,3 +449,79 @@ func TestDialFastest_AttemptDelay(t *testing.T) {
 		"the second attempt started before the attempt delay",
 	)
 }
+
+func TestDialFastest_LinkLocalZone(t *testing.T) {
+	before := runtime.NumGoroutine()
+
+	// The zone is added to the link-local address only.
+	var order dialOrder
+	f := newFakeDialer(t, func(_ context.Context, addr string) error {
+		order.add(addr)
+		return errors.New("connection refused")
+	})
+
+	dst := testDestination("fe80::1", "2001:db8::1")
+	dst.Zone = "en0"
+	_, err := DialFastest(
+		context.Background(),
+		dst,
+		"tcp",
+		DialOptions{AttemptDelay: time.Hour},
+	)
+	require.Error(t, err)
+	assert.Equal(t, []string{"[fe80::1%en0]:443", "[2001:db8::1]:443"}, order.get())
+	f.requireLosersClosed(t, nil, before)
+}
+
+func TestDialFastest_LinkLocalLoopback(t *testing.T) {
+	ln := listenLinkLocalLoopback(t)
+	defer func() { _ = ln.Close() }()
+	go func() {
+		if conn, err := ln.Accept(); err == nil {
+			_ = conn.Close()
+		}
+	}()
+
+	addr := ln.Addr().(*net.TCPAddr)
+	conn, err := DialFastest(
+		context.Background(),
+		&Destination{Addrs: []net.IP{addr.IP}, Zone: addr.Zone, Port: addr.Port},
+		"tcp",
+		DialOptions{Timeout: 5 * time.Second},
+	)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	assert.Equal(t, addr.String(), conn.RemoteAddr().String())
+}
+
+// listenLinkLocalLoopback returns a TCP listener on the IPv6 link-local
+// address of a loopback interface, such as fe80::1%lo0, or skips the test
+// when the host has none.
+func listenLinkLocalLoopback(t *testing.T) net.Listener {
+	t.Helper()
+
+	ifaces, err := net.Interfaces()
+	require.NoError(t, err)
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback == 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipNet, ok := a.(*net.IPNet)
+			if !ok || ipNet.IP.To4() != nil || !ipNet.IP.IsLinkLocalUnicast() {
+				continue
+			}
+			host := ipNet.IP.String() + "%" + iface.Name
+			ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+			if err == nil {
+				return ln
+			}
+		}
+	}
+	t.Skip("no IPv6 link-local address on a loopback interface")
+	return nil
+}

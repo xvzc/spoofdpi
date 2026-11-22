@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/netip"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -14,7 +15,8 @@ import (
 )
 
 // resolveDestination resolves host and selects the rule for it with
-// server.SelectRule. An IP literal is not looked up. A domain name is
+// server.SelectRule. An IP literal is not looked up, and its zone, if any,
+// is the zone of the destination. A domain name is
 // resolved with the DNS options of the domain rule it matches, else with
 // base's. It returns the destination at port, the selected rule (nil when
 // none matches) and the config to apply. An empty host is an error.
@@ -28,11 +30,13 @@ func resolveDestination(
 	port int,
 ) (*netutil.Destination, *config.Rule, *config.RuntimeConfig, error) {
 	var addrs []net.IP
+	var zone string
 	var hostRule *config.Rule
 
-	if ip := net.ParseIP(host); ip != nil {
+	if ip, err := netip.ParseAddr(host); err == nil {
 		logger.Trace().Msgf("skipping dns lookup for non-domain host %q", host)
-		addrs = []net.IP{ip}
+		addrs = []net.IP{ip.AsSlice()}
+		zone = ip.Zone()
 	} else {
 		if host == "" {
 			return nil, nil, nil, errors.New("no host to look up")
@@ -57,6 +61,7 @@ func resolveDestination(
 	dst := &netutil.Destination{
 		Host:  host,
 		Addrs: addrs,
+		Zone:  zone,
 		Port:  port,
 	}
 

@@ -67,6 +67,21 @@ func TestHTTPRequest_SetConnectionClose(t *testing.T) {
 	assert.Equal(t, "1", written.Header.Get("X-End"))
 }
 
+func TestReadHttpRequest_ExtractHostZone(t *testing.T) {
+	reqs := []string{
+		"CONNECT [fe80::1%25en0]:443 HTTP/1.1\r\nHost: [fe80::1%25en0]:443\r\n\r\n",
+		"GET http://[fe80::1%25en0]:80/ HTTP/1.1\r\nHost: [fe80::1%25en0]\r\n\r\n",
+		"GET / HTTP/1.1\r\nHost: [fe80::1%25en0]\r\n\r\n",
+	}
+	for _, raw := range reqs {
+		t.Run(strings.Fields(raw)[1], func(t *testing.T) {
+			req, err := ReadHttpRequest(strings.NewReader(raw))
+			require.NoError(t, err)
+			assert.Equal(t, "fe80::1%en0", req.ExtractHost())
+		})
+	}
+}
+
 func TestHTTPRequest_ExtractHost(t *testing.T) {
 	tcs := []struct {
 		host string
@@ -80,6 +95,10 @@ func TestHTTPRequest_ExtractHost(t *testing.T) {
 		{"[::1]:8080", "::1"},
 		{"[2001:db8::1]", "2001:db8::1"},
 		{"[fe80::1%en0]", "fe80::1%en0"},
+		{"[fe80::1%en0]:8080", "fe80::1%en0"},
+		{"[fe80::1%25en0]", "fe80::1%en0"},
+		{"[fe80::1%25en0]:8080", "fe80::1%en0"},
+		{"100%25.test", "100%25.test"},
 		{"[]", "[]"},
 	}
 	for _, tc := range tcs {

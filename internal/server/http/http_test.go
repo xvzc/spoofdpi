@@ -372,6 +372,86 @@ func TestHTTPProxy_HandleNewConnection_Connect(t *testing.T) {
 	assert.Empty(t, resolver.lookups, "an ip literal is not looked up")
 }
 
+// A CONNECT to a link-local address with its zone, encoded as RFC 6874
+// does, reaches the address through the interface the zone names.
+func TestHTTPProxy_HandleNewConnection_ConnectLinkLocal(t *testing.T) {
+	ln := listenLinkLocalLoopback(t)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				_, _ = io.Copy(conn, conn)
+			}()
+		}
+	}()
+	echo := ln.Addr().(*net.TCPAddr)
+
+	resolver := &fakeResolver{err: errors.New("lookup failed")}
+	p := newTestProxy(
+		zerolog.Nop(),
+		resolver,
+		rule.NewRuleSet(),
+		&config.RuntimeConfig{},
+		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+	)
+
+	client, done := runConn(t, p)
+	br := bufio.NewReader(client)
+	host := echo.IP.String() + "%25" + echo.Zone
+	_, err := client.Write([]byte(connectRequest(host, echo.Port)))
+	require.NoError(t, err)
+	assert.Equal(t, "200 Connection Established", readStatus(t, br))
+
+	// The ClientHello reaches the upstream, which echoes it back.
+	hello := []byte(config.FakeClientHello)
+	_, err = client.Write(hello)
+	require.NoError(t, err)
+	got := make([]byte, len(hello))
+	_, err = io.ReadFull(br, got)
+	require.NoError(t, err)
+	assert.Equal(t, hello, got)
+
+	_ = client.Close()
+	<-done
+	assert.Empty(t, resolver.lookups, "an ip literal is not looked up")
+}
+
+func TestResolveDestination_Zone(t *testing.T) {
+	tcs := []struct {
+		host     string
+		wantIP   string
+		wantZone string
+	}{
+		{"fe80::1%en0", "fe80::1", "en0"},
+		{"fe80::1", "fe80::1", ""},
+		{"192.0.2.1", "192.0.2.1", ""},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.host, func(t *testing.T) {
+			resolver := &fakeResolver{err: errors.New("lookup failed")}
+			dst, _, _, err := resolveDestination(
+				context.Background(),
+				zerolog.Nop(),
+				resolver,
+				rule.NewRuleSet(),
+				&config.RuntimeConfig{},
+				tc.host,
+				443,
+			)
+			require.NoError(t, err)
+			require.Len(t, dst.Addrs, 1)
+			assert.Equal(t, tc.wantIP, dst.Addrs[0].String())
+			assert.Equal(t, tc.wantZone, dst.Zone)
+			assert.Empty(t, resolver.lookups, "an ip literal is not looked up")
+		})
+	}
+}
+
 // A destination at the proxy's own address gets a 403, and then the conn
 // is closed without dialing anything.
 func TestHTTPProxy_HandleNewConnection_ForbiddenSelf(t *testing.T) {
@@ -736,4 +816,36 @@ func TestHTTPProxy_HandleNewConnection_PlainDialTimeoutFromRule(t *testing.T) {
 		assert.True(t, strings.HasPrefix(string(reply), "HTTP/1.1 502"), "reply %q", reply)
 		<-done
 	})
+}
+
+// listenLinkLocalLoopback returns a TCP listener on the IPv6 link-local
+// address of a loopback interface, such as fe80::1%lo0, or skips the test
+// when the host has none.
+func listenLinkLocalLoopback(t *testing.T) net.Listener {
+	t.Helper()
+
+	ifaces, err := net.Interfaces()
+	require.NoError(t, err)
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback == 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipNet, ok := a.(*net.IPNet)
+			if !ok || ipNet.IP.To4() != nil || !ipNet.IP.IsLinkLocalUnicast() {
+				continue
+			}
+			host := ipNet.IP.String() + "%" + iface.Name
+			ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+			if err == nil {
+				return ln
+			}
+		}
+	}
+	t.Skip("no IPv6 link-local address on a loopback interface")
+	return nil
 }

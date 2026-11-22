@@ -14,3 +14,9 @@ func IPsFromAddrs(addrs []netip.Addr) []net.IP {
 
 	return ips
 }
+
+// NeedsZone reports whether ip is an IPv6 link-local unicast address, which
+// is reachable only through the interface that a zone names.
+func NeedsZone(ip net.IP) bool {
+	return ip.To4() == nil && ip.IsLinkLocalUnicast()
+}

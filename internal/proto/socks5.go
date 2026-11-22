@@ -138,6 +138,10 @@ func SOCKS5CommandNotSupportedResponse() *SOCKS5Reply {
 	return NewSOCKS5Reply(SOCKS5RCodeCmdNotSupported)
 }
 
+func SOCKS5AddrNotSupportedResponse() *SOCKS5Reply {
+	return NewSOCKS5Reply(SOCKS5RCodeAddrNotSupported)
+}
+
 func (r *SOCKS5Reply) Bind(ip net.IP) *SOCKS5Reply {
 	if ip != nil {
 		r.BindIP = ip

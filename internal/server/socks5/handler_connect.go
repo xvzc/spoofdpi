@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -99,8 +100,9 @@ func (c *connectConn) serve(ctx context.Context) error {
 	return c.tunnel(ctx, bufConn)
 }
 
-// checkDestination refuses a destination that is not valid or that the
-// selected rule blocks, and writes the failure reply for it.
+// checkDestination refuses a destination that is not valid, that the
+// selected rule blocks, or that is a link-local address without a zone, and
+// writes the failure reply for it.
 func (c *connectConn) checkDestination() error {
 	ok, err := c.dst.IsValid(&c.h.listenAddr)
 	if err != nil {
@@ -115,6 +117,14 @@ func (c *connectConn) checkDestination() error {
 		c.logger.Debug().Msg("request is blocked by policy")
 		_ = proto.SOCKS5FailureResponse().Write(c.conn)
 		return netutil.ErrBlocked
+	}
+
+	// A link-local address is reachable only through the interface its zone
+	// names, and a SOCKS5 address has no zone; only a literal sent as a
+	// name can carry one.
+	if c.dst.Zone == "" && len(c.dst.Addrs) == 1 && netutil.NeedsZone(c.dst.Addrs[0]) {
+		_ = proto.SOCKS5AddrNotSupportedResponse().Write(c.conn)
+		return fmt.Errorf("link-local address %s has no zone", c.dst.Addrs[0])
 	}
 
 	return nil
@@ -221,7 +231,9 @@ func (c *connectConn) tunnel(ctx context.Context, bufConn *netutil.BufferedConn)
 
 // resolveDestination resolves the request's destination and selects its
 // rule with server.SelectRule. A domain name is resolved with the DNS
-// options of the domain rule it matches, else with the base ones. It sets
+// options of the domain rule it matches, else with the base ones. An IP
+// literal sent as a name is not looked up, and its zone, if any, is the
+// zone of the destination. It sets
 // the destination, the selected rule (nil when none matches) and the config
 // to apply. It leaves the destination nil, without an error, when the
 // request names no address to connect to.
@@ -229,14 +241,16 @@ func (c *connectConn) resolveDestination(ctx context.Context) error {
 	h, req, logger := c.h, c.req, c.logger
 
 	var addrs []net.IP
+	var zone string
 	var nameRule *config.Rule
 
 	if req.IP != nil {
 		addrs = []net.IP{req.IP}
 	} else if req.ATYP == proto.SOCKS5AddrTypeFQDN && len(req.FQDN) > 1 {
 		name := req.FQDN
-		if ip := net.ParseIP(name); ip != nil {
-			addrs = []net.IP{ip}
+		if ip, err := netip.ParseAddr(name); err == nil {
+			addrs = []net.IP{ip.AsSlice()}
+			zone = ip.Zone()
 		} else {
 			// Matching the name alone gives the DNS options to resolve it with.
 			var nameCfg *config.RuntimeConfig
@@ -268,6 +282,7 @@ func (c *connectConn) resolveDestination(ctx context.Context) error {
 	c.dst = &netutil.Destination{
 		Host:  req.FQDN,
 		Addrs: addrs,
+		Zone:  zone,
 		Port:  req.Port,
 	}
 	return nil

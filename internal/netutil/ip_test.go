@@ -20,3 +20,23 @@ func TestIPsFromAddrs(t *testing.T) {
 	}, got)
 	assert.Empty(t, IPsFromAddrs(nil))
 }
+
+func TestNeedsZone(t *testing.T) {
+	tcs := []struct {
+		ip   string
+		want bool
+	}{
+		{"fe80::1", true},
+		{"febf::1", true},
+		{"2001:db8::1", false},
+		{"::1", false},
+		{"ff02::1", false},
+		{"169.254.1.1", false},
+		{"::ffff:169.254.1.1", false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.ip, func(t *testing.T) {
+			assert.Equal(t, tc.want, NeedsZone(net.ParseIP(tc.ip)))
+		})
+	}
+}

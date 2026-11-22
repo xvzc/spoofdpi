@@ -372,6 +372,95 @@ func TestConnectHandler_Handle_IPLiteralName(t *testing.T) {
 	assert.Equal(t, int32(0), baseDNS.queries.Load())
 }
 
+// A link-local destination without a zone can't be dialed, and a SOCKS5
+// address has no zone, so it gets "address type not supported".
+func TestConnectHandler_Handle_LinkLocalWithoutZone(t *testing.T) {
+	reqs := []struct {
+		name string
+		req  *proto.SOCKS5Request
+	}{
+		{"address", &proto.SOCKS5Request{
+			Cmd:  proto.SOCKS5CmdConnect,
+			ATYP: proto.SOCKS5AddrTypeIPv6,
+			IP:   net.ParseIP("fe80::1"),
+			Port: 443,
+		}},
+		{"name", &proto.SOCKS5Request{
+			Cmd:  proto.SOCKS5CmdConnect,
+			ATYP: proto.SOCKS5AddrTypeFQDN,
+			FQDN: "fe80::1",
+			Port: 443,
+		}},
+	}
+	for _, tc := range reqs {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver := &stubResolver{}
+			h := NewConnectHandler(
+				zerolog.Nop(),
+				desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+				resolver,
+				rule.NewRuleSet(),
+				net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+				&config.RuntimeConfig{},
+			)
+
+			client, done := runConnect(t, h, tc.req)
+			require.Equal(
+				t,
+				byte(proto.SOCKS5RCodeAddrNotSupported),
+				readReply(t, client),
+			)
+			assert.Error(t, <-done)
+			assert.Equal(t, int32(0), resolver.lookups.Load())
+		})
+	}
+}
+
+// A link-local literal sent as a name carries its zone, so it is dialed
+// through the interface the zone names.
+func TestConnectHandler_Handle_LinkLocalNameWithZone(t *testing.T) {
+	ln := listenLinkLocalLoopback(t)
+	t.Cleanup(func() { _ = ln.Close() })
+	var accepted atomic.Int32
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			_ = conn.Close()
+		}
+	}()
+	addr := ln.Addr().(*net.TCPAddr)
+
+	resolver := &stubResolver{}
+	base := &config.RuntimeConfig{}
+	base.Conn.TCPTimeout = 2 * time.Second
+	h := NewConnectHandler(
+		zerolog.Nop(),
+		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+		resolver,
+		rule.NewRuleSet(),
+		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+		base,
+	)
+
+	client, done := runConnect(t, h, &proto.SOCKS5Request{
+		Cmd:  proto.SOCKS5CmdConnect,
+		ATYP: proto.SOCKS5AddrTypeFQDN,
+		FQDN: addr.IP.String() + "%" + addr.Zone,
+		Port: addr.Port,
+	})
+
+	require.Equal(t, byte(proto.SOCKS5RCodeSuccess), readReply(t, client))
+	_ = client.Close()
+	<-done
+
+	assert.Equal(t, int32(1), accepted.Load())
+	assert.Equal(t, int32(0), resolver.lookups.Load())
+}
+
 // An unspecified destination, which Go dials as the local host, gets a
 // failure reply on any port, and is not dialed.
 func TestConnectHandler_Handle_Unspecified(t *testing.T) {
@@ -444,4 +533,36 @@ func TestConnectHandler_Handle_LookupError(t *testing.T) {
 	assert.ErrorIs(t, <-done, errLookup)
 	assert.Equal(t, int32(1), resolver.lookups.Load())
 	assert.Same(t, &base.DNS, resolver.lookupOpts("fail.test"))
+}
+
+// listenLinkLocalLoopback returns a TCP listener on the IPv6 link-local
+// address of a loopback interface, such as fe80::1%lo0, or skips the test
+// when the host has none.
+func listenLinkLocalLoopback(t *testing.T) net.Listener {
+	t.Helper()
+
+	ifaces, err := net.Interfaces()
+	require.NoError(t, err)
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback == 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipNet, ok := a.(*net.IPNet)
+			if !ok || ipNet.IP.To4() != nil || !ipNet.IP.IsLinkLocalUnicast() {
+				continue
+			}
+			host := ipNet.IP.String() + "%" + iface.Name
+			ln, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
+			if err == nil {
+				return ln
+			}
+		}
+	}
+	t.Skip("no IPv6 link-local address on a loopback interface")
+	return nil
 }

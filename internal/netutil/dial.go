@@ -117,7 +117,7 @@ func DialFastest(
 				defer attempts.Done()
 				defer func() { <-sem }() // Return semaphore
 
-				res := dialAttempt(ctx, ip, dst.Port, network, o)
+				res := dialAttempt(ctx, dst, ip, network, o)
 				if res.err != nil {
 					failed <- struct{}{}
 				}
@@ -157,16 +157,21 @@ func DialFastest(
 	}
 }
 
-// dialAttempt dials ip on port. It closes a conn established after ctx is
-// done, as DialFastest has returned or is returning without it.
+// dialAttempt dials ip, one of the addresses of dst, on the port of dst, and
+// with its zone when ip is link-local. It closes a conn established after
+// ctx is done, as DialFastest has returned or is returning without it.
 func dialAttempt(
 	ctx context.Context,
+	dst *Destination,
 	ip net.IP,
-	port int,
 	network string,
 	o DialOptions,
 ) dialResult {
-	targetAddr := net.JoinHostPort(ip.String(), strconv.Itoa(port))
+	host := ip.String()
+	if dst.Zone != "" && NeedsZone(ip) {
+		host += "%" + dst.Zone
+	}
+	targetAddr := net.JoinHostPort(host, strconv.Itoa(dst.Port))
 	dialer := &net.Dialer{}
 	if o.Timeout > 0 {
 		dialer.Deadline = time.Now().Add(o.Timeout)
