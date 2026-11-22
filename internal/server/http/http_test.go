@@ -372,67 +372,46 @@ func TestHTTPProxy_HandleNewConnection_Connect(t *testing.T) {
 	assert.Empty(t, resolver.lookups, "an ip literal is not looked up")
 }
 
-// A destination at the proxy's own address gets a 403, and then the
-// request is handled anyway.
-// BUG: the 403 doesn't stop the request. This pins the current behavior.
-func TestHTTPProxy_HandleNewConnection_ForbiddenKeepsGoing(t *testing.T) {
-	t.Run("CONNECT", func(t *testing.T) {
-		echo, accepted := startTCPEcho(t)
-		p := newTestProxy(
-			zerolog.Nop(),
-			&fakeResolver{},
-			rule.NewRuleSet(),
-			&config.RuntimeConfig{},
-			*echo, // the destination is the proxy itself
-		)
+// A destination at the proxy's own address gets a 403, and then the conn
+// is closed without dialing anything.
+func TestHTTPProxy_HandleNewConnection_ForbiddenSelf(t *testing.T) {
+	requests := []struct {
+		method string
+		build  func(addr *net.TCPAddr) string
+	}{
+		{"CONNECT", func(addr *net.TCPAddr) string {
+			return connectRequest(addr.IP.String(), addr.Port)
+		}},
+		{"GET", func(addr *net.TCPAddr) string {
+			return getRequest(addr.IP.String(), addr.Port, "/")
+		}},
+	}
 
-		client, done := runConn(t, p)
-		br := bufio.NewReader(client)
-		_, err := client.Write([]byte(connectRequest(echo.IP.String(), echo.Port)))
-		require.NoError(t, err)
+	for _, req := range requests {
+		t.Run(req.method, func(t *testing.T) {
+			echo, accepted := startTCPEcho(t)
+			p := newTestProxy(
+				zerolog.Nop(),
+				&fakeResolver{},
+				rule.NewRuleSet(),
+				&config.RuntimeConfig{},
+				*echo, // the destination is the proxy itself
+			)
 
-		assert.Equal(t, "403 Forbidden", readStatus(t, br))
-		assert.Equal(t, "200 Connection Established", readStatus(t, br))
+			client, done := runConn(t, p)
+			br := bufio.NewReader(client)
+			_, err := client.Write([]byte(req.build(echo)))
+			require.NoError(t, err)
 
-		hello := []byte(config.FakeClientHello)
-		_, err = client.Write(hello)
-		require.NoError(t, err)
-		got := make([]byte, len(hello))
-		_, err = io.ReadFull(br, got)
-		require.NoError(t, err)
-		assert.Equal(t, hello, got)
+			assert.Equal(t, "403 Forbidden", readStatus(t, br))
+			rest, err := io.ReadAll(br)
+			require.NoError(t, err, "the conn is closed after the 403")
+			assert.Empty(t, rest)
+			<-done
 
-		_ = client.Close()
-		<-done
-
-		assert.Equal(t, int32(1), accepted.Load())
-	})
-
-	t.Run("GET", func(t *testing.T) {
-		echo, accepted := startTCPEcho(t)
-		p := newTestProxy(
-			zerolog.Nop(),
-			&fakeResolver{},
-			rule.NewRuleSet(),
-			&config.RuntimeConfig{},
-			*echo, // the destination is the proxy itself
-		)
-
-		client, done := runConn(t, p)
-		br := bufio.NewReader(client)
-		_, err := client.Write([]byte(getRequest(echo.IP.String(), echo.Port, "/")))
-		require.NoError(t, err)
-
-		assert.Equal(t, "403 Forbidden", readStatus(t, br))
-		fwd, err := http.ReadRequest(br)
-		require.NoError(t, err)
-		assert.Equal(t, http.MethodGet, fwd.Method)
-
-		_ = client.Close()
-		<-done
-
-		assert.Equal(t, int32(1), accepted.Load())
-	})
+			assert.Equal(t, int32(0), accepted.Load(), "the upstream is not dialed")
+		})
+	}
 }
 
 // A second plain request on the same conn goes to the first request's

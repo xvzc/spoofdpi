@@ -62,3 +62,36 @@ func resolveDestination(
 
 	return dst, matched, cfg, nil
 }
+
+// destinationVerdict is what verifyDestination decides about a destination.
+type destinationVerdict int
+
+const (
+	destinationAllowed destinationVerdict = iota
+	// destinationSelf is a destination at the proxy's own address, which the
+	// proxy refuses so it doesn't query itself recursively.
+	destinationSelf
+	// destinationBlocked is a destination the selected rule blocks.
+	destinationBlocked
+)
+
+// verifyDestination decides whether a request may go on to dst, given the
+// proxy's listenAddr and the rule matched for dst (nil when none matches).
+func verifyDestination(
+	logger zerolog.Logger,
+	dst *netutil.Destination,
+	matched *config.Rule,
+	listenAddr *net.TCPAddr,
+) destinationVerdict {
+	if ok, err := dst.IsValid(listenAddr); !ok {
+		logger.Debug().Err(err).Msg("error validating dst addrs")
+		return destinationSelf
+	}
+
+	if matched != nil && matched.Block {
+		logger.Debug().Msg("request is blocked by policy")
+		return destinationBlocked
+	}
+
+	return destinationAllowed
+}

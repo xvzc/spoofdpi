@@ -123,25 +123,18 @@ func (c *httpsConn) selectDestination(ctx context.Context) bool {
 	return true
 }
 
-// checkDestination writes a 403 for a destination that is the proxy itself,
-// and reports false when the selected rule blocks the destination.
+// checkDestination writes a 403 for a destination that is the proxy itself.
+// It reports false when the request must not go on.
 func (c *httpsConn) checkDestination() bool {
-	// Avoid recursively querying self.
-	// BUG: the request goes on after the 403 reply.
-	ok, err := c.dst.IsValid(&c.h.listenAddr)
-	if err != nil {
-		c.logger.Debug().Err(err).Msg("error validating dst addrs")
-		if !ok {
-			_ = proto.HTTPForbiddenResponse().Write(c.conn)
-		}
-	}
-
-	if c.matched != nil && c.matched.Block {
-		c.logger.Debug().Msg("request is blocked by policy")
+	switch verifyDestination(c.logger, c.dst, c.matched, &c.h.listenAddr) {
+	case destinationSelf:
+		_ = proto.HTTPForbiddenResponse().Write(c.conn)
 		return false
+	case destinationBlocked:
+		return false
+	default:
+		return true
 	}
-
-	return true
 }
 
 // reply sends 200 Connection Established. It reports false, without an
