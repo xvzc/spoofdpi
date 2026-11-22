@@ -50,7 +50,9 @@ func (h *HTTPHandler) Handle(
 }
 
 // httpConn is one plain HTTP request. It owns the remote connection it dials
-// and closes it when serve returns.
+// and closes it when serve returns. The request is the last one on the
+// client connection, so that each later request comes on a new connection
+// and gets its own destination and rule.
 type httpConn struct {
 	h      *HTTPHandler
 	conn   net.Conn
@@ -59,6 +61,7 @@ type httpConn struct {
 
 	dst     *netutil.Destination
 	matched *config.Rule
+	cfg     *config.RuntimeConfig
 	rConn   net.Conn
 }
 
@@ -95,7 +98,7 @@ func (c *httpConn) selectDestination(ctx context.Context) bool {
 		return false
 	}
 
-	c.dst, c.matched, _, err = resolveDestination(
+	c.dst, c.matched, c.cfg, err = resolveDestination(
 		ctx, c.logger, c.h.resolver, c.h.ruleSet, c.h.cfg, host, port,
 	)
 	if err != nil {
@@ -123,7 +126,7 @@ func (c *httpConn) checkDestination() bool {
 
 // dial connects to the destination, and writes a 502 when it can't.
 func (c *httpConn) dial(ctx context.Context) error {
-	rConn, err := netutil.DialFastest(ctx, c.dst, "tcp", 0, nil)
+	rConn, err := netutil.DialFastest(ctx, c.dst, "tcp", c.cfg.Conn.TCPTimeout, nil)
 	if err != nil {
 		_ = proto.HTTPBadGatewayResponse().Write(c.conn)
 		return err
@@ -134,7 +137,13 @@ func (c *httpConn) dial(ctx context.Context) error {
 }
 
 // forward sends the request to the remote in the form a proxy sends it.
+// Unless the request upgrades the connection to another protocol, it asks
+// the remote to close the connection after its response.
 func (c *httpConn) forward() error {
+	if !c.req.IsUpgrade() {
+		c.req.SetConnectionClose()
+	}
+
 	if err := c.req.WriteProxy(c.rConn); err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
@@ -142,8 +151,9 @@ func (c *httpConn) forward() error {
 	return nil
 }
 
-// tunnel copies between the conns until either side closes. Later requests
-// on the conn go to the same remote as they are.
+// tunnel copies between the conns until either side closes, and then closes
+// both. The remote closes after its response to a request forwarded with
+// "Connection: close", which closes the client conn as well.
 func (c *httpConn) tunnel(ctx context.Context) error {
 	resCh := make(chan netutil.TransferResult, 2)
 

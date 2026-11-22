@@ -5,7 +5,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/textproto"
 	"strconv"
+	"strings"
+
+	"golang.org/x/net/http/httpguts"
 )
 
 // validMethods contains the set of HTTP methods that are considered valid
@@ -99,6 +103,31 @@ func (r *HTTPRequest) IsValidMethod() bool {
 // IsConnectMethod returns true if the request method is CONNECT
 func (r *HTTPRequest) IsConnectMethod() bool {
 	return r.Method == http.MethodConnect
+}
+
+// IsUpgrade reports whether the request asks to switch the connection to
+// another protocol, such as WebSocket.
+func (r *HTTPRequest) IsUpgrade() bool {
+	return httpguts.HeaderValuesContainsToken(r.Header["Connection"], "upgrade")
+}
+
+// SetConnectionClose makes the request the last one on the connection it is
+// written to. It drops the hop-by-hop headers that describe the client's own
+// connection (Connection, the headers it names, Keep-Alive and
+// Proxy-Connection), so that writing the request sends "Connection: close"
+// as its only connection option.
+func (r *HTTPRequest) SetConnectionClose() {
+	for _, v := range r.Header["Connection"] {
+		for name := range strings.SplitSeq(v, ",") {
+			if name = textproto.TrimString(name); name != "" {
+				r.Header.Del(name)
+			}
+		}
+	}
+	r.Header.Del("Connection")
+	r.Header.Del("Keep-Alive")
+	r.Header.Del("Proxy-Connection")
+	r.Close = true
 }
 
 type HTTPResponse struct {

@@ -414,12 +414,55 @@ func TestHTTPProxy_HandleNewConnection_ForbiddenSelf(t *testing.T) {
 	}
 }
 
-// A second plain request on the same conn goes to the first request's
-// upstream as is: it is neither resolved nor checked against the rules.
-// BUG: each request should get its own destination and rule. This pins
-// the current behavior.
-func TestHTTPProxy_HandleNewConnection_KeepAliveReusesFirstHost(t *testing.T) {
-	echo, accepted := startTCPEcho(t)
+// startHTTPOrigin runs a loopback HTTP/1.1 server that answers every request
+// with "200 OK" and sends each request it reads on the returned channel. It
+// keeps a connection open between requests unless a request asks to close
+// it, and counts the connections it accepts.
+func startHTTPOrigin(t *testing.T) (*net.TCPAddr, *atomic.Int32, <-chan *http.Request) {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+
+	var accepted atomic.Int32
+	reqs := make(chan *http.Request, 16)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			go func() {
+				defer func() { _ = conn.Close() }()
+				br := bufio.NewReader(conn)
+				for {
+					req, err := http.ReadRequest(br)
+					if err != nil {
+						return
+					}
+					reqs <- req
+					res := "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n"
+					if req.Close {
+						res += "Connection: close\r\n"
+					}
+					if _, err := io.WriteString(conn, res+"\r\nok"); err != nil || req.Close {
+						return
+					}
+				}
+			}()
+		}
+	}()
+
+	return ln.Addr().(*net.TCPAddr), &accepted, reqs
+}
+
+// A plain request is forwarded with "Connection: close", and the client conn
+// is closed after the response, so a later request comes on a new conn and
+// gets its own rule.
+func TestHTTPProxy_HandleNewConnection_PlainRequestClosesConn(t *testing.T) {
+	origin, accepted, reqs := startHTTPOrigin(t)
 	resolver := &fakeResolver{addrs: []netip.Addr{netip.MustParseAddr("127.0.0.1")}}
 	rs := rule.NewRuleSet()
 	require.NoError(t, rs.Add(&config.Rule{
@@ -436,25 +479,116 @@ func TestHTTPProxy_HandleNewConnection_KeepAliveReusesFirstHost(t *testing.T) {
 		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
 	)
 
+	first := net.JoinHostPort("first.test", strconv.Itoa(origin.Port))
 	client, done := runConn(t, p)
 	br := bufio.NewReader(client)
+	_, err := client.Write([]byte("GET http://" + first + "/one HTTP/1.1\r\n" +
+		"Host: " + first + "\r\n" +
+		"Connection: keep-alive\r\n" +
+		"Keep-Alive: timeout=5\r\n" +
+		"Proxy-Connection: keep-alive\r\n\r\n"))
+	require.NoError(t, err)
 
-	_, err := client.Write([]byte(getRequest("first.test", echo.Port, "/one")))
+	res, err := http.ReadResponse(br, nil)
 	require.NoError(t, err)
-	first, err := http.ReadRequest(br)
+	assert.Equal(t, "200 OK", res.Status)
+	body, err := io.ReadAll(res.Body)
 	require.NoError(t, err)
-	assert.Equal(t, "/one", first.URL.Path)
+	assert.Equal(t, "ok", string(body))
 
-	_, err = client.Write([]byte(getRequest("second.test", 80, "/two")))
+	rest, err := io.ReadAll(br)
+	require.NoError(t, err, "the conn is closed after the response")
+	assert.Empty(t, rest)
+	<-done
+
+	fwd := <-reqs
+	assert.Equal(t, "/one", fwd.URL.Path)
+	assert.Equal(t, []string{"close"}, fwd.Header.Values("Connection"))
+	assert.Empty(t, fwd.Header.Values("Keep-Alive"))
+	assert.Empty(t, fwd.Header.Values("Proxy-Connection"))
+
+	// The second request comes on a new conn, where its rule blocks it.
+	client, done = runConn(t, p)
+	_, err = client.Write([]byte(getRequest("second.test", origin.Port, "/two")))
 	require.NoError(t, err)
-	second, err := http.ReadRequest(br)
+	reply, err := io.ReadAll(client)
 	require.NoError(t, err)
-	assert.Equal(t, "second.test:80", second.Host)
-	assert.Equal(t, "/two", second.URL.Path)
+	assert.Empty(t, reply, "a blocked request is closed without a reply")
+	<-done
+
+	assert.Equal(t, int32(1), accepted.Load())
+	assert.Len(t, resolver.lookups, 2, "each request is looked up")
+}
+
+// A request that upgrades the conn is forwarded as is, and then the conns
+// are tunneled.
+func TestHTTPProxy_HandleNewConnection_PlainUpgradeTunnels(t *testing.T) {
+	echo, accepted := startTCPEcho(t)
+	p := newTestProxy(
+		zerolog.Nop(),
+		&fakeResolver{addrs: []netip.Addr{netip.MustParseAddr("127.0.0.1")}},
+		rule.NewRuleSet(),
+		&config.RuntimeConfig{},
+		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+	)
+
+	target := net.JoinHostPort("origin.test", strconv.Itoa(echo.Port))
+	client, done := runConn(t, p)
+	br := bufio.NewReader(client)
+	_, err := client.Write([]byte("GET http://" + target + "/ws HTTP/1.1\r\n" +
+		"Host: " + target + "\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Upgrade: websocket\r\n\r\n"))
+	require.NoError(t, err)
+
+	// The upstream echoes back the request the proxy forwarded to it.
+	fwd, err := http.ReadRequest(br)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Upgrade"}, fwd.Header.Values("Connection"))
+	assert.Equal(t, "websocket", fwd.Header.Get("Upgrade"))
+
+	_, err = client.Write([]byte("ping"))
+	require.NoError(t, err)
+	got := make([]byte, 4)
+	_, err = io.ReadFull(br, got)
+	require.NoError(t, err)
+	assert.Equal(t, "ping", string(got))
 
 	_ = client.Close()
 	<-done
 
 	assert.Equal(t, int32(1), accepted.Load())
-	assert.Len(t, resolver.lookups, 1, "only the first host is looked up")
+}
+
+// A plain request is dialed with the TCP timeout of the config its rule
+// selects.
+func TestHTTPProxy_HandleNewConnection_PlainDialTimeoutFromRule(t *testing.T) {
+	echo, accepted := startTCPEcho(t)
+	slow := &config.Rule{
+		Name:     "slow",
+		Priority: 10,
+		Match:    &config.MatchAttrs{Domains: []string{"slow.test"}},
+	}
+	// A timeout this short has passed before the dial starts.
+	slow.Config.Conn.TCPTimeout = time.Nanosecond
+	rs := rule.NewRuleSet()
+	require.NoError(t, rs.Add(slow))
+	p := newTestProxy(
+		zerolog.Nop(),
+		&fakeResolver{addrs: []netip.Addr{netip.MustParseAddr("127.0.0.1")}},
+		rs,
+		&config.RuntimeConfig{},
+		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+	)
+
+	client, done := runConn(t, p)
+	_, err := client.Write([]byte(getRequest("slow.test", echo.Port, "/")))
+	require.NoError(t, err)
+
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(string(reply), "HTTP/1.1 502"), "reply %q", reply)
+	<-done
+
+	assert.Equal(t, int32(0), accepted.Load())
 }
