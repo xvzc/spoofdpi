@@ -9,7 +9,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/xvzc/spoofdpi/internal/session"
 )
 
 const (
@@ -17,7 +16,6 @@ const (
 	scopeFieldName      = "scope"
 	localScopeFieldName = "local_scope"
 	traceIDFieldName    = "trace_id"
-	hostInfoFieldName   = "host_info"
 )
 
 // SetGlobalLogger creates and configures the global zerolog.Logger instance
@@ -55,13 +53,6 @@ func SetGlobalLogger(ctx context.Context, l zerolog.Level, w io.Writer) {
 				m[localScopeFieldName] = ""
 			}
 
-			if v, ok := m[hostInfoFieldName].(string); ok && v != "" {
-				m[hostInfoFieldName] = fmt.Sprintf("%s;", v)
-			} else {
-				// Do the same for scope for consistency.
-				m[hostInfoFieldName] = ""
-			}
-
 			if v, ok := m["message"].(string); ok && v != "" {
 				m["message"] = fmt.Sprintf("%s;", v)
 			} else {
@@ -76,7 +67,6 @@ func SetGlobalLogger(ctx context.Context, l zerolog.Level, w io.Writer) {
 		FieldsExclude: []string{
 			traceIDFieldName,
 			scopeFieldName,
-			hostInfoFieldName,
 			localScopeFieldName,
 		},
 		PartsOrder: []string{
@@ -84,7 +74,6 @@ func SetGlobalLogger(ctx context.Context, l zerolog.Level, w io.Writer) {
 			zerolog.TimestampFieldName,
 			traceIDFieldName, // Custom fields are placed before the message.
 			scopeFieldName,
-			hostInfoFieldName,
 			localScopeFieldName,
 			zerolog.MessageFieldName,
 		},
@@ -127,12 +116,8 @@ func (h ctxHook) Run(e *zerolog.Event, level zerolog.Level, msg string) {
 
 	// Request-scoped values like trace_id.
 	// Scope is expected to be added at the component's creation time.
-	traceID, _ := session.TraceIDFrom(ctx)
+	traceID, _ := TraceIDFromContext(ctx)
 	e.Str(traceIDFieldName, traceID)
-
-	if domain, ok := session.HostInfoFrom(ctx); ok {
-		e.Str(hostInfoFieldName, domain)
-	}
 }
 
 type joinableError interface {

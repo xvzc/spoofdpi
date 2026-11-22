@@ -7,22 +7,21 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/xvzc/spoofdpi/internal/session"
+	"github.com/xvzc/spoofdpi/internal/logging"
 )
 
 func TestConnContext_NewTraceIDPerConnection(t *testing.T) {
-	parent := session.WithNewTraceID(context.Background())
-	parentID, ok := session.TraceIDFrom(parent)
-	require.True(t, ok)
+	parentID := logging.NewTraceID()
+	parent := logging.ContextWithTraceID(context.Background(), parentID)
 
 	a, cancelA := ConnContext(parent)
 	defer cancelA()
 	b, cancelB := ConnContext(parent)
 	defer cancelB()
 
-	idA, ok := session.TraceIDFrom(a)
+	idA, ok := logging.TraceIDFromContext(a)
 	require.True(t, ok)
-	idB, ok := session.TraceIDFrom(b)
+	idB, ok := logging.TraceIDFromContext(b)
 	require.True(t, ok)
 
 	assert.NotEqual(t, parentID, idA, "a connection must not reuse the server's trace ID")

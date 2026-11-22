@@ -10,7 +10,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/capture"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/session"
 )
 
 var _ Sniffer = (*TCPSniffer)(nil)
@@ -48,7 +47,10 @@ func (ts *TCPSniffer) StartCapturing() {
 
 	go func() {
 		for packet := range packets {
-			ts.processPacket(session.WithNewTraceID(context.Background()), packet)
+			ts.processPacket(
+				logging.ContextWithTraceID(context.Background(), logging.NewTraceID()),
+				packet,
+			)
 		}
 	}()
 }

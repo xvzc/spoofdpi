@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/xvzc/spoofdpi/internal/session"
+	"github.com/xvzc/spoofdpi/internal/logging"
 )
 
 // Server represents a core component that processes network traffic.
@@ -45,7 +45,7 @@ func ConnContext(parent context.Context) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	stop := context.AfterFunc(parent, cancel)
 
-	return session.WithNewTraceID(ctx), func() {
+	return logging.ContextWithTraceID(ctx, logging.NewTraceID()), func() {
 		stop()
 		cancel()
 	}

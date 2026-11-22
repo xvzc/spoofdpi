@@ -123,9 +123,6 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	// ctx = session.WithHostInfo(ctx, req.Host())
-	// logger = logger.With().Ctx(ctx).Logger()
-
 	logger.Debug().
 		Uint8("cmd", req.Cmd).
 		Int("port", req.Port).

@@ -24,7 +24,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/server/http"
 	"github.com/xvzc/spoofdpi/internal/server/socks5"
 	"github.com/xvzc/spoofdpi/internal/server/tun"
-	"github.com/xvzc/spoofdpi/internal/session"
 )
 
 // Version and commit are set at build time.
@@ -84,7 +83,7 @@ func main() {
 
 func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err error) {
 	appctx, cancel := signal.NotifyContext(
-		session.WithNewTraceID(mainctx),
+		mainctx,
 		syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP,
 	)
 	defer cancel()
