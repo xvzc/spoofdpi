@@ -78,6 +78,34 @@ listen-addr = "0.0.0.0:8080"
 
 ---
 
+## `ipv6`
+
+`type: boolean`
+
+### Description
+
+Enables IPv6. `(default: false)`
+
+A [rule](rules.md#rule-fields) can set its own `ipv6`; a rule that does not set it follows this option.
+
+!!! warning
+    IPv6 support is currently Experimental, and spoofdpi logs a warning at startup when this option is set.
+
+### Usage
+
+**Command-Line Flag**
+```console
+$ spoofdpi --ipv6
+```
+
+**TOML Config**
+```toml
+[app]
+ipv6 = true
+```
+
+---
+
 ## `log-level`
 
 `type: string`

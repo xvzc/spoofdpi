@@ -31,6 +31,9 @@ type RuntimeConfig struct {
 	DNS   DNSOptions   `json:"dns"`
 	HTTPS HTTPSOptions `json:"https"`
 	UDP   UDPOptions   `json:"udp"`
+	// IPv6 is the ipv6 option of the connection: the rule's own value, else
+	// the global one (AppOptions.IPv6), which Finalize copies here.
+	IPv6 bool `json:"ipv6"`
 }
 
 func (c *Config) UnmarshalTOML(data any) (err error) {
@@ -105,6 +108,24 @@ func (c *Config) NeedsNetworkStack() bool {
 	return c.NeedsTCPStack() || c.NeedsUDPStack()
 }
 
+// IPv6Enabled reports whether IPv6 is enabled: by the global ipv6 option,
+// or, outside TUN mode, by any rule. TUN mode ignores the rules' ipv6, as
+// the OS and the applications choose the address family there.
+func (c *Config) IPv6Enabled() bool {
+	if c.App.IPv6 {
+		return true
+	}
+	if c.App.Mode == AppModeTUN {
+		return false
+	}
+	for _, r := range c.Rules {
+		if r.Config.IPv6 {
+			return true
+		}
+	}
+	return false
+}
+
 // NeedsRoute reports whether the default route must be discovered at
 // startup: raw packet capture needs the gateway, and TUN mode routes
 // traffic through it.
@@ -134,6 +155,13 @@ func (c *Config) Finalize() error {
 		AddWarnMsg("'socks5' mode is an experimental feature")
 	case AppModeTUN:
 		AddWarnMsg("'tun' mode is an experimental feature")
+	}
+
+	// Rules are resolved from the base RuntimeConfig after Finalize, so
+	// they inherit the global value unless they set their own.
+	c.IPv6 = c.App.IPv6
+	if c.App.IPv6 {
+		AddWarnMsg("'ipv6' is an experimental feature")
 	}
 
 	return nil

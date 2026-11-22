@@ -176,6 +176,15 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 		if v, ok := item["block"].(bool); ok {
 			r.Block = v
 		}
+		// Config.IPv6 already holds the global value, which a rule without
+		// its own ipv6 inherits.
+		if v, ok := item["ipv6"]; ok {
+			ipv6, perr := parseBoolFn()(v)
+			if perr != nil {
+				return nil, fmt.Errorf("rule %d: ipv6: %w", i, perr)
+			}
+			r.Config.IPv6 = ipv6
+		}
 		if v, ok := item["match"]; ok {
 			r.Match = &MatchAttrs{} //exhaustruct:enforce
 			if err := r.Match.UnmarshalTOML(v); err != nil {

@@ -33,6 +33,9 @@ type AppOptions struct {
 	ListenAddr           net.TCPAddr   `toml:"listen-addr"`
 	Gateway              net.IP        `toml:"gateway"`     // nil: discover from the routing table
 	FreebsdFIB           int           `toml:"freebsd-fib"` // FreeBSD only: FIB ID for routing (2-15)
+	// IPv6 is the global ipv6 option. Rules inherit it unless they set
+	// their own; RuntimeConfig.IPv6 holds the value a connection uses.
+	IPv6 bool `toml:"ipv6"`
 }
 
 func (o *AppOptions) UnmarshalTOML(data any) (err error) {
@@ -72,6 +75,9 @@ func (o *AppOptions) UnmarshalTOML(data any) (err error) {
 		err,
 	) {
 		o.FreebsdFIB = *p
+	}
+	if p := findFrom(m, "ipv6", parseBoolFn(), &err); isOk(p, err) {
+		o.IPv6 = *p
 	}
 
 	return err

@@ -16,10 +16,11 @@ The top-level `[[rules]]` array contains one table per rule. Each rule consists 
 | `name`     | String | A descriptive name for the rule.                 |
 | `priority` | Int    | Order of precedence. Higher numbers take priority.|
 | `block`    | Bool   | If `true`, completely blocks connections matching this rule. |
+| `ipv6`     | Bool   | Overrides the global [`ipv6`](app.md#ipv6) for this rule. Unset, the rule follows the global value. |
 
 ## Rule Selection
 
-Each TCP connection, and each UDP datagram, uses exactly one rule. Its address is matched against `cidrs` and, when its domain name is known, the name is matched against `domains`. The higher-priority of the two matches is selected, and the address match wins a tie. All of the selected rule's settings apply: `block`, `tls`, `udp`, `connection` and `dns`. When no rule matches, the global settings apply. A name that is an IP literal is never matched against `domains`, only as an address.
+Each TCP connection, and each UDP datagram, uses exactly one rule. Its address is matched against `cidrs` and, when its domain name is known, the name is matched against `domains`. The higher-priority of the two matches is selected, and the address match wins a tie. All of the selected rule's settings apply: `block`, `ipv6`, `tls`, `udp`, `connection` and `dns`. When no rule matches, the global settings apply. A name that is an IP literal is never matched against `domains`, only as an address.
 
 | Traffic                | Address                           | Domain name                                  |
 | :--------------------- | :-------------------------------- | :------------------------------------------- |

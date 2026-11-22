@@ -34,6 +34,7 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 			ListenAddr:           net.TCPAddr{},
 			Gateway:              nil,
 			FreebsdFIB:           1,
+			IPv6:                 false,
 		},
 		Rules: nil,
 		RuntimeConfig: RuntimeConfig{ //exhaustruct:enforce
@@ -71,6 +72,7 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 				FakePreflight: 0,
 				FakePacket:    make([]byte, 64),
 			},
+			IPv6: false,
 		},
 	}
 }
@@ -441,6 +443,23 @@ func CreateCommand(
 						auto := v
 						cliOverrides = append(cliOverrides, func(cfg *Config) {
 							cfg.App.AutoConfigureNetwork = auto
+						})
+						return nil
+					},
+				},
+
+				&cli.BoolFlag{
+					Name: "ipv6",
+					Usage: fmt.Sprintf(`
+				Enable IPv6 (experimental). Rules without their own 'ipv6' follow
+				this option. (default: %v)`,
+						defaultCfg.App.IPv6,
+					),
+					OnlyOnce: true,
+					Action: func(ctx context.Context, cmd *cli.Command, v bool) error {
+						ipv6 := v
+						cliOverrides = append(cliOverrides, func(cfg *Config) {
+							cfg.App.IPv6 = ipv6
 						})
 						return nil
 					},
