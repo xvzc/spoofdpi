@@ -42,8 +42,8 @@ type TUNSystemNetwork interface {
 	BuildJobs() ([]server.NetworkJob, error)
 }
 
-// ipv6CaptureCIDR is the IPv6 range routed into the TUN when the host has an
-// IPv6 route to the internet. It covers global unicast addresses only, so
+// ipv6CaptureCIDR is the IPv6 range routed into the TUN when IPv6 is enabled
+// and the host has an IPv6 route to the internet. It covers global unicast addresses only, so
 // link-local, unique local and multicast traffic keeps its on-link routes.
 const ipv6CaptureCIDR = "2000::/3"
 

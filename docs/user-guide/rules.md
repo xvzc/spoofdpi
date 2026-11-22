@@ -16,7 +16,7 @@ The top-level `[[rules]]` array contains one table per rule. Each rule consists 
 | `name`     | String | A descriptive name for the rule.                 |
 | `priority` | Int    | Order of precedence. Higher numbers take priority.|
 | `block`    | Bool   | If `true`, completely blocks connections matching this rule. |
-| `ipv6`     | Bool   | Overrides the global [`ipv6`](app.md#ipv6) for this rule. Unset, the rule follows the global value. See [IPv6](#ipv6). |
+| `ipv6`     | Bool   | Overrides the global [`ipv6`](app.md#ipv6) for this rule. Unset, the rule follows the global value. Ignored in [TUN mode](app.md#ipv6-in-tun-mode). See [IPv6](#ipv6). |
 
 ### IPv6
 
@@ -35,6 +35,8 @@ A rule that sets `ipv6 = false` itself also keeps the connections and datagrams 
 For TCP, the rule is selected before the IPv6 addresses are dropped, from all the addresses, so a rule can be selected by an IPv6 address in its `cidrs` that it then does not connect to.
 
 A rule that does not set `ipv6`, and traffic that matches no rule, still connect to IPv6 literals, even when the global `ipv6` is off. With `ipv6` off, names resolve to IPv4 addresses only. To keep a site on IPv4 in every case, set `ipv6 = false` in its rule.
+
+TUN mode ignores the `ipv6` of rules (see [IPv6 in TUN Mode](app.md#ipv6-in-tun-mode)).
 
 ## Rule Selection
 

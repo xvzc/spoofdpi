@@ -68,18 +68,22 @@ func TestBuildJobs_Linux(t *testing.T) {
 
 	tcs := []struct {
 		name            string
+		ipv6Enabled     bool
 		hasIPv6Egress   bool
 		tunIPv6Disabled bool
 		want            []server.NetworkJob
 	}{
-		{"without IPv6 egress", false, false, ipv4Jobs},
+		{"ipv6 off without IPv6 egress", false, false, false, ipv4Jobs},
+		{"ipv6 off with IPv6 egress adds no IPv6 route", false, true, false, ipv4Jobs},
+		{"ipv6 on without IPv6 egress", true, false, false, ipv4Jobs},
 		{
-			"with IPv6 egress the IPv6 route goes last",
+			"ipv6 on with IPv6 egress the IPv6 route goes last",
+			true,
 			true,
 			false,
 			append(ipv4Jobs, ipv6Job),
 		},
-		{"with IPv6 disabled on the TUN", true, true, ipv4Jobs},
+		{"ipv6 on with IPv6 disabled on the TUN", true, true, true, ipv4Jobs},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -96,6 +100,7 @@ func TestBuildJobs_Linux(t *testing.T) {
 					"0.0.0.0/1",
 					"128.0.0.0/1",
 				},
+				IPv6Enabled:     tc.ipv6Enabled,
 				HasIPv6Egress:   tc.hasIPv6Egress,
 				TunIPv6Disabled: tc.tunIPv6Disabled,
 			}

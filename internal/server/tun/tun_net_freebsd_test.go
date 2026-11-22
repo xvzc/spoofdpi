@@ -52,11 +52,19 @@ func TestBuildJobs_FreeBSD(t *testing.T) {
 
 	tcs := []struct {
 		name          string
+		ipv6Enabled   bool
 		hasIPv6Egress bool
 		want          []server.NetworkJob
 	}{
-		{"without IPv6 egress", false, ipv4Jobs},
-		{"with IPv6 egress the IPv6 route goes last", true, append(ipv4Jobs, ipv6Job)},
+		{"ipv6 off without IPv6 egress", false, false, ipv4Jobs},
+		{"ipv6 off with IPv6 egress adds no IPv6 route", false, true, ipv4Jobs},
+		{"ipv6 on without IPv6 egress", true, false, ipv4Jobs},
+		{
+			"ipv6 on with IPv6 egress the IPv6 route goes last",
+			true,
+			true,
+			append(ipv4Jobs, ipv6Job),
+		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,6 +81,7 @@ func TestBuildJobs_FreeBSD(t *testing.T) {
 					"0.0.0.0/1",
 					"128.0.0.0/1",
 				},
+				IPv6Enabled:   tc.ipv6Enabled,
 				HasIPv6Egress: tc.hasIPv6Egress,
 			}
 

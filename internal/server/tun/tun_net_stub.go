@@ -31,6 +31,7 @@ func NewTUNSystemNetwork(
 	logger zerolog.Logger,
 	defaultRoute *netutil.Route,
 	fibID int,
+	ipv6Enabled bool,
 ) (TUNSystemNetwork, error) {
 	return &tunSystemNetworkStub{logger: logger}, nil
 }

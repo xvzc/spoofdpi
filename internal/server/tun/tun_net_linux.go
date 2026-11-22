@@ -28,6 +28,7 @@ type tunNetworkInfoLinux struct {
 	TunLocalIP       string
 	TunRemoteIP      string
 	RouteTargetCIDRs []string
+	IPv6Enabled      bool
 	HasIPv6Egress    bool
 	TunIPv6Disabled  bool
 }
@@ -94,6 +95,7 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 		TunLocalIP:       tunLocalIP,
 		TunRemoteIP:      tunRemoteIP,
 		RouteTargetCIDRs: routeTargetCIDRs,
+		IPv6Enabled:      sysNet.ipv6Enabled,
 		HasIPv6Egress:    hasIPv6Egress,
 		TunIPv6Disabled:  tunIPv6Disabled,
 	}, nil
@@ -186,9 +188,10 @@ func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 		})
 	}
 
-	// The TUN server refuses IPv6, so applications fall back to IPv4. The
-	// route is optional: IPv4 keeps working without it.
-	if info.HasIPv6Egress && !info.TunIPv6Disabled {
+	// Without --ipv6, IPv6 is left to the system's routes. With it, the TUN
+	// server refuses IPv6, so applications fall back to IPv4. The route is
+	// optional: IPv4 keeps working without it.
+	if info.IPv6Enabled && info.HasIPv6Egress && !info.TunIPv6Disabled {
 		jobs = append(jobs, server.NetworkJob{
 			Description: fmt.Sprintf("add IPv6 route %s via TUN", ipv6CaptureCIDR),
 			Apply: fmt.Sprintf(
@@ -214,14 +217,17 @@ type tunSystemNetworkLinux struct {
 	logger       zerolog.Logger
 	tunDevice    tun.Device
 	defaultRoute *netutil.Route
+	ipv6Enabled  bool
 }
 
 // NewTUNSystemNetwork creates a new TUNSystemNetwork for TUN mode on Linux
-// fibID is ignored on Linux (FreeBSD-specific)
+// fibID is ignored on Linux (FreeBSD-specific). IPv6 is routed into the TUN
+// only when ipv6Enabled is set.
 func NewTUNSystemNetwork(
 	logger zerolog.Logger,
 	defaultRoute *netutil.Route,
 	fibID int,
+	ipv6Enabled bool,
 ) (TUNSystemNetwork, error) {
 	dev, err := createTunDevice()
 	if err != nil {
@@ -232,6 +238,7 @@ func NewTUNSystemNetwork(
 		logger:       logger,
 		tunDevice:    dev,
 		defaultRoute: defaultRoute,
+		ipv6Enabled:  ipv6Enabled,
 	}, nil
 }
 

@@ -344,6 +344,46 @@ func noIPv4RouteError(err error, hasIPv6 bool) error {
 	)
 }
 
+// logTUNNotes logs how TUN mode treats the IPv6 and DNS settings of cfg.
+// hasIPv6Egress tells whether the host has an IPv6 route to the internet.
+func logTUNNotes(logger zerolog.Logger, cfg *config.Config, hasIPv6Egress bool) {
+	if !cfg.IPv6Enabled() && hasIPv6Egress {
+		logger.Warn().Msg(
+			"IPv6 traffic bypasses spoofdpi in TUN mode; " +
+				"enable --ipv6 or disable IPv6 on the system",
+		)
+	}
+	if tunIgnoresSettings(cfg) {
+		logger.Info().Msg("the rules' ipv6 and the dns settings are ignored in TUN mode")
+	}
+}
+
+// tunIgnoresSettings reports whether cfg has settings that the proxy modes
+// apply and TUN mode ignores, as the OS and the applications resolve names
+// and choose the address family there: a rule that sets its own ipv6, or
+// DNS settings other than the defaults.
+func tunIgnoresSettings(cfg *config.Config) bool {
+	defaultDNS := config.DefaultConfig().DNS
+	if !sameDNSSettings(cfg.DNS, defaultDNS) {
+		return true
+	}
+	for _, r := range cfg.Rules {
+		if r.IPv6 != nil || !sameDNSSettings(r.Config.DNS, defaultDNS) {
+			return true
+		}
+	}
+	return false
+}
+
+// sameDNSSettings reports whether a and b have the same DNS settings.
+// QType is not one of them: it follows the ipv6 option.
+func sameDNSSettings(a, b config.DNSOptions) bool {
+	return a.Mode == b.Mode &&
+		a.Addr.String() == b.Addr.String() &&
+		a.HTTPSURL == b.HTTPSURL &&
+		a.Timeout == b.Timeout
+}
+
 func createServer(
 	appctx context.Context,
 	logger zerolog.Logger,
@@ -481,10 +521,13 @@ func createServer(
 			Str("interface", defaultRoute.Iface.Name).
 			Str("gateway", defaultRoute.Gateway.String()).
 			Msg("determined default interface and gateway")
+		_, hasIPv6Egress := netutil.IPv6Egress()
+		logTUNNotes(logger, cfg, hasIPv6Egress)
 		sysNet, err := tun.NewTUNSystemNetwork(
 			logging.WithScope(logger, "sys"),
 			defaultRoute,
 			cfg.App.FreebsdFIB,
+			cfg.IPv6Enabled(),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create sysnet: %w", err)

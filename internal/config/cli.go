@@ -467,8 +467,9 @@ func CreateCommand(
 				&cli.BoolFlag{
 					Name: "ipv6",
 					Usage: fmt.Sprintf(`
-				Enable IPv6 (experimental): DNS lookups ask for IPv6 addresses too.
-				Rules without their own 'ipv6' follow this option. (default: %v)`,
+				Enable IPv6 (experimental): DNS lookups ask for IPv6 addresses too,
+				and tun mode routes IPv6 into the TUN. Rules without their own
+				'ipv6' follow this option. (default: %v)`,
 						defaultCfg.App.IPv6,
 					),
 					OnlyOnce: true,
