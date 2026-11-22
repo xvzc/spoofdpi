@@ -6,15 +6,18 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
+	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/rule"
+	"github.com/xvzc/spoofdpi/internal/server"
 )
 
 type UdpAssociateHandler struct {
@@ -24,9 +27,8 @@ type UdpAssociateHandler struct {
 	ruleSet  *rule.RuleSet
 	cfg      *config.RuntimeConfig
 
-	// resolveUDPAddr resolves the destinations that clients send as domain
-	// names.
-	resolveUDPAddr func(network, address string) (*net.UDPAddr, error)
+	// resolver resolves the destinations that clients send as domain names.
+	resolver dns.Resolver
 }
 
 func NewUdpAssociateHandler(
@@ -43,7 +45,7 @@ func NewUdpAssociateHandler(
 		ruleSet:  ruleSet,
 		cfg:      cfg,
 
-		resolveUDPAddr: net.ResolveUDPAddr,
+		resolver: dns.SystemResolver{},
 	}
 }
 
@@ -133,20 +135,18 @@ func (h *UdpAssociateHandler) Handle(
 			continue
 		}
 
-		// A domain name is resolved first, then matched together with the
-		// address it resolves to.
-		dstHost, _, _ := net.SplitHostPort(dstAddrStr)
-		var dstName string
-		if net.ParseIP(dstHost) == nil {
-			if dstHost == "" {
-				logger.Debug().Msg("dropped udp packet with an empty domain name")
-				continue
-			}
-			dstName = dstHost
+		// parseUDPHeader writes the host and a numeric port.
+		dstHost, dstPortStr, _ := net.SplitHostPort(dstAddrStr)
+		if dstHost == "" {
+			logger.Debug().Msg("dropped udp packet with an empty domain name")
+			continue
 		}
+		dstPort, _ := strconv.Atoi(dstPortStr)
 
-		// Resolve address to construct Destination
-		dstAddr, err := h.resolveUDPAddr("udp", dstAddrStr)
+		// A domain name is resolved first, then matched together with the
+		// address it resolves to. The rule is selected the way it is for
+		// CONNECT, but the system resolver resolves the name to one address.
+		sel, err := server.SelectRule(ctx, h.ruleSet, h.resolver, h.cfg, dstHost, nil)
 		if err != nil {
 			logger.Warn().
 				Err(err).
@@ -154,15 +154,19 @@ func (h *UdpAssociateHandler) Handle(
 				Msg("failed to resolve udp target")
 			continue
 		}
-		if dstAddr.IP == nil || dstAddr.IP.IsUnspecified() {
+		if len(sel.Addrs) == 0 || sel.Addrs[0].IsUnspecified() {
 			logger.Debug().
 				Str("addr", dstAddrStr).
 				Msg("dropped udp packet to an unspecified address")
 			continue
 		}
+		dstAddr := &net.UDPAddr{IP: sel.Addrs[0], Port: dstPort}
 
-		matched, cfg := h.destinationConfig(logger, dstName, dstAddr.IP)
-		if matched != nil && matched.Block {
+		if sel.Rule != nil {
+			logger.Trace().RawJSON("summary", sel.Rule.JSON()).Msg("match")
+		}
+		cfg := sel.Config
+		if sel.Blocked() {
 			// Drop only this datagram; the association stays up for the
 			// client's other destinations.
 			logger.Debug().Str("addr", dstAddrStr).Msg("request is blocked by policy")
@@ -237,39 +241,6 @@ func (h *UdpAssociateHandler) Handle(
 			logger.Warn().Err(err).Msg("failed to write udp to target")
 		}
 	}
-}
-
-// destinationConfig selects the rule for one destination of an
-// association and returns it with the config it applies; matched is nil
-// when no rule matches, and cfg is then the base config. Rules match the
-// way they do for CONNECT: by the resolved address and, when the client
-// sent a domain name (name is empty otherwise), by that name; the
-// higher-priority match wins, the address on a tie.
-func (h *UdpAssociateHandler) destinationConfig(
-	logger zerolog.Logger,
-	name string,
-	addr net.IP,
-) (matched *config.Rule, cfg *config.RuntimeConfig) {
-	if h.ruleSet == nil {
-		return nil, h.cfg
-	}
-
-	var nameMatch *config.Rule
-	if name != "" {
-		nameMatch = h.ruleSet.Search(
-			[]rule.Query{{Type: rule.MatchTypeDomain, Value: name}},
-		)
-	}
-	addrMatch := h.ruleSet.Search(
-		[]rule.Query{{Type: rule.MatchTypeAddr, Value: addr.String()}},
-	)
-	matched = rule.HigherPriority(addrMatch, nameMatch)
-	if matched == nil {
-		return nil, h.cfg
-	}
-
-	logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
-	return matched, &matched.Config
 }
 
 func (h *UdpAssociateHandler) relayInboundUDP(

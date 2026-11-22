@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"net/netip"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -21,144 +22,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/rule"
 )
-
-// udpRule returns a rule whose config is tagged by its UDP fake count.
-func udpRule(
-	name string,
-	priority uint16,
-	domains, cidrs []string,
-	fakePreflight uint8,
-) *config.Rule {
-	r := &config.Rule{
-		Name:     name,
-		Priority: priority,
-		Match:    &config.MatchAttrs{Domains: domains, CIDRs: cidrs},
-	}
-	r.Config.UDP.FakePreflight = fakePreflight
-	return r
-}
-
-func newTestUdpAssociateHandler(
-	t *testing.T,
-	rules ...*config.Rule,
-) *UdpAssociateHandler {
-	t.Helper()
-
-	rs := rule.NewRuleSet()
-	for _, r := range rules {
-		require.NoError(t, rs.Add(r))
-	}
-
-	base := &config.RuntimeConfig{}
-	base.UDP.FakePreflight = 1
-
-	return NewUdpAssociateHandler(zerolog.Nop(), nil, nil, rs, base)
-}
-
-// destinationConfigFor runs h.destinationConfig for a destination host the
-// way Handle does: only a domain name is passed as the name.
-func destinationConfigFor(
-	h *UdpAssociateHandler,
-	host string,
-	addr net.IP,
-) (*config.RuntimeConfig, bool) {
-	var name string
-	if net.ParseIP(host) == nil {
-		name = host
-	}
-	matched, cfg := h.destinationConfig(zerolog.Nop(), name, addr)
-	return cfg, matched != nil && matched.Block
-}
-
-func TestUdpAssociateHandler_DestinationConfig(t *testing.T) {
-	h := newTestUdpAssociateHandler(
-		t,
-		udpRule("addr", 10, nil, []string{"203.0.113.0/24"}, 2),
-		udpRule("domain", 20, []string{"example.com"}, nil, 3),
-		udpRule("low domain", 5, []string{"low.example.org"}, nil, 4),
-	)
-
-	tcs := []struct {
-		name string
-		host string
-		addr string
-		want uint8
-	}{
-		{"address rule matches", "203.0.113.7", "203.0.113.7", 2},
-		{"no rule matches", "198.51.100.7", "198.51.100.7", 1},
-		{"domain rule matches", "example.com", "198.51.100.7", 3},
-		{"higher-priority domain beats address", "example.com", "203.0.113.7", 3},
-		{"higher-priority address beats domain", "low.example.org", "203.0.113.7", 2},
-		{"unmatched domain falls back to base", "other.com", "198.51.100.7", 1},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			cfg, blocked := destinationConfigFor(h, tc.host, net.ParseIP(tc.addr))
-			assert.Equal(t, tc.want, cfg.UDP.FakePreflight)
-			assert.False(t, blocked)
-		})
-	}
-}
-
-func TestUdpAssociateHandler_DestinationConfig_PerDestination(t *testing.T) {
-	h := newTestUdpAssociateHandler(
-		t,
-		udpRule("a", 10, nil, []string{"203.0.113.0/24"}, 2),
-		udpRule("b", 10, nil, []string{"198.51.100.0/24"}, 3),
-	)
-
-	// One association talks to several destinations; each gets its own config.
-	a, _ := destinationConfigFor(h, "203.0.113.7", net.ParseIP("203.0.113.7"))
-	b, _ := destinationConfigFor(h, "198.51.100.7",
-		net.ParseIP("198.51.100.7"),
-	)
-	none, _ := destinationConfigFor(h, "192.0.2.7", net.ParseIP("192.0.2.7"))
-
-	assert.Equal(t, uint8(2), a.UDP.FakePreflight)
-	assert.Equal(t, uint8(3), b.UDP.FakePreflight)
-	assert.Same(t, h.cfg, none)
-}
-
-func TestUdpAssociateHandler_DestinationConfig_Block(t *testing.T) {
-	block := udpRule("block", 10, nil, []string{"203.0.113.0/24"}, 2)
-	block.Block = true
-	h := newTestUdpAssociateHandler(
-		t,
-		block,
-		udpRule("allow domain", 20, []string{"example.com"}, nil, 3),
-	)
-
-	tcs := []struct {
-		name        string
-		host        string
-		addr        string
-		wantBlocked bool
-	}{
-		{"blocking rule matches", "203.0.113.7", "203.0.113.7", true},
-		{"higher-priority rule allows", "example.com", "203.0.113.7", false},
-		{"no rule matches", "198.51.100.7", "198.51.100.7", false},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			_, blocked := destinationConfigFor(h, tc.host, net.ParseIP(tc.addr))
-			assert.Equal(t, tc.wantBlocked, blocked)
-		})
-	}
-}
-
-func TestUdpAssociateHandler_DestinationConfig_NoRuleSet(t *testing.T) {
-	base := &config.RuntimeConfig{}
-	h := NewUdpAssociateHandler(zerolog.Nop(), nil, nil, nil, base)
-
-	cfg, blocked := destinationConfigFor(h, "203.0.113.7",
-		net.ParseIP("203.0.113.7"),
-	)
-
-	assert.Same(t, base, cfg)
-	assert.False(t, blocked)
-}
 
 // udpAssociation is a running UDP ASSOCIATE seen from the client side.
 type udpAssociation struct {
@@ -399,27 +262,24 @@ func TestUdpAssociateHandler_Handle_IdleTimeout(t *testing.T) {
 }
 
 // stubResolver resolves domain names from a fixed table and counts the
-// lookups; address literals resolve as usual and aren't counted.
+// lookups; a name not in the table resolves to no address.
 type stubResolver struct {
 	names   map[string]net.IP
 	lookups atomic.Int32
 }
 
-func (r *stubResolver) resolve(network, address string) (*net.UDPAddr, error) {
-	host, port, err := net.SplitHostPort(address)
-	if err != nil {
-		return nil, err
-	}
-	if net.ParseIP(host) != nil {
-		return net.ResolveUDPAddr(network, address)
-	}
-
+func (r *stubResolver) Resolve(
+	_ context.Context,
+	_ *config.DNSOptions,
+	domain string,
+) ([]netip.Addr, error) {
 	r.lookups.Add(1)
-	p, err := net.LookupPort(network, port)
-	if err != nil {
-		return nil, err
+	ip, ok := r.names[domain]
+	if !ok {
+		return nil, nil
 	}
-	return &net.UDPAddr{IP: r.names[host], Port: p}, nil
+	addr, _ := netip.AddrFromSlice(ip)
+	return []netip.Addr{addr.Unmap()}, nil
 }
 
 func TestUdpAssociateHandler_Handle_NameBlock(t *testing.T) {
@@ -465,7 +325,7 @@ func TestUdpAssociateHandler_Handle_NameBlock(t *testing.T) {
 			h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{}, rules...)
 			dst := startUDPEcho(t)
 			resolver := &stubResolver{names: map[string]net.IP{name: dst.IP}}
-			h.resolveUDPAddr = resolver.resolve
+			h.resolver = resolver
 			a := startUdpAssociation(t, h)
 
 			a.sendToName(t, name, dst.Port, "by name")
@@ -498,7 +358,7 @@ func TestUdpAssociateHandler_Handle_NameBlockOnFlowOpenedByAddr(t *testing.T) {
 	h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{}, blockName)
 	dst := startUDPEcho(t)
 	resolver := &stubResolver{names: map[string]net.IP{name: dst.IP}}
-	h.resolveUDPAddr = resolver.resolve
+	h.resolver = resolver
 	a := startUdpAssociation(t, h)
 
 	// The address opens a flow to the address the name resolves to.
@@ -534,7 +394,7 @@ func TestUdpAssociateHandler_Handle_AddrBlockOnFlowOpenedByName(t *testing.T) {
 	h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{}, rules...)
 	dst := startUDPEcho(t)
 	resolver := &stubResolver{names: map[string]net.IP{name: dst.IP}}
-	h.resolveUDPAddr = resolver.resolve
+	h.resolver = resolver
 	a := startUdpAssociation(t, h)
 
 	// The name's higher-priority allow rule opens the flow.
@@ -555,7 +415,7 @@ func TestUdpAssociateHandler_Handle_InvalidDestination(t *testing.T) {
 	dst := startUDPEcho(t)
 	// "unset.test" resolves to no address.
 	resolver := &stubResolver{names: map[string]net.IP{}}
-	h.resolveUDPAddr = resolver.resolve
+	h.resolver = resolver
 	a := startUdpAssociation(t, h)
 
 	unspecified := &net.UDPAddr{IP: net.IPv4zero.To4(), Port: dst.Port}
@@ -667,7 +527,7 @@ func TestUdpAssociateHandler_Handle_RulePerDatagram(t *testing.T) {
 		h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{}, rules...)
 		dst := startUDPEcho(t)
 		resolver := &stubResolver{names: map[string]net.IP{nameA: dst.IP, nameB: dst.IP}}
-		h.resolveUDPAddr = resolver.resolve
+		h.resolver = resolver
 		return h, pool, dst
 	}
 
@@ -782,7 +642,7 @@ func TestUdpAssociateHandler_Handle_ReplySourceIsDestination(t *testing.T) {
 	h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{}, nameRule)
 	dst := startUDPEcho(t)
 	resolver := &stubResolver{names: map[string]net.IP{name: dst.IP}}
-	h.resolveUDPAddr = resolver.resolve
+	h.resolver = resolver
 	a := startUdpAssociation(t, h)
 
 	// Replies on the flow to dst carry dst as the source in the SOCKS5
