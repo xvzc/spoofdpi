@@ -42,8 +42,20 @@ func startBind(
 	opts ...func(*BindHandler),
 ) *bindSession {
 	t.Helper()
+	return startBindOn(t, "127.0.0.1:0", req, opts...)
+}
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+// startBindOn is startBind with the control connection made to a listener
+// on listenAddr.
+func startBindOn(
+	t *testing.T,
+	listenAddr string,
+	req *proto.SOCKS5Request,
+	opts ...func(*BindHandler),
+) *bindSession {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", listenAddr)
 	require.NoError(t, err)
 	defer func() { _ = ln.Close() }()
 
@@ -87,16 +99,48 @@ func readBindReply(t *testing.T, conn net.Conn) (byte, *net.TCPAddr) {
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
 	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 
-	// VER REP RSV ATYP(IPv4) ADDR(4) PORT(2)
-	reply := make([]byte, 10)
-	_, err := io.ReadFull(conn, reply)
-	require.NoError(t, err)
-	require.Equal(t, byte(proto.SOCKS5AddrTypeIPv4), reply[3])
+	code, ip, port := readSOCKS5Reply(t, conn)
+	return code, &net.TCPAddr{IP: ip, Port: port}
+}
 
-	return reply[1], &net.TCPAddr{
-		IP:   net.IP(reply[4:8]),
-		Port: int(binary.BigEndian.Uint16(reply[8:10])),
+// readSOCKS5Reply reads a SOCKS5 reply from conn and returns its code and
+// address. The address is 4 bytes long when it is sent as an IPv4 address
+// (ATYP 1), and 16 bytes long when it is sent as an IPv6 address (ATYP 4).
+func readSOCKS5Reply(t *testing.T, conn net.Conn) (code byte, ip net.IP, port int) {
+	t.Helper()
+
+	// VER REP RSV ATYP
+	head := make([]byte, 4)
+	_, err := io.ReadFull(conn, head)
+	require.NoError(t, err)
+	switch head[3] {
+	case proto.SOCKS5AddrTypeIPv4:
+		ip = make(net.IP, net.IPv4len)
+	case proto.SOCKS5AddrTypeIPv6:
+		ip = make(net.IP, net.IPv6len)
+	default:
+		t.Fatalf("unexpected reply address type %d", head[3])
 	}
+	_, err = io.ReadFull(conn, ip)
+	require.NoError(t, err)
+
+	portBuf := make([]byte, 2)
+	_, err = io.ReadFull(conn, portBuf)
+	require.NoError(t, err)
+
+	return head[1], ip, int(binary.BigEndian.Uint16(portBuf))
+}
+
+// listenIPv6Loopback returns a TCP listener on [::1], or skips the test
+// when the host has no IPv6 loopback.
+func listenIPv6Loopback(t *testing.T) net.Listener {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "[::1]:0")
+	if err != nil {
+		t.Skipf("no IPv6 loopback: %v", err)
+	}
+	return ln
 }
 
 // connectIncoming connects to the BIND listener as the application server
@@ -163,6 +207,32 @@ func TestBindHandler_Handle_RepliesAndRelay(t *testing.T) {
 	remote, code, addr := s.connectIncoming(t)
 	assert.Equal(t, byte(proto.SOCKS5RCodeSuccess), code)
 	assert.Equal(t, remote.LocalAddr().String(), addr.String())
+
+	_, err := s.client.Write([]byte("ping"))
+	require.NoError(t, err)
+	assert.Equal(t, "ping", readString(t, remote, "ping"))
+
+	_, err = remote.Write([]byte("pong"))
+	require.NoError(t, err)
+	assert.Equal(t, "pong", readString(t, s.client, "pong"))
+}
+
+func TestBindHandler_Handle_IPv6(t *testing.T) {
+	ln := listenIPv6Loopback(t)
+	addr := ln.Addr().String()
+	_ = ln.Close()
+
+	s := startBindOn(t, addr, &proto.SOCKS5Request{})
+
+	// The first reply advertises the listener on ::1 as an IPv6 address.
+	assert.Len(t, s.addr.IP, net.IPv6len, "sent as ATYP 4")
+	assert.True(t, s.addr.IP.Equal(net.IPv6loopback))
+	assert.NotZero(t, s.addr.Port)
+
+	remote, code, rAddr := s.connectIncoming(t)
+	assert.Equal(t, byte(proto.SOCKS5RCodeSuccess), code)
+	assert.Len(t, rAddr.IP, net.IPv6len, "sent as ATYP 4")
+	assert.Equal(t, remote.LocalAddr().String(), rAddr.String())
 
 	_, err := s.client.Write([]byte("ping"))
 	require.NoError(t, err)

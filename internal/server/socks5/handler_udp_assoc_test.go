@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"io"
 	"net"
 	"net/netip"
 	"sync"
@@ -42,6 +41,18 @@ func startUdpAssociation(t *testing.T, h *UdpAssociateHandler) *udpAssociation {
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
+	return startUdpAssociationOn(t, h, ln)
+}
+
+// startUdpAssociationOn is startUdpAssociation with the TCP connection
+// made to ln, which it closes. The client's UDP socket is on ln's IP.
+func startUdpAssociationOn(
+	t *testing.T,
+	h *UdpAssociateHandler,
+	ln net.Listener,
+) *udpAssociation {
+	t.Helper()
+
 	defer func() { _ = ln.Close() }()
 
 	ctrl, err := net.Dial("tcp", ln.Addr().String())
@@ -65,24 +76,19 @@ func startUdpAssociation(t *testing.T, h *UdpAssociateHandler) *udpAssociation {
 	}
 	t.Cleanup(end)
 
-	// VER REP RSV ATYP(IPv4) ADDR(4) PORT(2)
-	reply := make([]byte, 10)
-	_, err = io.ReadFull(ctrl, reply)
-	require.NoError(t, err)
-	require.Equal(t, byte(proto.SOCKS5RCodeSuccess), reply[1])
+	code, relayIP, relayPort := readSOCKS5Reply(t, ctrl)
+	require.Equal(t, byte(proto.SOCKS5RCodeSuccess), code)
 
-	client, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	lnIP := ln.Addr().(*net.TCPAddr).IP
+	client, err := net.ListenUDP("udp", &net.UDPAddr{IP: lnIP})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 
 	return &udpAssociation{
 		client: client,
-		relay: &net.UDPAddr{
-			IP:   net.IP(reply[4:8]),
-			Port: int(binary.BigEndian.Uint16(reply[8:10])),
-		},
-		conn: c,
-		end:  end,
+		relay:  &net.UDPAddr{IP: relayIP, Port: relayPort},
+		conn:   c,
+		end:    end,
 	}
 }
 
@@ -191,6 +197,20 @@ func newRelayingUdpAssociateHandler(
 		rs,
 		base,
 	)
+}
+
+func TestUdpAssociateHandler_Handle_IPv6(t *testing.T) {
+	echo := startUDPEcho(t)
+	h := newRelayingUdpAssociateHandler(t, &config.RuntimeConfig{})
+
+	a := startUdpAssociationOn(t, h, listenIPv6Loopback(t))
+
+	// The reply advertises the relay on ::1 as an IPv6 address.
+	assert.Len(t, a.relay.IP, net.IPv6len, "sent as ATYP 4")
+	assert.True(t, a.relay.IP.Equal(net.IPv6loopback))
+
+	a.send(t, echo, "ping")
+	assert.Equal(t, "ping", a.receive(t))
 }
 
 func TestUdpAssociateHandler_Handle_BlockedDestination(t *testing.T) {

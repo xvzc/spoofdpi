@@ -150,21 +150,21 @@ func (r *SOCKS5Reply) Port(port int) *SOCKS5Reply {
 	return r
 }
 
+// Write writes r. BindIP is sent as an IPv4 address (ATYP 1) when it is
+// IPv4 or IPv4-mapped, as an IPv6 address (ATYP 4) otherwise, and as
+// 0.0.0.0 when it is nil.
 func (r *SOCKS5Reply) Write(w io.Writer) error {
-	buf := make([]byte, 0, 10)
-	buf = append(buf, SOCKSVersion, r.Rep, 0x00, SOCKS5AddrTypeIPv4)
-
-	// Use To4() to ensure 4 bytes if it's an IPv4 address stored in IPv6 format
+	atyp, addr := byte(SOCKS5AddrTypeIPv4), net.IPv4zero.To4()
 	if ip4 := r.BindIP.To4(); ip4 != nil {
-		buf = append(buf, ip4...)
-	} else {
-		// Fallback or Handle IPv6
-		buf = append(buf, make([]byte, 4)...)
+		addr = ip4
+	} else if ip6 := r.BindIP.To16(); ip6 != nil {
+		atyp, addr = SOCKS5AddrTypeIPv6, ip6
 	}
 
-	portBuf := make([]byte, 2)
-	binary.BigEndian.PutUint16(portBuf, uint16(r.BindPort))
-	buf = append(buf, portBuf...)
+	buf := make([]byte, 0, 4+len(addr)+2)
+	buf = append(buf, SOCKSVersion, r.Rep, 0x00, atyp)
+	buf = append(buf, addr...)
+	buf = binary.BigEndian.AppendUint16(buf, uint16(r.BindPort))
 
 	_, err := w.Write(buf)
 	return err
