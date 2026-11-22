@@ -42,7 +42,6 @@ func TestHopPolicyTTL(t *testing.T) {
 			HopEstimate{},
 			11,
 		},
-		{"unknown server", none, HopEstimate{Source: HopSourceNone}, 254},
 		{"at least 1", none, learned(0), 1},
 		{
 			"offset applies to learned counts",
@@ -86,12 +85,6 @@ func TestHopPolicyTTL(t *testing.T) {
 			learned(43),
 			42,
 		},
-		{
-			"unknown server is capped by max",
-			HopPolicy{Default: 8, Max: 20},
-			HopEstimate{Source: HopSourceNone},
-			19,
-		},
 	}
 
 	for _, tc := range tcs {
@@ -117,5 +110,4 @@ func TestHopPolicyHops(t *testing.T) {
 		p.Hops(HopEstimate{Hops: 16, Source: HopSourceLearnedOther}),
 	)
 	assert.Equal(t, uint8(8), p.Hops(HopEstimate{}))
-	assert.Equal(t, uint8(255), p.Hops(HopEstimate{Source: HopSourceNone}))
 }

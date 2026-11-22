@@ -54,15 +54,13 @@ type HopEntry struct {
 type HopSource uint8
 
 const (
-	// HopSourceDefault: no hop count was learned for the IP, so the
-	// configured default applies.
+	// HopSourceDefault: no hop count was learned for the IP, or it is not
+	// in the store, so the configured default applies.
 	HopSourceDefault HopSource = iota
 	// HopSourceLearned: learned over the protocol it was looked up for.
 	HopSourceLearned
 	// HopSourceLearnedOther: learned over the other protocol only.
 	HopSourceLearnedOther
-	// HopSourceNone: the IP is not in the store over either protocol.
-	HopSourceNone
 )
 
 func (s HopSource) String() string {
@@ -71,8 +69,6 @@ func (s HopSource) String() string {
 		return "learned"
 	case HopSourceLearnedOther:
 		return "learned-other"
-	case HopSourceNone:
-		return "none"
 	default:
 		return "default"
 	}
@@ -147,20 +143,15 @@ func (s *HopStore) Learn(
 }
 
 // Lookup returns the hop count to ip over p: the one learned over p, or
-// else the one learned over the other protocol, or else HopSourceDefault
-// if ip is in the store, and HopSourceNone if it is not.
+// else the one learned over the other protocol, or else HopSourceDefault,
+// whether ip is in the store or not.
 func (s *HopStore) Lookup(p Proto, ip net.IP) HopEstimate {
 	ipKey := netutil.NewIPKey(ip)
-	own, ownOK := s.entries.Get(HopKey{Proto: p, IP: ipKey})
-	if own.Learned {
+	if own, _ := s.entries.Get(HopKey{Proto: p, IP: ipKey}); own.Learned {
 		return HopEstimate{Hops: own.Hops, Source: HopSourceLearned}
 	}
-	other, otherOK := s.entries.Get(HopKey{Proto: p.other(), IP: ipKey})
-	if other.Learned {
+	if other, _ := s.entries.Get(HopKey{Proto: p.other(), IP: ipKey}); other.Learned {
 		return HopEstimate{Hops: other.Hops, Source: HopSourceLearnedOther}
 	}
-	if ownOK || otherOK {
-		return HopEstimate{Source: HopSourceDefault}
-	}
-	return HopEstimate{Source: HopSourceNone}
+	return HopEstimate{Source: HopSourceDefault}
 }

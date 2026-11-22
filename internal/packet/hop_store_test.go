@@ -13,14 +13,14 @@ func TestHopStore_LookupPerProtocol(t *testing.T) {
 	server := net.ParseIP("203.0.113.1")
 
 	s := newTestHopStore()
-	assert.Equal(t, HopEstimate{Source: HopSourceNone}, s.Lookup(ProtoTCP, server),
-		"unknown server")
+	assert.Equal(t, HopEstimate{Source: HopSourceDefault}, s.Lookup(ProtoTCP, server),
+		"a server not in the store gets the default, like an unlearned one")
 
 	s.Register(ProtoTCP, []net.IP{server})
 	assert.Equal(t, HopEstimate{Source: HopSourceDefault}, s.Lookup(ProtoTCP, server),
 		"registered server has no hop count until learned")
 	assert.Equal(t, HopEstimate{Source: HopSourceDefault}, s.Lookup(ProtoUDP, server),
-		"the IP is in the store over the other protocol")
+		"not learned over either protocol")
 
 	prev, registered := s.Learn(ProtoTCP, server, 12)
 	assert.True(t, registered)
@@ -89,7 +89,7 @@ func TestHopStore_LearnIgnoresUnregistered(t *testing.T) {
 	s := newTestHopStore()
 	_, registered := s.Learn(ProtoTCP, server, 12)
 	assert.False(t, registered)
-	assert.Equal(t, HopSourceNone, s.Lookup(ProtoTCP, server).Source)
+	assert.Equal(t, HopEstimate{Source: HopSourceDefault}, s.Lookup(ProtoTCP, server))
 
 	s.Register(ProtoUDP, []net.IP{server})
 	_, registered = s.Learn(ProtoTCP, server, 12)
@@ -122,5 +122,4 @@ func TestHopSource_String(t *testing.T) {
 	assert.Equal(t, "learned", HopSourceLearned.String())
 	assert.Equal(t, "learned-other", HopSourceLearnedOther.String())
 	assert.Equal(t, "default", HopSourceDefault.String())
-	assert.Equal(t, "none", HopSourceNone.String())
 }

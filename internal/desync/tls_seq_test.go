@@ -331,7 +331,6 @@ func TestOnLocalLink(t *testing.T) {
 		{packet.HopEstimate{Hops: 0, Source: packet.HopSourceLearnedOther}, true},
 		{packet.HopEstimate{Hops: 1, Source: packet.HopSourceLearned}, false},
 		{packet.HopEstimate{Hops: 0, Source: packet.HopSourceDefault}, false},
-		{packet.HopEstimate{Hops: 0, Source: packet.HopSourceNone}, false},
 	}
 
 	for _, tc := range tcs {

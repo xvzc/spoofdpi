@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
+	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
 // fakeTTLCases are fake TTLs for the connection options a connection was
@@ -108,6 +109,52 @@ func TestUDPDesync_FakeTTLFromConnOptions(t *testing.T) {
 			assert.Equal(t, tc.want, w.ttl)
 		})
 	}
+}
+
+// TestDesync_UnknownServerGetsDefaultTTL checks that a server missing from
+// the hop store, never registered or evicted, gets the fake TTL of an
+// unlearned one rather than one that reaches it.
+func TestDesync_UnknownServerGetsDefaultTTL(t *testing.T) {
+	const want = 7 // baseConnOpts' default hop count minus 1
+
+	t.Run("tls", func(t *testing.T) {
+		w := &recordingWriter{}
+		d := NewTLSDesyncer(zerolog.Nop(), w, packet.NewHopStore(), nil)
+		opts := tlsOpts(1, 100)
+		opts.SynAckTimeout = 0
+
+		_, err := d.Desync(
+			context.Background(),
+			newStubConn("203.0.113.1"),
+			fakeMsg(),
+			opts,
+			baseConnOpts(),
+		)
+		require.NoError(t, err)
+		require.NotEmpty(t, w.packets)
+		for _, p := range w.packets {
+			assert.Equal(t, uint8(want), p.ttl)
+		}
+	})
+
+	t.Run("udp", func(t *testing.T) {
+		conn := udpConn{
+			local:  &net.UDPAddr{IP: net.ParseIP("192.168.1.11"), Port: 50000},
+			remote: &net.UDPAddr{IP: net.ParseIP("203.0.113.1"), Port: 443},
+		}
+		w := &udpWriter{}
+		d := NewUDPDesyncer(zerolog.Nop(), w, packet.NewHopStore())
+
+		_, err := d.Desync(
+			context.Background(),
+			conn,
+			&config.UDPOptions{FakePreflight: 1, FakePacket: make([]byte, 8)},
+			baseConnOpts(),
+		)
+		require.NoError(t, err)
+		require.Equal(t, 1, w.n)
+		assert.Equal(t, uint8(want), w.ttl)
+	})
 }
 
 // TestDesync_LocalLinkIgnoresRuleHopCount checks that a server learned on

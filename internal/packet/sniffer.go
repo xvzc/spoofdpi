@@ -15,23 +15,17 @@ type HopPolicy struct {
 }
 
 // Hops returns the hop count that the TTL for est starts from: the learned
-// one, Default if none was learned, or 255 if the server is not in the
-// store.
+// one, or Default if none was learned.
 func (p HopPolicy) Hops(est HopEstimate) uint8 {
-	switch {
-	case est.Learned():
+	if est.Learned() {
 		return est.Hops
-	case est.Source == HopSourceDefault:
-		return p.Default
-	default:
-		return 255
 	}
+	return p.Default
 }
 
 // TTL returns the TTL for fake packets to a server whose hop count
 // estimate is est: the learned hop count plus Offset, or Default if it was
-// not learned, or 255 if the server is not in the store, clamped to
-// [Min, Max], minus 1. The result is at least 1.
+// not learned, clamped to [Min, Max], minus 1. The result is at least 1.
 func (p HopPolicy) TTL(est HopEstimate) uint8 {
 	hops := int(p.Hops(est))
 	if est.Learned() {
