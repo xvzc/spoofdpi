@@ -12,99 +12,204 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
+	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/proto"
+	"github.com/xvzc/spoofdpi/internal/rule"
 )
 
 type HTTPSHandler struct {
-	logger   zerolog.Logger
-	desyncer *desync.TLSDesyncer
-	cfg      *config.RuntimeConfig
+	logger     zerolog.Logger
+	desyncer   *desync.TLSDesyncer
+	resolver   dns.Resolver
+	ruleSet    *rule.RuleSet
+	listenAddr net.TCPAddr
+	cfg        *config.RuntimeConfig
 }
 
 func NewHTTPSHandler(
 	logger zerolog.Logger,
 	desyncer *desync.TLSDesyncer,
+	resolver dns.Resolver,
+	ruleSet *rule.RuleSet,
+	listenAddr net.TCPAddr,
 	cfg *config.RuntimeConfig,
 ) *HTTPSHandler {
 	return &HTTPSHandler{
-		logger:   logger,
-		desyncer: desyncer,
-		cfg:      cfg,
+		logger:     logger,
+		desyncer:   desyncer,
+		resolver:   resolver,
+		ruleSet:    ruleSet,
+		listenAddr: listenAddr,
+		cfg:        cfg,
 	}
 }
 
-func (h *HTTPSHandler) HandleRequest(
+// Handle serves one CONNECT request read from lConn.
+func (h *HTTPSHandler) Handle(
 	ctx context.Context,
 	lConn net.Conn,
-	dst *netutil.Destination,
-	rule *config.Rule,
+	req *proto.HTTPRequest,
 ) error {
-	cfg := h.cfg
-	if rule != nil {
-		cfg = &rule.Config
-	}
+	c := &httpsConn{h: h, conn: lConn, req: req}
+	return c.serve(ctx)
+}
 
-	h.desyncer.PrepareHopTrack(dst.Addrs, &cfg.HTTPS)
+// httpsConn is one CONNECT request. It owns the remote connection it dials
+// and closes it when serve returns.
+type httpsConn struct {
+	h      *HTTPSHandler
+	conn   net.Conn
+	req    *proto.HTTPRequest
+	logger zerolog.Logger
 
-	logger := logging.WithLocalScope(ctx, h.logger, "https")
+	dst     *netutil.Destination
+	matched *config.Rule
+	cfg     *config.RuntimeConfig
+	rConn   net.Conn
+}
 
-	// 1. Send 200 Connection Established
-	if err := proto.HTTPConnectionEstablishedResponse().Write(lConn); err != nil {
-		if !netutil.IsConnectionResetByPeer(err) && !errors.Is(err, io.EOF) {
-			logger.Trace().Err(err).Msgf("proxy handshake error")
-			return fmt.Errorf("failed to handle proxy handshake: %w", err)
-		}
+func (c *httpsConn) serve(ctx context.Context) error {
+	c.logger = logging.WithLocalScope(ctx, c.h.logger, "https")
+
+	if !c.selectDestination(ctx) || !c.checkDestination() {
 		return nil
 	}
-	logger.Trace().Msgf("sent 200 connection established -> %s", lConn.RemoteAddr())
 
-	// 2. Dial remote
-	rConn, err := netutil.DialFastest(ctx, dst, "tcp", cfg.Conn.TCPTimeout, nil)
+	c.h.desyncer.PrepareHopTrack(c.dst.Addrs, &c.cfg.HTTPS)
+
+	proceed, err := c.reply()
+	if err != nil || !proceed {
+		return err
+	}
+
+	if err := c.dial(ctx); err != nil {
+		return err
+	}
+	defer netutil.CloseConns(c.rConn)
+
+	c.logger.Debug().Msgf("new remote conn -> %s", c.rConn.RemoteAddr())
+
+	proceed, err = c.desync(ctx)
+	if err != nil || !proceed {
+		return err
+	}
+
+	return c.tunnel(ctx)
+}
+
+// selectDestination resolves the request's destination and selects its
+// rule. It writes the failure reply and reports false when the request
+// names no usable destination.
+func (c *httpsConn) selectDestination(ctx context.Context) bool {
+	host := c.req.ExtractHost()
+	port, err := c.req.ExtractPort()
+	if err != nil {
+		c.logger.Warn().Str("host", c.req.Host).Msg("failed to extract port")
+		_ = proto.HTTPBadRequestResponse().Write(c.conn)
+		return false
+	}
+
+	c.dst, c.matched, c.cfg, err = resolveDestination(
+		ctx, c.logger, c.h.resolver, c.h.ruleSet, c.h.cfg, host, port,
+	)
+	if err != nil {
+		_ = proto.HTTPBadGatewayResponse().Write(c.conn)
+		c.logger.Error().Err(err).Msgf("dns lookup failed for %s", host)
+		return false
+	}
+
+	return true
+}
+
+// checkDestination writes a 403 for a destination that is the proxy itself,
+// and reports false when the selected rule blocks the destination.
+func (c *httpsConn) checkDestination() bool {
+	// Avoid recursively querying self.
+	// BUG: the request goes on after the 403 reply.
+	ok, err := c.dst.IsValid(&c.h.listenAddr)
+	if err != nil {
+		c.logger.Debug().Err(err).Msg("error validating dst addrs")
+		if !ok {
+			_ = proto.HTTPForbiddenResponse().Write(c.conn)
+		}
+	}
+
+	if c.matched != nil && c.matched.Block {
+		c.logger.Debug().Msg("request is blocked by policy")
+		return false
+	}
+
+	return true
+}
+
+// reply sends 200 Connection Established. It reports false, without an
+// error, when the client has gone away.
+func (c *httpsConn) reply() (bool, error) {
+	if err := proto.HTTPConnectionEstablishedResponse().Write(c.conn); err != nil {
+		if !netutil.IsConnectionResetByPeer(err) && !errors.Is(err, io.EOF) {
+			c.logger.Trace().Err(err).Msgf("proxy handshake error")
+			return false, fmt.Errorf("failed to handle proxy handshake: %w", err)
+		}
+		return false, nil
+	}
+	c.logger.Trace().Msgf("sent 200 connection established -> %s", c.conn.RemoteAddr())
+
+	return true, nil
+}
+
+func (c *httpsConn) dial(ctx context.Context) error {
+	rConn, err := netutil.DialFastest(ctx, c.dst, "tcp", c.cfg.Conn.TCPTimeout, nil)
 	if err != nil {
 		return err
 	}
-	defer netutil.CloseConns(rConn)
+	c.rConn = rConn
 
-	logger.Debug().Msgf("new remote conn -> %s", rConn.RemoteAddr())
+	return nil
+}
 
-	// 3. Read ClientHello
-	tlsMsg, err := proto.ReadTLSMessage(lConn)
+// desync reads the client's ClientHello and sends it to the remote with
+// desync. It reports false, without an error, when the client closes before
+// sending a whole message or doesn't start with a ClientHello.
+func (c *httpsConn) desync(ctx context.Context) (bool, error) {
+	tlsMsg, err := proto.ReadTLSMessage(c.conn)
 	if err != nil {
 		if err == io.EOF || err.Error() == "unexpected EOF" {
-			return nil
+			return false, nil
 		}
-		logger.Trace().Err(err).Msgf("failed to read first message from client")
-		return err
+		c.logger.Trace().Err(err).Msgf("failed to read first message from client")
+		return false, err
 	}
 
-	logger.Debug().
+	c.logger.Debug().
 		Int("len", tlsMsg.Len()).
-		Msgf("client hello received <- %s", lConn.RemoteAddr())
+		Msgf("client hello received <- %s", c.conn.RemoteAddr())
 
 	if !tlsMsg.IsClientHello() {
-		logger.Trace().Int("len", tlsMsg.Len()).Msg("not a client hello. aborting")
-		return nil
+		c.logger.Trace().Int("len", tlsMsg.Len()).Msg("not a client hello. aborting")
+		return false, nil
 	}
 
-	// 4. Send ClientHello with desync
-	n, err := h.desyncer.Desync(ctx, rConn, tlsMsg, &cfg.HTTPS, &cfg.Conn)
+	n, err := c.h.desyncer.Desync(ctx, c.rConn, tlsMsg, &c.cfg.HTTPS, &c.cfg.Conn)
 	if err != nil {
-		return fmt.Errorf("failed to send client hello: %w", err)
+		return false, fmt.Errorf("failed to send client hello: %w", err)
 	}
 
-	logger.Debug().Int("len", n).Msgf("sent client hello -> %s", rConn.RemoteAddr())
+	c.logger.Debug().Int("len", n).Msgf("sent client hello -> %s", c.rConn.RemoteAddr())
 
-	// 5. Tunnel
+	return true, nil
+}
+
+func (c *httpsConn) tunnel(ctx context.Context) error {
 	resCh := make(chan netutil.TransferResult, 2)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	startedAt := time.Now()
-	go netutil.TunnelConns(ctx, resCh, lConn, rConn, netutil.TunnelDirOut)
-	go netutil.TunnelConns(ctx, resCh, rConn, lConn, netutil.TunnelDirIn)
+	go netutil.TunnelConns(ctx, resCh, c.conn, c.rConn, netutil.TunnelDirOut)
+	go netutil.TunnelConns(ctx, resCh, c.rConn, c.conn, netutil.TunnelDirIn)
 
 	handleErrs := func(errs []error) error {
 		if len(errs) == 0 {
@@ -118,10 +223,10 @@ func (h *HTTPSHandler) HandleRequest(
 
 	return netutil.WaitForTunnelCompletion(
 		ctx,
-		logger,
+		c.logger,
 		resCh,
 		startedAt,
-		netutil.DescribeRoute(lConn, rConn),
+		netutil.DescribeRoute(c.conn, c.rConn),
 		handleErrs,
 	)
 }

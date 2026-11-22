@@ -382,16 +382,22 @@ func createServer(
 	case config.AppModeHTTP:
 		return http.NewHTTPProxy(
 			logging.WithScope(logger, "srv"),
-			http.NewHTTPHandler(logging.WithScope(logger, "hnd")),
+			http.NewHTTPHandler(
+				logging.WithScope(logger, "hnd"),
+				resolver,
+				ruleSet,
+				cfg.App.ListenAddr,
+				&cfg.RuntimeConfig,
+			),
 			http.NewHTTPSHandler(
 				logging.WithScope(logger, "hnd"),
 				tlsDesyncer,
+				resolver,
+				ruleSet,
+				cfg.App.ListenAddr,
 				&cfg.RuntimeConfig,
 			),
-			resolver,
-			ruleSet,
 			cfg.App.ListenAddr,
-			&cfg.RuntimeConfig,
 		), nil
 
 	case config.AppModeSOCKS5:

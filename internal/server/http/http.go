@@ -8,12 +8,9 @@ import (
 	"net"
 
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/config"
-	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/proto"
-	"github.com/xvzc/spoofdpi/internal/rule"
 	"github.com/xvzc/spoofdpi/internal/server"
 )
 
@@ -22,10 +19,7 @@ type HTTPProxy struct {
 
 	httpHandler  *HTTPHandler
 	httpsHandler *HTTPSHandler
-	resolver     dns.Resolver
-	ruleSet      *rule.RuleSet
 	listenAddr   net.TCPAddr
-	cfg          *config.RuntimeConfig
 
 	listener *net.TCPListener
 	conns    server.ConnTracker
@@ -35,19 +29,13 @@ func NewHTTPProxy(
 	logger zerolog.Logger,
 	httpHandler *HTTPHandler,
 	httpsHandler *HTTPSHandler,
-	resolver dns.Resolver,
-	ruleSet *rule.RuleSet,
 	listenAddr net.TCPAddr,
-	cfg *config.RuntimeConfig,
 ) server.Server {
 	return &HTTPProxy{
 		logger:       logger,
 		httpHandler:  httpHandler,
 		httpsHandler: httpsHandler,
-		resolver:     resolver,
-		ruleSet:      ruleSet,
 		listenAddr:   listenAddr,
-		cfg:          cfg,
 	}
 }
 
@@ -142,59 +130,16 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	host := req.ExtractHost()
-	dstPort, err := req.ExtractPort()
-	if err != nil {
-		logger.Warn().Str("host", req.Host).Msg("failed to extract port")
-		_ = proto.HTTPBadRequestResponse().Write(conn)
-
-		return
-	}
-
 	logger.Debug().
 		Str("method", req.Method).
 		Str("from", conn.RemoteAddr().String()).
 		Msg("new request")
 
-	addrs, hostRule, err := p.resolveHost(ctx, logger, host)
-	if err != nil {
-		_ = proto.HTTPBadGatewayResponse().Write(conn)
-		logger.Error().Err(err).Msgf("dns lookup failed for %s", host)
-
-		return
-	}
-
-	matched, _ := server.SelectRule(p.ruleSet, p.cfg, "", addrs, hostRule)
-
-	dst := &netutil.Destination{
-		Host:  host,
-		Addrs: addrs,
-		Port:  dstPort,
-	}
-
-	// Avoid recursively querying self.
-	ok, err := dst.IsValid(&p.listenAddr)
-	if err != nil {
-		logger.Debug().Err(err).Msg("error validating dst addrs")
-		if !ok {
-			_ = proto.HTTPForbiddenResponse().Write(conn)
-		}
-	}
-
-	if matched != nil && logger.GetLevel() == zerolog.TraceLevel {
-		logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
-	}
-
-	if matched != nil && matched.Block {
-		logger.Debug().Msg("request is blocked by policy")
-		return
-	}
-
 	var handleErr error
 	if req.IsConnectMethod() {
-		handleErr = p.httpsHandler.HandleRequest(ctx, conn, dst, matched)
+		handleErr = p.httpsHandler.Handle(ctx, conn, req)
 	} else {
-		handleErr = p.httpHandler.HandleRequest(ctx, conn, req, dst, matched)
+		handleErr = p.httpHandler.Handle(ctx, conn, req)
 	}
 
 	if handleErr == nil { // Early exit if no error found
@@ -202,31 +147,4 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 	}
 
 	logger.Warn().Err(handleErr).Msg("error handling request")
-}
-
-// resolveHost returns the addresses of host: host itself when it is an IP
-// literal, else the addresses p.resolver resolves it to with the DNS options
-// of the domain rule it matches, else with the base ones. It also returns
-// that domain rule, nil for an IP literal or when none matches.
-func (p *HTTPProxy) resolveHost(
-	ctx context.Context,
-	logger zerolog.Logger,
-	host string,
-) ([]net.IP, *config.Rule, error) {
-	if ip := net.ParseIP(host); ip != nil {
-		logger.Trace().Msgf("skipping dns lookup for non-domain host %q", host)
-		return []net.IP{ip}, nil, nil
-	}
-	if host == "" {
-		return nil, nil, errors.New("no host to look up")
-	}
-
-	// Matching the host alone gives the DNS options to resolve it with.
-	hostRule, hostCfg := server.SelectRule(p.ruleSet, p.cfg, host, nil)
-	resolved, err := p.resolver.Resolve(ctx, &hostCfg.DNS, host)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return netutil.IPsFromAddrs(resolved), hostRule, nil
 }

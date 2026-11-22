@@ -110,16 +110,16 @@ func newTestProxy(
 ) *HTTPProxy {
 	return NewHTTPProxy(
 		logger,
-		NewHTTPHandler(logger),
+		NewHTTPHandler(logger, resolver, rs, listenAddr, base),
 		NewHTTPSHandler(
 			logger,
 			desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil),
+			resolver,
+			rs,
+			listenAddr,
 			base,
 		),
-		resolver,
-		rs,
 		listenAddr,
-		base,
 	).(*HTTPProxy)
 }
 
