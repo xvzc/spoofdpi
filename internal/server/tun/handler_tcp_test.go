@@ -118,7 +118,7 @@ func TestTCPHandler_Handle_Block(t *testing.T) {
 
 			h := NewTCPHandler(
 				zerolog.Nop(),
-				desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil),
+				desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
 				rs,
 				&config.RuntimeConfig{},
 			)
@@ -299,7 +299,7 @@ func TestTCPHandler_Handle_AppliedConfig(t *testing.T) {
 			hops := &hopRegistrar{}
 			h := NewTCPHandler(
 				zerolog.Nop(),
-				desync.NewTLSDesyncer(zerolog.Nop(), nil, hops, nil),
+				desync.NewTLSDesyncer(zerolog.Nop(), nil, hops, nil, nil),
 				rs,
 				&config.RuntimeConfig{},
 			)

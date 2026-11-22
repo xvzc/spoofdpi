@@ -7,6 +7,8 @@ import (
 	"github.com/xvzc/spoofdpi/internal/capture"
 )
 
+var _ FakeCapability = (*UDPStack)(nil)
+
 // UDPStack is what fake UDP packets are sent with: a sniffer that learns
 // hop counts, and a writer that injects crafted packets, sharing one
 // capture handle.
@@ -37,4 +39,11 @@ func OpenUDPStack(
 		return nil, err
 	}
 	return &UDPStack{Sniffer: sniffer, Writer: writer}, nil
+}
+
+// CanFake reports whether fake packets can be sent to dst. The stack sends
+// them on the interface of the IPv4 default route to the gateway MAC that
+// ARP resolved, so it reaches IPv4 destinations only.
+func (s *UDPStack) CanFake(dst net.IP) bool {
+	return dst.To4() != nil
 }

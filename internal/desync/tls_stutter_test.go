@@ -91,6 +91,7 @@ func stutterRunWith(
 		eventWriter{log: log, failAt: failAt, sent: &sent},
 		stubHops{hopLearned: true, hops: 10},
 		seqs,
+		nil,
 	)
 	sc := newStubConn("203.0.113.1")
 	seqs.Put(packet.SeqKey(sc.local, sc.remote), real)
@@ -208,6 +209,7 @@ func TestStutter_Disabled(t *testing.T) {
 			zerolog.Nop(),
 			eventWriter{log: log},
 			stubHops{hopLearned: true, hops: 0},
+			nil,
 			nil,
 		)
 		opts := tlsOpts(0, 100)

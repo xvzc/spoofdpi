@@ -14,14 +14,18 @@ type UDPDesyncer struct {
 	logger zerolog.Logger
 	writer packet.Writer
 	hops   packet.HopReader
+	caps   packet.FakeCapability
 }
 
+// NewUDPDesyncer returns a desyncer that sends fake packets with writer,
+// to the destinations caps allows; a nil caps allows every destination.
 func NewUDPDesyncer(
 	logger zerolog.Logger,
 	writer packet.Writer,
 	hops packet.HopReader,
+	caps packet.FakeCapability,
 ) *UDPDesyncer {
-	return &UDPDesyncer{logger: logger, writer: writer, hops: hops}
+	return &UDPDesyncer{logger: logger, writer: writer, hops: hops, caps: caps}
 }
 
 // PrepareHopTrack registers addrs for UDP hop-count learning, guarded by
@@ -48,6 +52,10 @@ func (d *UDPDesyncer) Desync(
 	}
 
 	dstIP := rConn.RemoteAddr().(*net.UDPAddr).IP
+	if !canFake(d.caps, dstIP) {
+		logCannotFake(logger, dstIP)
+		return 0, nil
+	}
 	est := d.hops.Lookup(packet.ProtoUDP, dstIP)
 	if onLocalLink(est) {
 		if d.hops.MarkWarned(packet.ProtoUDP, dstIP) {

@@ -68,6 +68,7 @@ func (f packetFakes) desyncer(ttl uint8) (helloSender, *fakeLog) {
 		},
 		unlearnedHops{HopReader: f.hops},
 		f.stack.Seqs,
+		nil,
 	), log
 }
 

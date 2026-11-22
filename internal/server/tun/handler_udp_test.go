@@ -52,7 +52,7 @@ func TestUDPHandler_Handle_Block(t *testing.T) {
 
 			h := NewUDPHandler(
 				zerolog.Nop(),
-				desync.NewUDPDesyncer(zerolog.Nop(), nil, nil),
+				desync.NewUDPDesyncer(zerolog.Nop(), nil, nil, nil),
 				rs,
 				&config.RuntimeConfig{},
 			)

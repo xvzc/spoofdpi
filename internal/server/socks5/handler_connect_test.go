@@ -232,7 +232,7 @@ func TestConnectHandler_Handle(t *testing.T) {
 
 			h := NewConnectHandler(
 				zerolog.Nop(),
-				desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil),
+				desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
 				dns.NewClient(zerolog.Nop(), &base.DNS),
 				rs,
 				net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
@@ -285,7 +285,7 @@ func TestConnectHandler_Handle_DomainDNSOverride(t *testing.T) {
 
 	h := NewConnectHandler(
 		zerolog.Nop(),
-		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil),
+		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
 		dns.NewClient(zerolog.Nop(), &base.DNS),
 		rs,
 		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
@@ -313,7 +313,7 @@ func TestConnectHandler_Handle_NoAddress(t *testing.T) {
 
 	h := NewConnectHandler(
 		zerolog.Nop(),
-		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil),
+		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
 		dns.NewClient(zerolog.Nop(), &base.DNS),
 		rule.NewRuleSet(),
 		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
@@ -352,7 +352,7 @@ func TestConnectHandler_Handle_IPLiteralName(t *testing.T) {
 
 	h := NewConnectHandler(
 		zerolog.Nop(),
-		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil),
+		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
 		dns.NewClient(zerolog.Nop(), &base.DNS),
 		rs,
 		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
@@ -404,7 +404,7 @@ func TestConnectHandler_Handle_Unspecified(t *testing.T) {
 			t.Run(req.IP.String()+" on "+l.name, func(t *testing.T) {
 				h := NewConnectHandler(
 					zerolog.Nop(),
-					desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil),
+					desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
 					&stubResolver{},
 					rule.NewRuleSet(),
 					l.listen,
@@ -428,7 +428,7 @@ func TestConnectHandler_Handle_LookupError(t *testing.T) {
 
 	h := NewConnectHandler(
 		zerolog.Nop(),
-		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil),
+		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
 		resolver,
 		rule.NewRuleSet(),
 		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},

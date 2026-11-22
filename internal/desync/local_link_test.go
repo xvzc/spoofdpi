@@ -100,6 +100,7 @@ func TestDesync_WarnsOncePerLocalLinkDestination(t *testing.T) {
 			&recordingWriter{},
 			hopStoreWith(packet.ProtoTCP, 0, serverA, serverB),
 			nil,
+			nil,
 		)
 
 		for _, server := range []string{serverA, serverA, serverB, serverA, serverB} {
@@ -114,6 +115,7 @@ func TestDesync_WarnsOncePerLocalLinkDestination(t *testing.T) {
 			zerolog.New(&log),
 			&udpWriter{},
 			hopStoreWith(packet.ProtoUDP, 0, serverA, serverB),
+			nil,
 		)
 
 		for _, server := range []string{serverA, serverA, serverB, serverA, serverB} {
@@ -149,6 +151,7 @@ func TestDesync_NoLocalLinkWarningWhenFakesAreSent(t *testing.T) {
 				&recordingWriter{},
 				tc.store(packet.ProtoTCP),
 				nil,
+				nil,
 			)
 			assert.NotZero(t, desyncTLS(t, d, server))
 			assert.Empty(t, localLinkWarnings(t, &log))
@@ -156,7 +159,12 @@ func TestDesync_NoLocalLinkWarningWhenFakesAreSent(t *testing.T) {
 
 		t.Run(tc.name+"/udp", func(t *testing.T) {
 			var log bytes.Buffer
-			d := NewUDPDesyncer(zerolog.New(&log), &udpWriter{}, tc.store(packet.ProtoUDP))
+			d := NewUDPDesyncer(
+				zerolog.New(&log),
+				&udpWriter{},
+				tc.store(packet.ProtoUDP),
+				nil,
+			)
 			assert.NotZero(t, desyncUDP(t, d, server))
 			assert.Empty(t, localLinkWarnings(t, &log))
 		})

@@ -84,6 +84,8 @@ Each fake packet is split the same way as the real Client Hello.
 
 Fake packets are not sent to a server found to be on the local link (0 hops away), since no TTL can stop them before such a server. spoofdpi logs a warning with the server's address the first time it skips them for a server. To turn fake packets off for other servers, such as those on a LAN or a corporate network, use a [rule](rules.md), for example `tls = { fake-preflight = 0, fake-stutter = 0 }` for their CIDRs.
 
+Fake packets, from this option and [`fake-stutter`](#fake-stutter), are sent to IPv4 servers only for now. For an IPv6 server they are skipped, and the Client Hello is still split; spoofdpi logs a warning the first time it skips them.
+
 By default, fake packets carry the connection's real TCP sequence and acknowledgment numbers, learned from the server's SYN/ACK, so they overlap the real Client Hello. See [`fake-seq-offset`](#fake-seq-offset), [`fake-ack-offset`](#fake-ack-offset) and [`syn-ack-timeout`](#syn-ack-timeout) to change this.
 
 !!! note

@@ -168,6 +168,7 @@ func TestFakeDesyncer(t *testing.T) {
 				},
 				unlearnedHops{HopReader: &stubHops{}},
 				seqs,
+				nil,
 			)
 			msg, err := buildClientHello("www.example.com")
 			require.NoError(t, err)

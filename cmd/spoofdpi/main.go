@@ -378,14 +378,18 @@ func createServer(
 		tcpHops   packet.HopReader
 		tcpWriter packet.TCPSeqWriter
 		seqs      *packet.SeqTracker
+		tcpCaps   packet.FakeCapability
 		udpHops   packet.HopReader
 		udpWriter packet.Writer
+		udpCaps   packet.FakeCapability
 	)
 	if tcpStack != nil {
 		tcpHops, tcpWriter, seqs = hops, tcpStack.Writer, tcpStack.Seqs
+		tcpCaps = tcpStack
 	}
 	if udpStack != nil {
 		udpHops, udpWriter = hops, udpStack.Writer
+		udpCaps = udpStack
 	}
 
 	tlsDesyncer := desync.NewTLSDesyncer(
@@ -393,11 +397,13 @@ func createServer(
 		tcpWriter,
 		tcpHops,
 		seqs,
+		tcpCaps,
 	)
 	udpDesyncer := desync.NewUDPDesyncer(
 		logging.WithScope(logger, "dsn"),
 		udpWriter,
 		udpHops,
+		udpCaps,
 	)
 
 	switch cfg.App.Mode {

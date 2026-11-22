@@ -26,7 +26,7 @@ type helloSender interface {
 
 // newHelloSender returns spoofdpi's own desyncer, without fake packets.
 func newHelloSender() helloSender {
-	return desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil)
+	return desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil)
 }
 
 // unsplitOpts sends the ClientHello in one write.

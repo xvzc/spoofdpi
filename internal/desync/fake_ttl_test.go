@@ -74,7 +74,7 @@ func TestDesync_FakeTTLFromConnOptions(t *testing.T) {
 	for _, tc := range fakeTTLCases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := &recordingWriter{}
-			d := NewTLSDesyncer(zerolog.Nop(), w, tc.hops, nil)
+			d := NewTLSDesyncer(zerolog.Nop(), w, tc.hops, nil, nil)
 			opts := tlsOpts(1, 100)
 			opts.SynAckTimeout = 0
 
@@ -105,7 +105,7 @@ func TestUDPDesync_FakeTTLFromConnOptions(t *testing.T) {
 	for _, tc := range fakeTTLCases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := &udpWriter{}
-			d := NewUDPDesyncer(zerolog.Nop(), w, tc.hops)
+			d := NewUDPDesyncer(zerolog.Nop(), w, tc.hops, nil)
 
 			_, err := d.Desync(context.Background(), conn, opts, tc.conn)
 			require.NoError(t, err)
@@ -124,7 +124,7 @@ func TestDesync_UnknownServerGetsDefaultTTL(t *testing.T) {
 
 	t.Run("tls", func(t *testing.T) {
 		w := &recordingWriter{}
-		d := NewTLSDesyncer(zerolog.Nop(), w, packet.NewHopStore(), nil)
+		d := NewTLSDesyncer(zerolog.Nop(), w, packet.NewHopStore(), nil, nil)
 		opts := tlsOpts(1, 100)
 		opts.SynAckTimeout = 0
 
@@ -148,7 +148,7 @@ func TestDesync_UnknownServerGetsDefaultTTL(t *testing.T) {
 			remote: &net.UDPAddr{IP: net.ParseIP("203.0.113.1"), Port: 443},
 		}
 		w := &udpWriter{}
-		d := NewUDPDesyncer(zerolog.Nop(), w, packet.NewHopStore())
+		d := NewUDPDesyncer(zerolog.Nop(), w, packet.NewHopStore(), nil)
 
 		_, err := d.Desync(
 			context.Background(),
@@ -176,7 +176,7 @@ func TestDesync_LocalLinkIgnoresRuleHopCount(t *testing.T) {
 
 	t.Run("tls", func(t *testing.T) {
 		w := &recordingWriter{}
-		d := NewTLSDesyncer(zerolog.Nop(), w, hops, nil)
+		d := NewTLSDesyncer(zerolog.Nop(), w, hops, nil, nil)
 		opts := tlsOpts(1, 100)
 		opts.SynAckTimeout = 0
 
@@ -197,7 +197,7 @@ func TestDesync_LocalLinkIgnoresRuleHopCount(t *testing.T) {
 			remote: &net.UDPAddr{IP: net.ParseIP("192.168.1.20"), Port: 443},
 		}
 		w := &udpWriter{}
-		d := NewUDPDesyncer(zerolog.Nop(), w, hops)
+		d := NewUDPDesyncer(zerolog.Nop(), w, hops, nil)
 
 		_, err := d.Desync(
 			context.Background(),

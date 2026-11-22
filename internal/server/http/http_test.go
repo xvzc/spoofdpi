@@ -113,7 +113,7 @@ func newTestProxy(
 		NewHTTPHandler(logger, resolver, rs, listenAddr, base),
 		NewHTTPSHandler(
 			logger,
-			desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil),
+			desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
 			resolver,
 			rs,
 			listenAddr,

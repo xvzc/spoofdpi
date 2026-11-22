@@ -176,7 +176,7 @@ func TestFakeSeqAck(t *testing.T) {
 }
 
 func TestSendSegments_AdvancesSeq(t *testing.T) {
-	d := NewTLSDesyncer(zerolog.Nop(), nil, nil, nil)
+	d := NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil)
 	seq := &packet.SeqAck{Seq: 1000, Ack: 5000}
 
 	n, err := d.sendSegments(
@@ -195,7 +195,7 @@ func TestSendSegments_AdvancesSeq(t *testing.T) {
 func TestDesync_UsesLearnedSeqAckWithOffsets(t *testing.T) {
 	w := &recordingWriter{}
 	seqs := packet.NewSeqTracker(time.Minute)
-	d := NewTLSDesyncer(zerolog.Nop(), w, stubHops{}, seqs)
+	d := NewTLSDesyncer(zerolog.Nop(), w, stubHops{}, seqs, nil)
 	conn := newStubConn("203.0.113.1")
 	seqs.Put(
 		packet.SeqKey(conn.local, conn.remote),
@@ -220,6 +220,7 @@ func TestDesync_UnlearnedFakeSegmentsLineUp(t *testing.T) {
 		w,
 		stubHops{},
 		packet.NewSeqTracker(time.Minute),
+		nil,
 	)
 	opts := tlsOpts(1, 100)
 	opts.SynAckTimeout = 0
@@ -266,6 +267,7 @@ func TestDesync_WaitRules(t *testing.T) {
 				&recordingWriter{},
 				stubHops{hopLearned: tc.hopLearned},
 				packet.NewSeqTracker(time.Minute),
+				nil,
 			)
 			opts := tlsOpts(tc.fakeCount, 100)
 			opts.SynAckTimeout = tc.timeout
@@ -300,7 +302,7 @@ func TestDesync_SkipsFakesOnLocalLink(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			w := &recordingWriter{}
-			d := NewTLSDesyncer(zerolog.Nop(), w, tc.hops, nil)
+			d := NewTLSDesyncer(zerolog.Nop(), w, tc.hops, nil, nil)
 			opts := tlsOpts(1, 100)
 			opts.SynAckTimeout = 0
 
@@ -383,7 +385,7 @@ func TestUDPDesync_SkipsFakesOnLocalLink(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := &udpWriter{}
-			d := NewUDPDesyncer(zerolog.Nop(), w, tc.hops)
+			d := NewUDPDesyncer(zerolog.Nop(), w, tc.hops, nil)
 			_, err := d.Desync(context.Background(), conn, opts, baseConnOpts())
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantFakes, w.n)
@@ -397,7 +399,7 @@ func TestUDPDesync_UsesTheFlowAddresses(t *testing.T) {
 		remote: &net.UDPAddr{IP: net.ParseIP("203.0.113.1"), Port: 443},
 	}
 	w := &udpWriter{}
-	d := NewUDPDesyncer(zerolog.Nop(), w, stubHops{})
+	d := NewUDPDesyncer(zerolog.Nop(), w, stubHops{}, nil)
 
 	_, err := d.Desync(
 		context.Background(),

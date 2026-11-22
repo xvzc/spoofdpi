@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -30,15 +31,25 @@ type TLSDesyncer struct {
 	writer packet.TCPSeqWriter
 	hops   packet.HopReader
 	seqs   *packet.SeqTracker
+	caps   packet.FakeCapability
 }
 
+// NewTLSDesyncer returns a desyncer that sends fake packets with writer,
+// to the destinations caps allows; a nil caps allows every destination.
 func NewTLSDesyncer(
 	logger zerolog.Logger,
 	writer packet.TCPSeqWriter,
 	hops packet.HopReader,
 	seqs *packet.SeqTracker,
+	caps packet.FakeCapability,
 ) *TLSDesyncer {
-	return &TLSDesyncer{logger: logger, writer: writer, hops: hops, seqs: seqs}
+	return &TLSDesyncer{
+		logger: logger,
+		writer: writer,
+		hops:   hops,
+		seqs:   seqs,
+		caps:   caps,
+	}
 }
 
 // PrepareHopTrack registers addrs for TCP hop-count learning, guarded by
@@ -75,10 +86,15 @@ func (d *TLSDesyncer) Desync(
 	var seq *packet.SeqAck
 	var fakes *fakeSender
 	if httpsOpts.UsesFakes() && d.hops != nil && d.writer != nil {
+		dstIP := conn.RemoteAddr().(*net.TCPAddr).IP
+		if !canFake(d.caps, dstIP) {
+			logCannotFake(logger, dstIP)
+			return d.sendSegments(ctx, conn, logger, split(logger, msg, httpsOpts), nil, nil)
+		}
+
 		// Wait for the SYN/ACK first: the sniffer learns the hop count from
 		// it too, so the TTL read after it is fresher.
 		real := d.learnSeqAck(ctx, logger, conn, httpsOpts)
-		dstIP := conn.RemoteAddr().(*net.TCPAddr).IP
 		est := d.hops.Lookup(packet.ProtoTCP, dstIP)
 		if onLocalLink(est) {
 			if d.hops.MarkWarned(packet.ProtoTCP, dstIP) {
@@ -167,6 +183,31 @@ func warnLocalLink(logger zerolog.Logger, ip net.IP) {
 	logger.Warn().
 		Str("dst", ip.String()).
 		Msg("server is on the local link, skipping fake packets")
+}
+
+// cannotFakeWarned is set once a desyncer has warned that it skips fake
+// packets to a destination they cannot be sent to.
+var cannotFakeWarned atomic.Bool
+
+// canFake reports whether caps lets fake packets be sent to dst. A nil
+// caps lets them be sent anywhere.
+func canFake(caps packet.FakeCapability, dst net.IP) bool {
+	return caps == nil || caps.CanFake(dst)
+}
+
+// logCannotFake logs that the fake packets to the server at ip are skipped
+// because they cannot be sent there: they are sent to IPv4 servers only for
+// now. Desyncers warn once per process, and log at debug level after that.
+func logCannotFake(logger zerolog.Logger, ip net.IP) {
+	if cannotFakeWarned.CompareAndSwap(false, true) {
+		logger.Warn().
+			Str("dst", ip.String()).
+			Msg("fake packets are not sent to IPv6 servers yet, skipping them")
+		return
+	}
+	logger.Debug().
+		Str("dst", ip.String()).
+		Msg("fake packets cannot be sent to this server, skipping them")
 }
 
 // hopPolicy returns the policy that turns a hop count estimate into the

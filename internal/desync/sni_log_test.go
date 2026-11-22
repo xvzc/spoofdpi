@@ -25,6 +25,7 @@ func TestTLSDesync_LogsCarrySNI(t *testing.T) {
 		&recordingWriter{},
 		hopStoreWith(packet.ProtoTCP, 12, server),
 		nil,
+		nil,
 	)
 	require.Positive(t, desyncTLS(t, d, server))
 

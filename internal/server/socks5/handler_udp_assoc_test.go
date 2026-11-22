@@ -193,7 +193,7 @@ func newRelayingUdpAssociateHandler(
 
 	return NewUdpAssociateHandler(
 		zerolog.Nop(),
-		desync.NewUDPDesyncer(zerolog.Nop(), nil, nil),
+		desync.NewUDPDesyncer(zerolog.Nop(), nil, nil, nil),
 		rs,
 		base,
 	)
@@ -703,7 +703,7 @@ func TestUdpAssociateHandler_Handle_RulePerDatagram(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				h, dst := start(t, domainRule(nameA, long, 2), domainRule(nameB, long, 3))
 				writer := &countingFakeWriter{}
-				h.desyncer = desync.NewUDPDesyncer(zerolog.Nop(), writer, unlearnedHops{})
+				h.desyncer = desync.NewUDPDesyncer(zerolog.Nop(), writer, unlearnedHops{}, nil)
 				a := startUdpAssociation(t, h)
 
 				for _, name := range []string{tc.first, tc.second, tc.first} {
