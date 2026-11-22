@@ -23,7 +23,7 @@ type HTTPProxy struct {
 
 	httpHandler  *HTTPHandler
 	httpsHandler *HTTPSHandler
-	dns          *dns.Client
+	resolver     dns.Resolver
 	ruleSet      *rule.RuleSet
 	listenAddr   net.TCPAddr
 	cfg          *config.RuntimeConfig
@@ -36,7 +36,7 @@ func NewHTTPProxy(
 	logger zerolog.Logger,
 	httpHandler *HTTPHandler,
 	httpsHandler *HTTPSHandler,
-	dnsClient *dns.Client,
+	resolver dns.Resolver,
 	ruleSet *rule.RuleSet,
 	listenAddr net.TCPAddr,
 	cfg *config.RuntimeConfig,
@@ -45,7 +45,7 @@ func NewHTTPProxy(
 		logger:       logger,
 		httpHandler:  httpHandler,
 		httpsHandler: httpsHandler,
-		dns:          dnsClient,
+		resolver:     resolver,
 		ruleSet:      ruleSet,
 		listenAddr:   listenAddr,
 		cfg:          cfg,
@@ -156,38 +156,21 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 		Str("from", conn.RemoteAddr().String()).
 		Msg("new request")
 
-	var addrs []net.IP
-	var nameMatch *config.Rule
 	if net.ParseIP(host) != nil {
-		addrs = []net.IP{net.ParseIP(host)}
 		logger.Trace().Msgf("skipping dns lookup for non-domain host %q", host)
-	} else {
-		nameMatch = p.ruleSet.Search([]rule.Query{
-			{Type: rule.MatchTypeDomain, Value: host},
-		})
+	}
 
-		dnsOpts := &p.cfg.DNS
-		if nameMatch != nil {
-			dnsOpts = &nameMatch.Config.DNS
-		}
+	sel, err := server.SelectRule(ctx, p.ruleSet, p.resolver, p.cfg, host, nil)
+	if err != nil {
+		_ = proto.HTTPBadGatewayResponse().Write(conn)
+		logger.Error().Err(err).Msgf("dns lookup failed for %s", host)
 
-		netAddrs, err := p.dns.Resolve(ctx, dnsOpts, host)
-		if err != nil {
-			_ = proto.HTTPBadGatewayResponse().Write(conn)
-			logger.Error().Err(err).Msgf("dns lookup failed for %s", host)
-
-			return
-		}
-
-		addrs = make([]net.IP, len(netAddrs))
-		for i, a := range netAddrs {
-			addrs[i] = a.AsSlice()
-		}
+		return
 	}
 
 	dst := &netutil.Destination{
 		Host:  host,
-		Addrs: addrs,
+		Addrs: sel.Addrs,
 		Port:  dstPort,
 	}
 
@@ -200,31 +183,20 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 		}
 	}
 
-	var addrQueries []rule.Query
-	for _, v := range addrs {
-		addrQueries = append(
-			addrQueries,
-			rule.Query{Type: rule.MatchTypeAddr, Value: v.String()},
-		)
+	if sel.Rule != nil && logger.GetLevel() == zerolog.TraceLevel {
+		logger.Trace().RawJSON("summary", sel.Rule.JSON()).Msg("match")
 	}
 
-	addrMatch := p.ruleSet.Search(addrQueries)
-
-	bestMatch := rule.HigherPriority(addrMatch, nameMatch)
-	if bestMatch != nil && logger.GetLevel() == zerolog.TraceLevel {
-		logger.Trace().RawJSON("summary", bestMatch.JSON()).Msg("match")
-	}
-
-	if bestMatch != nil && bestMatch.Block {
+	if sel.Blocked() {
 		logger.Debug().Msg("request is blocked by policy")
 		return
 	}
 
 	var handleErr error
 	if req.IsConnectMethod() {
-		handleErr = p.httpsHandler.HandleRequest(ctx, conn, dst, bestMatch)
+		handleErr = p.httpsHandler.HandleRequest(ctx, conn, dst, sel.Rule)
 	} else {
-		handleErr = p.httpHandler.HandleRequest(ctx, conn, req, dst, bestMatch)
+		handleErr = p.httpHandler.HandleRequest(ctx, conn, req, dst, sel.Rule)
 	}
 
 	if handleErr == nil { // Early exit if no error found
