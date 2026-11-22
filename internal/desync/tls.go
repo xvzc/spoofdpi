@@ -64,6 +64,11 @@ func (d *TLSDesyncer) Desync(
 		return d.sendSegments(ctx, conn, logger, []Segment{{Packet: msg.Raw()}}, nil, nil)
 	}
 
+	// Every desync log of this connection carries the SNI it is sent with.
+	if start, end, err := msg.ExtractSNIOffset(); err == nil {
+		logger = logger.With().Str("sni", string(msg.Raw()[start:end])).Logger()
+	}
+
 	// seq tracks the connection's next sequence number while segments are
 	// sent; fakes sends the fake packets. Both are nil when no fake packets
 	// are sent.
@@ -271,7 +276,6 @@ func split(
 			break
 		}
 		segments, err = splitSNI(raw, start, end, opts.Disorder)
-		logger.Trace().Msgf("extracted SNI is '%s'", raw[start:end])
 	case config.HTTPSSplitModeRandom:
 		mask := genPatternMask()
 		segments, err = splitMask(raw, mask, opts.Disorder)

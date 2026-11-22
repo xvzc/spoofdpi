@@ -135,8 +135,6 @@ func (h *TCPHandler) handleTLS(
 	}
 	dst.Host = string(tlsMsg.Raw()[start:end])
 
-	logger.Trace().Str("value", dst.Host).Msg("extracted sni field")
-
 	// The SNI is matched as the domain name.
 	cfg, ok := h.selectRule(logger, dst.Host, dst)
 	if !ok {
