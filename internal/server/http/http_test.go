@@ -502,6 +502,50 @@ func startHTTPOrigin(t *testing.T) (*net.TCPAddr, *atomic.Int32, <-chan *http.Re
 	return ln.Addr().(*net.TCPAddr), &accepted, reqs
 }
 
+// A bracketed IPv6 literal without a port is an address, not a name to
+// look up.
+func TestHTTPProxy_HandleNewConnection_BracketedHostWithoutPort(t *testing.T) {
+	requests := []string{
+		"GET / HTTP/1.1\r\nHost: [::1]\r\n\r\n",
+		"CONNECT [::1] HTTP/1.1\r\nHost: [::1]\r\n\r\n",
+	}
+	for _, req := range requests {
+		t.Run(strings.Fields(req)[0], func(t *testing.T) {
+			resolver := &fakeResolver{err: errors.New("lookup failed")}
+			// An address rule for ::1 blocks the request before any dial, so
+			// the test reaches no local service; that it applies shows the
+			// host was taken as the address ::1.
+			rs := rule.NewRuleSet()
+			require.NoError(t, rs.Add(&config.Rule{
+				Name:     "block ::1",
+				Priority: 10,
+				Block:    true,
+				Match:    &config.MatchAttrs{CIDRs: []string{"::1/128"}},
+			}))
+			p := newTestProxy(
+				zerolog.Nop(),
+				resolver,
+				rs,
+				&config.RuntimeConfig{},
+				net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+			)
+
+			client, done := runConn(t, p)
+			_, err := client.Write([]byte(req))
+			require.NoError(t, err)
+
+			// A blocked request is closed without a reply; a 502 would mean
+			// the host went to the resolver.
+			reply, err := io.ReadAll(client)
+			require.NoError(t, err)
+			<-done
+
+			assert.Empty(t, reply)
+			assert.Empty(t, resolver.lookups, "an ip literal is not looked up")
+		})
+	}
+}
+
 // A plain request is forwarded with "Connection: close", and the client conn
 // is closed after the response, so a later request comes on a new conn and
 // gets its own rule.

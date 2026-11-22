@@ -72,13 +72,18 @@ func ReadHttpRequest(rdr io.Reader) (*HTTPRequest, error) {
 	return NewHttpRequest(req), nil
 }
 
-// ExtractHost returns the host without port information
+// ExtractHost returns the host without port information, and an IPv6
+// literal without its brackets, with or without a port.
 func (r *HTTPRequest) ExtractHost() string {
 	host, _, err := net.SplitHostPort(r.Host)
-	if err != nil {
-		return r.Host
+	if err == nil {
+		return host
 	}
-	return host
+	if len(r.Host) > 2 && strings.HasPrefix(r.Host, "[") &&
+		strings.HasSuffix(r.Host, "]") {
+		return r.Host[1 : len(r.Host)-1]
+	}
+	return r.Host
 }
 
 // ExtractPort returns the port from the host or empty string if not specified

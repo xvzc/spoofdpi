@@ -66,3 +66,26 @@ func TestHTTPRequest_SetConnectionClose(t *testing.T) {
 	)
 	assert.Equal(t, "1", written.Header.Get("X-End"))
 }
+
+func TestHTTPRequest_ExtractHost(t *testing.T) {
+	tcs := []struct {
+		host string
+		want string
+	}{
+		{"origin.test", "origin.test"},
+		{"origin.test:8080", "origin.test"},
+		{"192.0.2.1", "192.0.2.1"},
+		{"192.0.2.1:8080", "192.0.2.1"},
+		{"[::1]", "::1"},
+		{"[::1]:8080", "::1"},
+		{"[2001:db8::1]", "2001:db8::1"},
+		{"[fe80::1%en0]", "fe80::1%en0"},
+		{"[]", "[]"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.host, func(t *testing.T) {
+			req := &HTTPRequest{Request: &http.Request{Host: tc.host}}
+			assert.Equal(t, tc.want, req.ExtractHost())
+		})
+	}
+}
