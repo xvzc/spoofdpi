@@ -560,17 +560,43 @@ func TestHTTPProxy_HandleNewConnection_PlainUpgradeTunnels(t *testing.T) {
 	assert.Equal(t, int32(1), accepted.Load())
 }
 
+// startUnreachableTCP returns the address of a loopback listener that never
+// accepts and whose backlog is full, so a connect to it does not complete,
+// for longer than any timeout a test sets, until the connect is canceled.
+func startUnreachableTCP(t *testing.T) *net.TCPAddr {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	addr := ln.Addr().String()
+
+	// Connect until one does not complete, which is when the backlog is full.
+	const maxConns = 1 << 16
+	for range maxConns {
+		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err != nil {
+			return ln.Addr().(*net.TCPAddr)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+	}
+	t.Fatal("the listener backlog did not fill up")
+	return nil
+}
+
 // A plain request is dialed with the TCP timeout of the config its rule
-// selects.
+// selects: against a target the connect never completes at, the rule's
+// short timeout ends the dial with a prompt 502, while the base config,
+// which has no timeout, keeps dialing.
 func TestHTTPProxy_HandleNewConnection_PlainDialTimeoutFromRule(t *testing.T) {
-	echo, accepted := startTCPEcho(t)
+	unreachable := startUnreachableTCP(t)
 	slow := &config.Rule{
 		Name:     "slow",
 		Priority: 10,
 		Match:    &config.MatchAttrs{Domains: []string{"slow.test"}},
 	}
-	// A timeout this short has passed before the dial starts.
-	slow.Config.Conn.TCPTimeout = time.Nanosecond
+	const ruleTimeout = 100 * time.Millisecond
+	slow.Config.Conn.TCPTimeout = ruleTimeout
 	rs := rule.NewRuleSet()
 	require.NoError(t, rs.Add(slow))
 	p := newTestProxy(
@@ -581,14 +607,45 @@ func TestHTTPProxy_HandleNewConnection_PlainDialTimeoutFromRule(t *testing.T) {
 		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
 	)
 
-	client, done := runConn(t, p)
-	_, err := client.Write([]byte(getRequest("slow.test", echo.Port, "/")))
-	require.NoError(t, err)
+	t.Run("rule timeout ends the dial", func(t *testing.T) {
+		client, done := runConn(t, p)
+		started := time.Now()
+		_, err := client.Write([]byte(getRequest("slow.test", unreachable.Port, "/")))
+		require.NoError(t, err)
 
-	reply, err := io.ReadAll(client)
-	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(string(reply), "HTTP/1.1 502"), "reply %q", reply)
-	<-done
+		reply, err := io.ReadAll(client)
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(string(reply), "HTTP/1.1 502"), "reply %q", reply)
+		assert.GreaterOrEqual(t, time.Since(started), ruleTimeout)
+		<-done
+	})
 
-	assert.Equal(t, int32(0), accepted.Load())
+	t.Run("base config keeps dialing", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		client, srv := net.Pipe()
+		t.Cleanup(func() { _ = client.Close() })
+		done := make(chan struct{})
+		go func() {
+			p.handleNewConnection(ctx, srv)
+			close(done)
+		}()
+
+		_, err := client.Write([]byte(getRequest("base.test", unreachable.Port, "/")))
+		require.NoError(t, err)
+
+		// Ten times the rule's timeout has passed without the dial ending.
+		select {
+		case <-done:
+			t.Fatal("the dial without a timeout ended")
+		case <-time.After(10 * ruleTimeout):
+		}
+
+		// Canceling the dial is what ends it, with the 502 the client reads.
+		cancel()
+		require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+		reply, err := io.ReadAll(client)
+		require.NoError(t, err)
+		assert.True(t, strings.HasPrefix(string(reply), "HTTP/1.1 502"), "reply %q", reply)
+		<-done
+	})
 }
