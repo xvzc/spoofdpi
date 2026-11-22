@@ -11,6 +11,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/rule"
+	"github.com/xvzc/spoofdpi/internal/server"
 )
 
 type UDPHandler struct {
@@ -44,21 +45,21 @@ func (h *UDPHandler) Handle(
 
 	logger := logging.WithLocalScope(ctx, h.logger, "udp")
 
-	// Addr-based rule matching
-	cfg := h.cfg
-	if h.ruleSet != nil {
-		if matched := h.ruleSet.Search(
-			[]rule.Query{{Type: rule.MatchTypeAddr, Value: dst.Addrs[0].String()}},
-		); matched != nil {
-			logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
-			if matched.Block {
-				// Returning closes lConn, which ends the flow.
-				logger.Debug().Msg("request is blocked by policy")
-				return
-			}
-			cfg = &matched.Config
-		}
+	// Addr-based rule matching; no name is given, so nothing is resolved.
+	sel, err := server.SelectRule(ctx, h.ruleSet, nil, h.cfg, "", dst.Addrs)
+	if err != nil {
+		logger.Error().Err(err).Msg("failed to select rule")
+		return
 	}
+	if sel.Rule != nil {
+		logger.Trace().RawJSON("summary", sel.Rule.JSON()).Msg("match")
+	}
+	if sel.Blocked() {
+		// Returning closes lConn, which ends the flow.
+		logger.Debug().Msg("request is blocked by policy")
+		return
+	}
+	cfg := sel.Config
 
 	// Register destination for TTL learning when fakes will be sent.
 	h.desyncer.PrepareHopTrack(dst.Addrs, &cfg.UDP)
