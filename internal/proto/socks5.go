@@ -31,6 +31,7 @@ const (
 	// Reply codes
 	SOCKS5RCodeSuccess          = 0x00
 	SOCKS5RCodeGenFailure       = 0x01
+	SOCKS5RCodeNotAllowed       = 0x02
 	SOCKS5RCodeCmdNotSupported  = 0x07
 	SOCKS5RCodeAddrNotSupported = 0x08
 )
@@ -132,6 +133,11 @@ func SOCKS5SuccessResponse() *SOCKS5Reply {
 
 func SOCKS5FailureResponse() *SOCKS5Reply {
 	return NewSOCKS5Reply(SOCKS5RCodeGenFailure)
+}
+
+// SOCKS5NotAllowedResponse is the reply "connection not allowed by ruleset".
+func SOCKS5NotAllowedResponse() *SOCKS5Reply {
+	return NewSOCKS5Reply(SOCKS5RCodeNotAllowed)
 }
 
 func SOCKS5CommandNotSupportedResponse() *SOCKS5Reply {

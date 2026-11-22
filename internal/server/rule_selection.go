@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net"
 
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -50,4 +51,32 @@ func SelectRule(
 	}
 
 	return matched, &matched.Config
+}
+
+// ErrIPv4Only is the error of a destination that has no IPv4 address, while
+// the selected rule sets ipv6 = false.
+var ErrIPv4Only = errors.New(
+	"the rule sets ipv6 = false and the destination has no IPv4 address",
+)
+
+// AllowedAddrs returns the addresses of addrs that a connection under the
+// selected rule matched (nil when none matches) may use: only the IPv4
+// ones when the rule sets ipv6 = false itself, else all of them, in the
+// same order. An IPv4-mapped IPv6 address counts as IPv4. It returns
+// ErrIPv4Only when the rule leaves no address.
+func AllowedAddrs(matched *config.Rule, addrs []net.IP) ([]net.IP, error) {
+	if !matched.IPv4Only() {
+		return addrs, nil
+	}
+
+	allowed := make([]net.IP, 0, len(addrs))
+	for _, ip := range addrs {
+		if ip.To4() != nil {
+			allowed = append(allowed, ip)
+		}
+	}
+	if len(allowed) == 0 {
+		return nil, ErrIPv4Only
+	}
+	return allowed, nil
 }

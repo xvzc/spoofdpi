@@ -3,6 +3,7 @@ package config
 import (
 	"testing"
 
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -79,6 +80,14 @@ ipv6 = false
 		})
 	}
 
+	t.Run("only a rule's own ipv6 is kept", func(t *testing.T) {
+		cfg, _ := runWithTOML(t, rules, "--ipv6")
+		require.Len(t, cfg.Rules, 3)
+		assert.Nil(t, cfg.Rules[0].IPv6)
+		assert.Equal(t, lo.ToPtr(true), cfg.Rules[1].IPv6)
+		assert.Equal(t, lo.ToPtr(false), cfg.Rules[2].IPv6)
+	})
+
 	t.Run("rule inherits the flag", func(t *testing.T) {
 		cfg, _ := runWithTOML(t, rules, "--ipv6")
 		require.Len(t, cfg.Rules, 3)
@@ -149,6 +158,24 @@ func TestConfig_IPv6Enabled(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.expect, tc.config.IPv6Enabled())
+		})
+	}
+}
+
+func TestRule_IPv4Only(t *testing.T) {
+	tcs := []struct {
+		name   string
+		rule   *Rule
+		expect bool
+	}{
+		{"nil receiver", nil, false},
+		{"inherits", &Rule{Config: RuntimeConfig{IPv6: false}}, false},
+		{"sets on", &Rule{IPv6: lo.ToPtr(true)}, false},
+		{"sets off", &Rule{IPv6: lo.ToPtr(false)}, true},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expect, tc.rule.IPv4Only())
 		})
 	}
 }

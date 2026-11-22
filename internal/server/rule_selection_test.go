@@ -276,3 +276,54 @@ func TestSelectRule_Candidates(t *testing.T) {
 		}
 	})
 }
+
+func TestAllowedAddrs(t *testing.T) {
+	ruleWith := func(ipv6 *bool) *config.Rule {
+		r := &config.Rule{IPv6: ipv6}
+		if ipv6 != nil {
+			r.Config.IPv6 = *ipv6
+		}
+		return r
+	}
+	off, on := false, true
+
+	tcs := []struct {
+		name    string
+		matched *config.Rule
+		addrs   []net.IP
+		want    []net.IP
+		wantErr error
+	}{
+		{
+			"no rule",
+			nil,
+			ips("2001:db8::1", "192.0.2.1"),
+			ips("2001:db8::1", "192.0.2.1"),
+			nil,
+		},
+		{"inherited off", ruleWith(nil), ips("2001:db8::1"), ips("2001:db8::1"), nil},
+		{"rule on", ruleWith(&on), ips("2001:db8::1"), ips("2001:db8::1"), nil},
+		{
+			"rule off drops IPv6",
+			ruleWith(&off),
+			ips("2001:db8::1", "192.0.2.1", "2001:db8::2", "192.0.2.2"),
+			ips("192.0.2.1", "192.0.2.2"),
+			nil,
+		},
+		{
+			"rule off keeps an IPv4-mapped address",
+			ruleWith(&off),
+			ips("::ffff:192.0.2.1"),
+			ips("::ffff:192.0.2.1"),
+			nil,
+		},
+		{"rule off without IPv4", ruleWith(&off), ips("2001:db8::1"), nil, ErrIPv4Only},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := AllowedAddrs(tc.matched, tc.addrs)
+			assert.ErrorIs(t, err, tc.wantErr)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/rs/zerolog"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
@@ -324,13 +325,20 @@ func TestRule_UnmarshalTOML(t *testing.T) {
 					"domains": []any{"example.com"},
 				},
 				"block": true,
+				"ipv6":  false,
 			},
 			wantErr: false,
 			assert: func(t *testing.T, r Rule) {
 				assert.Equal(t, "rule1", r.Name)
 				assert.Equal(t, "example.com", r.Match.Domains[0])
 				assert.True(t, r.Block)
+				assert.Equal(t, lo.ToPtr(false), r.IPv6)
 			},
+		},
+		{
+			name:    "invalid ipv6 type",
+			input:   map[string]any{"ipv6": "no"},
+			wantErr: true,
 		},
 		{
 			name: "ignores runtime sections",

@@ -63,3 +63,9 @@ func TestSOCKS5Reply_Write_Defaults(t *testing.T) {
 	require.NoError(t, SOCKS5FailureResponse().Write(&buf))
 	assert.Equal(t, []byte{5, 1, 0, 1, 0, 0, 0, 0, 0, 0}, buf.Bytes())
 }
+
+func TestSOCKS5NotAllowedResponse(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, SOCKS5NotAllowedResponse().Write(&buf))
+	assert.Equal(t, []byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0}, buf.Bytes())
+}

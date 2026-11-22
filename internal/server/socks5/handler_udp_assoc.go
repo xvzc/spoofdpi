@@ -325,21 +325,57 @@ func (c *udpAssociateConn) selectRule(
 	}
 	dstAddr := &net.UDPAddr{IP: dstIPs[0], Port: dstPort}
 
-	matched, cfg := server.SelectRule(
-		c.h.ruleSet,
-		c.h.cfg,
-		"",
-		[]net.IP{dstAddr.IP},
-		dstRule,
-	)
-	if matched != nil {
-		c.logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
+	// selectFor selects the rule for addr, with candidates, and reports
+	// false when that rule blocks the datagram.
+	selectFor := func(
+		addr net.IP,
+		candidates ...*config.Rule,
+	) (*config.Rule, *config.RuntimeConfig, bool) {
+		matched, cfg := server.SelectRule(
+			c.h.ruleSet,
+			c.h.cfg,
+			"",
+			[]net.IP{addr},
+			candidates...,
+		)
+		if matched != nil {
+			c.logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
+		}
+		if matched != nil && matched.Block {
+			// Drop only this datagram; the association stays up for the
+			// client's other destinations.
+			c.logger.Debug().Str("addr", dstAddrStr).Msg("request is blocked by policy")
+			return nil, nil, false
+		}
+		return matched, cfg, true
 	}
-	if matched != nil && matched.Block {
-		// Drop only this datagram; the association stays up for the
-		// client's other destinations.
-		c.logger.Debug().Str("addr", dstAddrStr).Msg("request is blocked by policy")
+
+	matched, cfg, ok := selectFor(dstAddr.IP, dstRule)
+	if !ok {
 		return nil, nil, false
+	}
+
+	// Under a rule that sets ipv6 = false, the datagram goes to the first
+	// IPv4 address instead. That address is matched too, with the rule
+	// selected so far as a candidate, so that a rule for it, such as a
+	// block, still applies. As the address is IPv4, the rule then selected
+	// cannot drop it.
+	allowed, err := server.AllowedAddrs(matched, dstIPs)
+	if err != nil {
+		c.logger.Debug().Err(err).Str("addr", dstAddrStr).Msg("dropped udp packet")
+		return nil, nil, false
+	}
+	if !allowed[0].Equal(dstAddr.IP) {
+		if allowed[0].IsUnspecified() {
+			c.logger.Debug().
+				Str("addr", dstAddrStr).
+				Msg("dropped udp packet to an unspecified address")
+			return nil, nil, false
+		}
+		dstAddr = &net.UDPAddr{IP: allowed[0], Port: dstPort}
+		if _, cfg, ok = selectFor(dstAddr.IP, matched); !ok {
+			return nil, nil, false
+		}
 	}
 
 	return dstAddr, cfg, true

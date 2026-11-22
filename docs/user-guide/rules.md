@@ -16,7 +16,25 @@ The top-level `[[rules]]` array contains one table per rule. Each rule consists 
 | `name`     | String | A descriptive name for the rule.                 |
 | `priority` | Int    | Order of precedence. Higher numbers take priority.|
 | `block`    | Bool   | If `true`, completely blocks connections matching this rule. |
-| `ipv6`     | Bool   | Overrides the global [`ipv6`](app.md#ipv6) for this rule. Unset, the rule follows the global value. |
+| `ipv6`     | Bool   | Overrides the global [`ipv6`](app.md#ipv6) for this rule. Unset, the rule follows the global value. See [IPv6](#ipv6). |
+
+### IPv6
+
+A rule's `ipv6`, its own or the global one it follows, decides the [record types](dns.md#record-types) a name is looked up with when the name matches the rule's `domains`: A records only when it is off, A and AAAA records when it is on.
+
+A rule that sets `ipv6 = false` itself also keeps the connections and datagrams that select it on IPv4:
+
+- Only the IPv4 addresses of the destination are connected to. The IPv6 addresses that a name resolves to are dropped.
+- A SOCKS5 `UDP ASSOCIATE` datagram whose first resolved address is IPv6 goes to the name's first IPv4 address instead. That address is matched against the rules too, with this rule as a candidate, so the higher-priority rule of the two applies: a rule for the IPv4 address with a higher priority, such as a block, still applies to the datagram.
+- A destination with no IPv4 address left is refused. This includes an IPv6 literal: an HTTP host such as `[2001:db8::1]`, a SOCKS5 IPv6 address, and an IPv6 address sent as a SOCKS5 name.
+    - The HTTP and HTTPS proxy replies `502 Bad Gateway`.
+    - SOCKS5 `CONNECT` replies "connection not allowed by ruleset" (`0x02`).
+    - SOCKS5 `UDP ASSOCIATE` drops the datagram.
+- An IPv4-mapped address, such as `::ffff:192.0.2.1`, counts as IPv4 and is connected to.
+
+For TCP, the rule is selected before the IPv6 addresses are dropped, from all the addresses, so a rule can be selected by an IPv6 address in its `cidrs` that it then does not connect to.
+
+A rule that does not set `ipv6`, and traffic that matches no rule, still connect to IPv6 literals, even when the global `ipv6` is off. With `ipv6` off, names resolve to IPv4 addresses only. To keep a site on IPv4 in every case, set `ipv6 = false` in its rule.
 
 ## Rule Selection
 
@@ -30,7 +48,7 @@ Each TCP connection, and each UDP datagram, uses exactly one rule. Its address i
 | TUN UDP                | Destination of the packets        | None                                         |
 | SOCKS5 `UDP ASSOCIATE` | Resolved address of each datagram | Name the datagram is sent to, if any         |
 
-When a name resolves to several addresses, an address rule matches if any of them is in its `cidrs`, even one that is never connected to. In TUN mode, and for each SOCKS5 `UDP ASSOCIATE` datagram, only the single destination address is matched.
+When a name resolves to several addresses, an address rule matches if any of them is in its `cidrs`, even one that is never connected to. In TUN mode, and for each SOCKS5 `UDP ASSOCIATE` datagram, only the single destination address is matched; a datagram that a rule with `ipv6 = false` sends to another address is matched again by that address (see [IPv6](#ipv6)).
 
 For SOCKS5 `CONNECT` and the HTTP and HTTPS proxy, a requested name is matched before it is resolved, so the domain rule's `dns` settings decide how it is looked up. A rule's `dns` settings apply only when the rule is matched by domain. SOCKS5 `UDP ASSOCIATE` resolves names the same way (see [UDP traffic](#udp-traffic)).
 

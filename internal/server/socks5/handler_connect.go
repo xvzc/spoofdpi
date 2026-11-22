@@ -101,8 +101,10 @@ func (c *connectConn) serve(ctx context.Context) error {
 }
 
 // checkDestination refuses a destination that is not valid, that the
-// selected rule blocks, or that is a link-local address without a zone, and
-// writes the failure reply for it.
+// selected rule blocks, that has no IPv4 address while the rule sets
+// ipv6 = false, or that is a link-local address without a zone, and writes
+// the failure reply for it. Under a rule that sets ipv6 = false, it drops
+// the IPv6 addresses of the destination.
 func (c *connectConn) checkDestination() error {
 	ok, err := c.dst.IsValid(&c.h.listenAddr)
 	if err != nil {
@@ -118,6 +120,17 @@ func (c *connectConn) checkDestination() error {
 		_ = proto.SOCKS5FailureResponse().Write(c.conn)
 		return netutil.ErrBlocked
 	}
+
+	addrs, err := server.AllowedAddrs(c.matched, c.dst.Addrs)
+	if err != nil {
+		c.logger.Info().
+			Str("dst", c.dst.String()).
+			Err(err).
+			Msg("request is refused by policy")
+		_ = proto.SOCKS5NotAllowedResponse().Write(c.conn)
+		return err
+	}
+	c.dst.Addrs = addrs
 
 	// A link-local address is reachable only through the interface its zone
 	// names, and a SOCKS5 address has no zone; only a literal sent as a

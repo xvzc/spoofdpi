@@ -123,14 +123,18 @@ func (c *httpsConn) selectDestination(ctx context.Context) bool {
 	return true
 }
 
-// checkDestination writes a 403 for a destination that is the proxy itself.
-// It reports false when the request must not go on.
+// checkDestination writes a 403 for a destination that is the proxy itself,
+// and a 502 for one that the rule's ipv6 = false leaves no address of. It
+// reports false when the request must not go on.
 func (c *httpsConn) checkDestination() bool {
 	switch verifyDestination(c.logger, c.dst, c.matched, &c.h.listenAddr) {
 	case destinationSelf:
 		_ = proto.HTTPForbiddenResponse().Write(c.conn)
 		return false
 	case destinationBlocked:
+		return false
+	case destinationIPv4Only:
+		_ = proto.HTTPBadGatewayResponse().Write(c.conn)
 		return false
 	default:
 		return true

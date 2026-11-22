@@ -815,11 +815,21 @@ func (a *MatchAttrs) UnmarshalTOML(data any) (err error) {
 // └──────┘
 
 type Rule struct {
-	Name     string        `toml:"name"     json:"name"`
-	Priority uint16        `toml:"priority" json:"priority"`
-	Block    bool          `toml:"block"    json:"block"`
-	Match    *MatchAttrs   `toml:"match"    json:"match,omitempty"`
-	Config   RuntimeConfig `toml:"-"        json:"config"`
+	Name     string      `toml:"name"     json:"name"`
+	Priority uint16      `toml:"priority" json:"priority"`
+	Block    bool        `toml:"block"    json:"block"`
+	Match    *MatchAttrs `toml:"match"    json:"match,omitempty"`
+	// IPv6 is the rule's own ipv6, nil when the rule does not set it.
+	// Config.IPv6 holds the value the rule applies, inherited when nil.
+	IPv6   *bool         `toml:"ipv6" json:"ipv6,omitempty"`
+	Config RuntimeConfig `toml:"-"    json:"config"`
+}
+
+// IPv4Only reports whether r keeps its connections to IPv4 addresses: it
+// sets ipv6 = false itself. A nil rule, and a rule that inherits ipv6, do
+// not, so they still connect to IPv6 literals.
+func (r *Rule) IPv4Only() bool {
+	return r != nil && r.IPv6 != nil && !*r.IPv6
 }
 
 // UnmarshalTOML decodes the standalone fields of a Rule. The per-section
@@ -840,6 +850,11 @@ func (r *Rule) UnmarshalTOML(data any) (err error) {
 	}
 	if p := findFrom(m, "block", parseBoolFn(), &err); isOk(p, err) {
 		r.Block = *p
+	}
+	// Only the rule's own setting: Config.IPv6, like the other config
+	// sections, is resolved by resolveRules.
+	if p := findFrom(m, "ipv6", parseBoolFn(), &err); isOk(p, err) {
+		r.IPv6 = p
 	}
 	r.Match = findStructFrom[MatchAttrs](m, "match", &err)
 

@@ -90,6 +90,8 @@ With IPv6 enabled, DNS lookups ask for both A and AAAA records; without it, for 
 
 A [rule](rules.md#rule-fields) can set its own `ipv6`; a rule that does not set it follows this option.
 
+With this option off, only DNS and the IPv6 handling are off: an IPv6 literal requested through the HTTP or SOCKS5 proxy, such as `[2001:db8::1]`, is still connected to. To keep a site on IPv4, set `ipv6 = false` in its rule (see [IPv6](rules.md#ipv6)).
+
 !!! warning
     IPv6 support is currently Experimental, and spoofdpi logs a warning at startup when this option is set.
 

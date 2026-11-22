@@ -150,6 +150,7 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 			Priority: 0,
 			Block:    false,
 			Match:    nil,
+			IPv6:     nil,
 			Config:   base,
 		}
 
@@ -183,6 +184,7 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 			if perr != nil {
 				return nil, fmt.Errorf("rule %d: ipv6: %w", i, perr)
 			}
+			r.IPv6 = &ipv6
 			r.Config.IPv6 = ipv6
 		}
 		if v, ok := item["match"]; ok {

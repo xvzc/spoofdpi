@@ -78,10 +78,14 @@ const (
 	destinationSelf
 	// destinationBlocked is a destination the selected rule blocks.
 	destinationBlocked
+	// destinationIPv4Only is a destination without an IPv4 address, while
+	// the selected rule sets ipv6 = false.
+	destinationIPv4Only
 )
 
 // verifyDestination decides whether a request may go on to dst, given the
 // proxy's listenAddr and the rule matched for dst (nil when none matches).
+// When the rule sets ipv6 = false, it drops the IPv6 addresses from dst.
 func verifyDestination(
 	logger zerolog.Logger,
 	dst *netutil.Destination,
@@ -97,6 +101,13 @@ func verifyDestination(
 		logger.Debug().Msg("request is blocked by policy")
 		return destinationBlocked
 	}
+
+	addrs, err := server.AllowedAddrs(matched, dst.Addrs)
+	if err != nil {
+		logger.Info().Str("host", dst.Host).Err(err).Msg("request is refused by policy")
+		return destinationIPv4Only
+	}
+	dst.Addrs = addrs
 
 	return destinationAllowed
 }
