@@ -20,10 +20,6 @@ type RuleSet struct {
 	cidr       *trie.CIDRTrie[*config.Rule]
 	domainKeys map[string]*config.Rule
 	cidrKeys   map[string]*config.Rule
-
-	// maxCIDRPriority is the highest priority among the CIDR rules in cidr;
-	// it is only meaningful while cidrKeys is non-empty.
-	maxCIDRPriority uint16
 }
 
 func NewRuleSet() *RuleSet {
@@ -84,7 +80,6 @@ func (rs *RuleSet) Add(r *config.Rule) error {
 			return err
 		}
 		rs.cidrKeys[cidr] = r
-		rs.maxCIDRPriority = max(rs.maxCIDRPriority, r.Priority)
 	}
 
 	return nil
@@ -117,16 +112,6 @@ func (rs *RuleSet) Search(queries []Query) *config.Rule {
 		return nil
 	}
 	return best.Clone()
-}
-
-// HasCIDRRuleAtOrAbove reports whether some CIDR rule has a priority of at
-// least priority, so an address match could take precedence over a domain
-// match of that priority.
-func (rs *RuleSet) HasCIDRRuleAtOrAbove(priority uint16) bool {
-	rs.mu.RLock()
-	defer rs.mu.RUnlock()
-
-	return len(rs.cidrKeys) > 0 && rs.maxCIDRPriority >= priority
 }
 
 // HigherPriority returns whichever rule has the higher Priority field.

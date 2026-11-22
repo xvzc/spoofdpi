@@ -125,25 +125,6 @@ func TestRuleSet_Search_DomainVsCIDR(t *testing.T) {
 	assert.Equal(t, "by-cidr", r.Name)
 }
 
-func TestRuleSet_HasCIDRRuleAtOrAbove(t *testing.T) {
-	t.Run("no cidr rules", func(t *testing.T) {
-		rs := NewRuleSet()
-		assert.NoError(t, rs.Add(mkRule("by-domain", 10, []string{"example.com"}, nil)))
-		assert.False(t, rs.HasCIDRRuleAtOrAbove(0))
-	})
-
-	t.Run("compares against the highest cidr priority", func(t *testing.T) {
-		rs := NewRuleSet()
-		assert.NoError(t, rs.Add(mkRule("by-domain", 50, []string{"example.com"}, nil)))
-		assert.NoError(t, rs.Add(mkRule("low", 5, nil, []string{"10.0.0.0/8"})))
-		assert.NoError(t, rs.Add(mkRule("high", 20, nil, []string{"1.2.3.0/24"})))
-
-		assert.True(t, rs.HasCIDRRuleAtOrAbove(19))
-		assert.True(t, rs.HasCIDRRuleAtOrAbove(20))
-		assert.False(t, rs.HasCIDRRuleAtOrAbove(21))
-	})
-}
-
 func TestRuleSet_Search_ReturnsClone(t *testing.T) {
 	rs := NewRuleSet()
 	assert.NoError(t, rs.Add(mkRule("r", 10, []string{"example.com"}, nil)))

@@ -19,7 +19,7 @@ import (
 
 type UdpAssociateHandler struct {
 	logger   zerolog.Logger
-	pool     *netutil.ConnRegistry[netutil.NATKey]
+	pool     *netutil.ConnRegistry[UDPFlowKey]
 	desyncer *desync.UDPDesyncer
 	ruleSet  *rule.RuleSet
 	cfg      *config.RuntimeConfig
@@ -31,7 +31,7 @@ type UdpAssociateHandler struct {
 
 func NewUdpAssociateHandler(
 	logger zerolog.Logger,
-	pool *netutil.ConnRegistry[netutil.NATKey],
+	pool *netutil.ConnRegistry[UDPFlowKey],
 	desyncer *desync.UDPDesyncer,
 	ruleSet *rule.RuleSet,
 	cfg *config.RuntimeConfig,
@@ -133,25 +133,16 @@ func (h *UdpAssociateHandler) Handle(
 			continue
 		}
 
+		// A domain name is resolved first, then matched together with the
+		// address it resolves to.
 		dstHost, _, _ := net.SplitHostPort(dstAddrStr)
-		isName := net.ParseIP(dstHost) == nil
-
-		// A domain name is matched before it is resolved, so a name that is
-		// blocked whatever it resolves to is never looked up.
-		var nameMatch *config.Rule
-		if isName {
+		var dstName string
+		if net.ParseIP(dstHost) == nil {
 			if dstHost == "" {
 				logger.Debug().Msg("dropped udp packet with an empty domain name")
 				continue
 			}
-
-			nameMatch = h.matchDomain(dstHost)
-			if h.blockedByName(nameMatch) {
-				// Drop only this datagram; the association stays up for the
-				// client's other destinations.
-				logger.Debug().Str("addr", dstAddrStr).Msg("request is blocked by policy")
-				continue
-			}
+			dstName = dstHost
 		}
 
 		// Resolve address to construct Destination
@@ -170,25 +161,20 @@ func (h *UdpAssociateHandler) Handle(
 			continue
 		}
 
-		// Key: Client Addr -> Target Addr (Zero Allocation Struct)
-		key := netutil.NewNATKey(srcAddr.IP, srcAddr.Port, dstAddr.IP, dstAddr.Port)
+		matched, cfg := h.destinationConfig(logger, dstName, dstAddr.IP)
+		if matched != nil && matched.Block {
+			// Drop only this datagram; the association stays up for the
+			// client's other destinations.
+			logger.Debug().Str("addr", dstAddrStr).Msg("request is blocked by policy")
+			continue
+		}
+
+		// Each destination and selected rule gets its own flow, so the flow
+		// carries that rule's settings whichever name or address reached it.
+		key := newUDPFlowKey(srcAddr, dstAddr, matched)
 
 		// Check if connection already exists in the pool
 		cachedConn, cached := h.pool.Fetch(key)
-
-		// The pool is keyed by the resolved address, so a flow may have been
-		// created for another name of it. A name's block decision therefore
-		// applies to every datagram sent to that name, not just the first.
-		var cfg *config.RuntimeConfig
-		if !cached || isName {
-			var blocked bool
-			cfg, blocked = h.destinationConfig(logger, nameMatch, dstAddr.IP)
-			if blocked {
-				logger.Debug().Str("addr", dstAddrStr).Msg("request is blocked by policy")
-				continue
-			}
-		}
-
 		if cached {
 			logger.Debug().
 				Str("key", fmt.Sprintf("%s > %s", srcAddr.String(), dstAddr.String())).
@@ -248,49 +234,63 @@ func (h *UdpAssociateHandler) Handle(
 	}
 }
 
-// matchDomain returns the rule matching a destination name, or nil.
-func (h *UdpAssociateHandler) matchDomain(name string) *config.Rule {
-	if h.ruleSet == nil {
-		return nil
-	}
-
-	return h.ruleSet.Search([]rule.Query{{Type: rule.MatchTypeDomain, Value: name}})
-}
-
-// blockedByName reports whether nameMatch blocks its destination whatever
-// address the name resolves to. destinationConfig lets an address match
-// win at the same or a higher priority, so the name decides alone only
-// while no CIDR rule reaches its priority.
-func (h *UdpAssociateHandler) blockedByName(nameMatch *config.Rule) bool {
-	return nameMatch != nil &&
-		nameMatch.Block &&
-		!h.ruleSet.HasCIDRRuleAtOrAbove(nameMatch.Priority)
-}
-
-// destinationConfig returns the config for one destination of an
-// association, and whether the matched rule blocks that destination.
-// Rules match the way they do for CONNECT: by the resolved address and,
-// when the client sent a domain name, by that name (nameMatch, from
-// matchDomain); the higher-priority match wins, the address on a tie.
+// destinationConfig selects the rule for one destination of an
+// association and returns it with the config it applies; matched is nil
+// when no rule matches, and cfg is then the base config. Rules match the
+// way they do for CONNECT: by the resolved address and, when the client
+// sent a domain name (name is empty otherwise), by that name; the
+// higher-priority match wins, the address on a tie.
 func (h *UdpAssociateHandler) destinationConfig(
 	logger zerolog.Logger,
-	nameMatch *config.Rule,
+	name string,
 	addr net.IP,
-) (cfg *config.RuntimeConfig, blocked bool) {
+) (matched *config.Rule, cfg *config.RuntimeConfig) {
 	if h.ruleSet == nil {
-		return h.cfg, false
+		return nil, h.cfg
 	}
 
+	var nameMatch *config.Rule
+	if name != "" {
+		nameMatch = h.ruleSet.Search(
+			[]rule.Query{{Type: rule.MatchTypeDomain, Value: name}},
+		)
+	}
 	addrMatch := h.ruleSet.Search(
 		[]rule.Query{{Type: rule.MatchTypeAddr, Value: addr.String()}},
 	)
-	matched := rule.HigherPriority(addrMatch, nameMatch)
+	matched = rule.HigherPriority(addrMatch, nameMatch)
 	if matched == nil {
-		return h.cfg, false
+		return nil, h.cfg
 	}
 
 	logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
-	return &matched.Config, matched.Block
+	return matched, &matched.Config
+}
+
+// UDPFlowKey identifies a remote flow of a UDP association: the client's
+// address, the destination's address, and the rule selected for the
+// destination.
+type UDPFlowKey struct {
+	nat netutil.NATKey
+
+	// rule identifies the selected rule by its Match, which each rule
+	// allocates once and shares with the clones that rule.RuleSet.Search
+	// returns; nil when no rule matched.
+	rule *config.MatchAttrs
+}
+
+func newUDPFlowKey(src, dst *net.UDPAddr, matched *config.Rule) UDPFlowKey {
+	key := UDPFlowKey{nat: netutil.NewNATKey(src.IP, src.Port, dst.IP, dst.Port)}
+	if matched != nil {
+		key.rule = matched.Match
+	}
+	return key
+}
+
+// Bytes returns the address part of the key; the flows of one client and
+// destination under different rules share a cache shard.
+func (k UDPFlowKey) Bytes() []byte {
+	return k.nat.Bytes()
 }
 
 func (h *UdpAssociateHandler) relayInboundUDP(
@@ -299,7 +299,7 @@ func (h *UdpAssociateHandler) relayInboundUDP(
 	rConn *netutil.IdleTimeoutConn,
 	clientAddr *net.UDPAddr,
 	targetAddr *net.UDPAddr,
-	key netutil.NATKey,
+	key UDPFlowKey,
 	flows *associationFlows,
 ) {
 	defer flows.release(key, rConn)
@@ -332,22 +332,22 @@ func (h *UdpAssociateHandler) relayInboundUDP(
 // terminates when the TCP connection that the UDP ASSOCIATE request arrived
 // on terminates" (RFC 1928, section 6).
 type associationFlows struct {
-	pool *netutil.ConnRegistry[netutil.NATKey]
+	pool *netutil.ConnRegistry[UDPFlowKey]
 
 	mu    sync.Mutex
-	conns map[netutil.NATKey]*netutil.IdleTimeoutConn
+	conns map[UDPFlowKey]*netutil.IdleTimeoutConn
 }
 
 func newAssociationFlows(
-	pool *netutil.ConnRegistry[netutil.NATKey],
+	pool *netutil.ConnRegistry[UDPFlowKey],
 ) *associationFlows {
 	return &associationFlows{
 		pool:  pool,
-		conns: make(map[netutil.NATKey]*netutil.IdleTimeoutConn),
+		conns: make(map[UDPFlowKey]*netutil.IdleTimeoutConn),
 	}
 }
 
-func (f *associationFlows) add(key netutil.NATKey, conn *netutil.IdleTimeoutConn) {
+func (f *associationFlows) add(key UDPFlowKey, conn *netutil.IdleTimeoutConn) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.conns[key] = conn
@@ -355,7 +355,7 @@ func (f *associationFlows) add(key netutil.NATKey, conn *netutil.IdleTimeoutConn
 
 // release stops tracking conn and evicts it from the pool, which closes it.
 // A newer flow stored under the same key is left alone.
-func (f *associationFlows) release(key netutil.NATKey, conn *netutil.IdleTimeoutConn) {
+func (f *associationFlows) release(key UDPFlowKey, conn *netutil.IdleTimeoutConn) {
 	f.mu.Lock()
 	if f.conns[key] == conn {
 		delete(f.conns, key)
@@ -370,7 +370,7 @@ func (f *associationFlows) release(key netutil.NATKey, conn *netutil.IdleTimeout
 func (f *associationFlows) releaseAll() {
 	f.mu.Lock()
 	conns := f.conns
-	f.conns = make(map[netutil.NATKey]*netutil.IdleTimeoutConn)
+	f.conns = make(map[UDPFlowKey]*netutil.IdleTimeoutConn)
 	f.mu.Unlock()
 
 	for key, conn := range conns {

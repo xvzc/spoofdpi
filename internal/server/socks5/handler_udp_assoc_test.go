@@ -55,17 +55,18 @@ func newTestUdpAssociateHandler(
 }
 
 // destinationConfigFor runs h.destinationConfig for a destination host the
-// way Handle does: a domain name is matched first.
+// way Handle does: only a domain name is passed as the name.
 func destinationConfigFor(
 	h *UdpAssociateHandler,
 	host string,
 	addr net.IP,
 ) (*config.RuntimeConfig, bool) {
-	var nameMatch *config.Rule
+	var name string
 	if net.ParseIP(host) == nil {
-		nameMatch = h.matchDomain(host)
+		name = host
 	}
-	return h.destinationConfig(zerolog.Nop(), nameMatch, addr)
+	matched, cfg := h.destinationConfig(zerolog.Nop(), name, addr)
+	return cfg, matched != nil && matched.Block
 }
 
 func TestUdpAssociateHandler_DestinationConfig(t *testing.T) {
@@ -256,10 +257,10 @@ func (a *udpAssociation) receive(t *testing.T) string {
 	return string(payload)
 }
 
-// key returns the pool key of the client's flow to dst.
-func (a *udpAssociation) key(dst *net.UDPAddr) netutil.NATKey {
-	src := a.client.LocalAddr().(*net.UDPAddr)
-	return netutil.NewNATKey(src.IP, src.Port, dst.IP, dst.Port)
+// key returns the pool key of the client's flow to dst under the matched
+// rule (nil for none).
+func (a *udpAssociation) key(dst *net.UDPAddr, matched *config.Rule) UDPFlowKey {
+	return newUDPFlowKey(a.client.LocalAddr().(*net.UDPAddr), dst, matched)
 }
 
 // startUDPEcho runs a loopback UDP server that echoes each datagram.
@@ -286,7 +287,7 @@ func startUDPEcho(t *testing.T) *net.UDPAddr {
 
 func newRelayingUdpAssociateHandler(
 	t *testing.T,
-	pool *netutil.ConnRegistry[netutil.NATKey],
+	pool *netutil.ConnRegistry[UDPFlowKey],
 	base *config.RuntimeConfig,
 	rules ...*config.Rule,
 ) *UdpAssociateHandler {
@@ -314,7 +315,7 @@ func TestUdpAssociateHandler_Handle_BlockedDestination(t *testing.T) {
 		Match:    &config.MatchAttrs{CIDRs: []string{"192.0.2.0/24"}},
 	}
 
-	pool := netutil.NewConnRegistry[netutil.NATKey](16)
+	pool := netutil.NewConnRegistry[UDPFlowKey](16)
 	h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{}, blockRule)
 	a := startUdpAssociation(t, h)
 
@@ -327,8 +328,8 @@ func TestUdpAssociateHandler_Handle_BlockedDestination(t *testing.T) {
 	// The association still relays to other destinations.
 	assert.Equal(t, "hello", a.receive(t))
 
-	assert.False(t, pool.Has(a.key(blocked)), "blocked destination was dialed")
-	assert.True(t, pool.Has(a.key(allowed)))
+	assert.False(t, pool.Has(a.key(blocked, blockRule)), "blocked destination was dialed")
+	assert.True(t, pool.Has(a.key(allowed, nil)))
 }
 
 func TestUdpAssociateHandler_Handle_IdleTimeout(t *testing.T) {
@@ -370,7 +371,7 @@ func TestUdpAssociateHandler_Handle_IdleTimeout(t *testing.T) {
 			base := &config.RuntimeConfig{}
 			base.Conn.UDPIdleTimeout = tc.baseTimeout
 
-			pool := netutil.NewConnRegistry[netutil.NATKey](16)
+			pool := netutil.NewConnRegistry[UDPFlowKey](16)
 			h := newRelayingUdpAssociateHandler(t, pool, base, tc.rules...)
 			a := startUdpAssociation(t, h)
 
@@ -378,15 +379,22 @@ func TestUdpAssociateHandler_Handle_IdleTimeout(t *testing.T) {
 			a.send(t, dst, "hello")
 			require.Equal(t, "hello", a.receive(t))
 
+			var matched *config.Rule
+			if len(tc.rules) > 0 {
+				matched = tc.rules[0]
+			}
+			key := a.key(dst, matched)
+			require.True(t, pool.Has(key))
+
 			// The pool only drops the flow once its relay goroutine has
 			// given up on the idle connection.
 			if tc.wantEvicted {
 				assert.Eventually(t, func() bool {
-					return !pool.Has(a.key(dst))
+					return !pool.Has(key)
 				}, 5*time.Second, 10*time.Millisecond)
 			} else {
 				assert.Never(t, func() bool {
-					return !pool.Has(a.key(dst))
+					return !pool.Has(key)
 				}, 2*short, 10*time.Millisecond)
 			}
 		})
@@ -437,21 +445,15 @@ func TestUdpAssociateHandler_Handle_NameBlock(t *testing.T) {
 	tcs := []struct {
 		name        string
 		cidrRule    *config.Rule
-		wantLookups int32
 		wantRelayed bool
 	}{
-		{"no cidr rule: dropped unresolved", nil, 0, false},
+		{"no cidr rule: dropped", nil, false},
+		{"lower-priority cidr rule can't override", cidrRule("127.0.0.0/8", 5), false},
+		{"equal-priority cidr rule overrides the name", cidrRule("127.0.0.0/8", 10), true},
 		{
-			"lower-priority cidr rule can't override: dropped unresolved",
-			cidrRule("127.0.0.0/8", 5), 0, false,
-		},
-		{
-			"equal-priority cidr rule overrides the name",
-			cidrRule("127.0.0.0/8", 10), 1, true,
-		},
-		{
-			"higher-priority cidr rule elsewhere: resolved, then dropped",
-			cidrRule("192.0.2.0/24", 20), 1, false,
+			"higher-priority cidr rule elsewhere: dropped",
+			cidrRule("192.0.2.0/24", 20),
+			false,
 		},
 	}
 
@@ -462,7 +464,7 @@ func TestUdpAssociateHandler_Handle_NameBlock(t *testing.T) {
 				rules = append(rules, tc.cidrRule)
 			}
 
-			pool := netutil.NewConnRegistry[netutil.NATKey](16)
+			pool := netutil.NewConnRegistry[UDPFlowKey](16)
 			h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{}, rules...)
 			dst := startUDPEcho(t)
 			resolver := &stubResolver{names: map[string]net.IP{name: dst.IP}}
@@ -479,51 +481,79 @@ func TestUdpAssociateHandler_Handle_NameBlock(t *testing.T) {
 				want = "by name"
 			}
 			assert.Equal(t, want, a.receive(t))
-			assert.Equal(t, tc.wantLookups, resolver.lookups.Load())
+			// The name is resolved before the rule is selected.
+			assert.Equal(t, int32(1), resolver.lookups.Load())
 		})
 	}
 }
 
-func TestUdpAssociateHandler_Handle_NameBlockOnCachedFlow(t *testing.T) {
+func TestUdpAssociateHandler_Handle_NameBlockOnFlowOpenedByAddr(t *testing.T) {
 	const name = "blocked.test"
+
+	blockName := &config.Rule{
+		Name:     "block name",
+		Priority: 10,
+		Block:    true,
+		Match:    &config.MatchAttrs{Domains: []string{name}},
+	}
+
+	pool := netutil.NewConnRegistry[UDPFlowKey](16)
+	h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{}, blockName)
+	dst := startUDPEcho(t)
+	resolver := &stubResolver{names: map[string]net.IP{name: dst.IP}}
+	h.resolveUDPAddr = resolver.resolve
+	a := startUdpAssociation(t, h)
+
+	// The address opens a flow to the address the name resolves to.
+	a.send(t, dst, "first")
+	require.Equal(t, "first", a.receive(t))
+	require.True(t, pool.Has(a.key(dst, nil)))
+
+	a.sendToName(t, name, dst.Port, "by name")
+	a.send(t, dst, "second")
+
+	assert.Equal(t, "second", a.receive(t))
+	assert.Equal(t, 1, pool.Size())
+}
+
+func TestUdpAssociateHandler_Handle_AddrBlockOnFlowOpenedByName(t *testing.T) {
+	const name = "allowed.test"
 
 	rules := []*config.Rule{
 		{
-			Name:     "block name",
-			Priority: 10,
-			Block:    true,
+			Name:     "allow name",
+			Priority: 20,
 			Match:    &config.MatchAttrs{Domains: []string{name}},
 		},
-		// A CIDR rule that could outrank the name makes the handler
-		// resolve it, so the datagram reaches the flow lookup.
 		{
-			Name:     "elsewhere",
-			Priority: 20,
-			Match:    &config.MatchAttrs{CIDRs: []string{"192.0.2.0/24"}},
+			Name:     "block addr",
+			Priority: 10,
+			Block:    true,
+			Match:    &config.MatchAttrs{CIDRs: []string{"127.0.0.0/8"}},
 		},
 	}
 
-	pool := netutil.NewConnRegistry[netutil.NATKey](16)
+	pool := netutil.NewConnRegistry[UDPFlowKey](16)
 	h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{}, rules...)
 	dst := startUDPEcho(t)
 	resolver := &stubResolver{names: map[string]net.IP{name: dst.IP}}
 	h.resolveUDPAddr = resolver.resolve
 	a := startUdpAssociation(t, h)
 
-	// The address creates the flow that the name resolves to.
-	a.send(t, dst, "first")
+	// The name's higher-priority allow rule opens the flow.
+	a.sendToName(t, name, dst.Port, "first")
 	require.Equal(t, "first", a.receive(t))
-	require.True(t, pool.Has(a.key(dst)))
+	require.True(t, pool.Has(a.key(dst, rules[0])))
 
+	// The address alone is blocked, though the flow it maps to is open.
+	a.send(t, dst, "by addr")
 	a.sendToName(t, name, dst.Port, "by name")
-	a.send(t, dst, "second")
 
-	assert.Equal(t, "second", a.receive(t))
-	assert.Equal(t, int32(1), resolver.lookups.Load())
+	assert.Equal(t, "by name", a.receive(t))
 }
 
 func TestUdpAssociateHandler_Handle_InvalidDestination(t *testing.T) {
-	pool := netutil.NewConnRegistry[netutil.NATKey](16)
+	pool := netutil.NewConnRegistry[UDPFlowKey](16)
 	h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{})
 	dst := startUDPEcho(t)
 	// "unset.test" resolves to no address.
@@ -540,14 +570,14 @@ func TestUdpAssociateHandler_Handle_InvalidDestination(t *testing.T) {
 	assert.Equal(t, "valid", a.receive(t))
 	// The empty name is dropped before any lookup.
 	assert.Equal(t, int32(1), resolver.lookups.Load())
-	assert.False(t, pool.Has(a.key(unspecified)))
+	assert.False(t, pool.Has(a.key(unspecified, nil)))
 	assert.Equal(t, 1, pool.Size())
 }
 
 func TestUdpAssociateHandler_Handle_EndReleasesFlows(t *testing.T) {
 	// The pool splits its capacity across shards; a small pool could evict
 	// one association's flow for the other's by LRU.
-	pool := netutil.NewConnRegistry[netutil.NATKey](4096)
+	pool := netutil.NewConnRegistry[UDPFlowKey](4096)
 	h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{})
 	dst := startUDPEcho(t)
 
@@ -560,12 +590,16 @@ func TestUdpAssociateHandler_Handle_EndReleasesFlows(t *testing.T) {
 	a := startUdpAssociation(t, h)
 	a.send(t, dst, "hello")
 	require.Equal(t, "hello", a.receive(t))
-	require.True(t, pool.Has(a.key(dst)))
+	require.True(t, pool.Has(a.key(dst, nil)))
 
 	a.end()
 
-	assert.False(t, pool.Has(a.key(dst)), "flow outlived its association")
-	assert.True(t, pool.Has(other.key(dst)), "another association's flow was evicted")
+	assert.False(t, pool.Has(a.key(dst, nil)), "flow outlived its association")
+	assert.True(
+		t,
+		pool.Has(other.key(dst, nil)),
+		"another association's flow was evicted",
+	)
 	// The relay goroutine exits once its connection is closed. Polled here
 	// rather than with assert.Eventually, whose own goroutines would count.
 	deadline := time.Now().Add(5 * time.Second)
@@ -582,4 +616,137 @@ func TestUdpAssociateHandler_Handle_EndReleasesFlows(t *testing.T) {
 	// The other association keeps relaying.
 	other.send(t, dst, "still up")
 	assert.Equal(t, "still up", other.receive(t))
+}
+
+// flowPerRulePoolSize leaves room for several flows per pool shard; the
+// flows of one client and destination under different rules share a shard.
+const flowPerRulePoolSize = 4096
+
+func TestUdpAssociateHandler_Handle_FlowPerRule(t *testing.T) {
+	const nameA, nameB, nameC = "a.test", "b.test", "c.test"
+	const short, long = 400 * time.Millisecond, time.Hour
+
+	domainRule := func(
+		priority uint16,
+		timeout time.Duration,
+		names ...string,
+	) *config.Rule {
+		r := &config.Rule{
+			Name:     names[0],
+			Priority: priority,
+			Match:    &config.MatchAttrs{Domains: names},
+		}
+		r.Config.Conn.UDPIdleTimeout = timeout
+		return r
+	}
+
+	t.Run("names under different rules get their own flows", func(t *testing.T) {
+		ruleA := domainRule(10, short, nameA)
+		ruleB := domainRule(10, long, nameB)
+
+		pool := netutil.NewConnRegistry[UDPFlowKey](flowPerRulePoolSize)
+		h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{}, ruleA, ruleB)
+		dst := startUDPEcho(t)
+		resolver := &stubResolver{names: map[string]net.IP{nameA: dst.IP, nameB: dst.IP}}
+		h.resolveUDPAddr = resolver.resolve
+		a := startUdpAssociation(t, h)
+
+		a.sendToName(t, nameA, dst.Port, "a")
+		require.Equal(t, "a", a.receive(t))
+		a.sendToName(t, nameB, dst.Port, "b")
+		require.Equal(t, "b", a.receive(t))
+
+		require.True(t, pool.Has(a.key(dst, ruleA)))
+		require.True(t, pool.Has(a.key(dst, ruleB)))
+		assert.Equal(t, 2, pool.Size())
+
+		// Each flow idles out after its own rule's timeout.
+		assert.Eventually(t, func() bool {
+			return !pool.Has(a.key(dst, ruleA))
+		}, 5*time.Second, 10*time.Millisecond)
+		assert.True(t, pool.Has(a.key(dst, ruleB)))
+	})
+
+	t.Run("names under the same rule share a flow", func(t *testing.T) {
+		shared := domainRule(10, long, nameA, nameB)
+
+		pool := netutil.NewConnRegistry[UDPFlowKey](flowPerRulePoolSize)
+		h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{}, shared)
+		dst := startUDPEcho(t)
+		resolver := &stubResolver{names: map[string]net.IP{nameA: dst.IP, nameB: dst.IP}}
+		h.resolveUDPAddr = resolver.resolve
+		a := startUdpAssociation(t, h)
+
+		a.sendToName(t, nameA, dst.Port, "a")
+		require.Equal(t, "a", a.receive(t))
+		a.sendToName(t, nameB, dst.Port, "b")
+		require.Equal(t, "b", a.receive(t))
+
+		assert.True(t, pool.Has(a.key(dst, shared)))
+		assert.Equal(t, 1, pool.Size())
+	})
+
+	t.Run("an address uses the address rule's flow", func(t *testing.T) {
+		nameRule := domainRule(20, long, nameC)
+		addrRule := &config.Rule{
+			Name:     "loopback",
+			Priority: 10,
+			Match:    &config.MatchAttrs{CIDRs: []string{"127.0.0.0/8"}},
+		}
+
+		pool := netutil.NewConnRegistry[UDPFlowKey](flowPerRulePoolSize)
+		h := newRelayingUdpAssociateHandler(
+			t,
+			pool,
+			&config.RuntimeConfig{},
+			nameRule,
+			addrRule,
+		)
+		dst := startUDPEcho(t)
+		resolver := &stubResolver{names: map[string]net.IP{nameC: dst.IP}}
+		h.resolveUDPAddr = resolver.resolve
+		a := startUdpAssociation(t, h)
+
+		a.sendToName(t, nameC, dst.Port, "by name")
+		require.Equal(t, "by name", a.receive(t))
+		a.send(t, dst, "by addr")
+		require.Equal(t, "by addr", a.receive(t))
+
+		assert.True(t, pool.Has(a.key(dst, nameRule)))
+		assert.True(t, pool.Has(a.key(dst, addrRule)))
+		assert.Equal(t, 2, pool.Size())
+	})
+}
+
+func TestUdpAssociateHandler_Handle_ReplySourceIsDestination(t *testing.T) {
+	const name = "a.test"
+
+	nameRule := &config.Rule{
+		Name:     name,
+		Priority: 10,
+		Match:    &config.MatchAttrs{Domains: []string{name}},
+	}
+
+	pool := netutil.NewConnRegistry[UDPFlowKey](flowPerRulePoolSize)
+	h := newRelayingUdpAssociateHandler(t, pool, &config.RuntimeConfig{}, nameRule)
+	dst := startUDPEcho(t)
+	resolver := &stubResolver{names: map[string]net.IP{name: dst.IP}}
+	h.resolveUDPAddr = resolver.resolve
+	a := startUdpAssociation(t, h)
+
+	// Both flows to dst reply with dst as the source in the SOCKS5 header.
+	for _, send := range []func(){
+		func() { a.sendToName(t, name, dst.Port, "x") },
+		func() { a.send(t, dst, "x") },
+	} {
+		send()
+		require.NoError(t, a.client.SetReadDeadline(time.Now().Add(5*time.Second)))
+		buf := make([]byte, 1500)
+		n, _, err := a.client.ReadFromUDP(buf)
+		require.NoError(t, err)
+		src, _, err := parseUDPHeader(buf[:n])
+		require.NoError(t, err)
+		assert.Equal(t, dst.String(), src)
+	}
+	assert.Equal(t, 2, pool.Size())
 }

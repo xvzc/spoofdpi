@@ -17,6 +17,20 @@ The top-level `[[rules]]` array contains one table per rule. Each rule consists 
 | `priority` | Int    | Order of precedence. Higher numbers take priority.|
 | `block`    | Bool   | If `true`, completely blocks connections matching this rule. |
 
+## Rule Selection
+
+Each TCP connection, and each UDP destination, uses exactly one rule. Its address is matched against `cidrs` and, when its domain name is known, the name is matched against `domains`. The higher-priority of the two matches is selected, and the address match wins a tie. All of the selected rule's settings apply: `block`, `tls`, `udp`, `connection` and `dns`. When no rule matches, the global settings apply.
+
+| Traffic                | Address                           | Domain name                          |
+| :--------------------- | :-------------------------------- | :----------------------------------- |
+| SOCKS5 `CONNECT`       | Requested or resolved address     | Requested name, if any               |
+| HTTP and HTTPS proxy   | Requested or resolved address     | Requested host, if a name            |
+| TUN TCP                | Destination of the packets        | TLS SNI, if present                  |
+| TUN UDP                | Destination of the packets        | None                                 |
+| SOCKS5 `UDP ASSOCIATE` | Resolved address of each datagram | Name the datagram is sent to, if any |
+
+For SOCKS5 `CONNECT` and the HTTP and HTTPS proxy, a requested name is matched before it is resolved, so the domain rule's `dns` settings decide how it is looked up. SOCKS5 `UDP ASSOCIATE` resolves names with the system resolver (see [UDP traffic](#udp-traffic)).
+
 ## Match Criteria (`match`)
 
 You can specify a `domains` list or a `cidrs` list.
@@ -62,11 +76,11 @@ tls = { fake-preflight = 5 }
 
 ### UDP traffic
 
-UDP traffic is matched per destination, so one flow of datagrams can use different settings for different destinations. In TUN mode and for SOCKS5 `UDP ASSOCIATE`, each destination address is matched against `cidrs`. When a SOCKS5 client sends a domain name instead of an address, that name is also matched against `domains`, and the higher-priority match wins. The name is resolved with the system resolver, so `dns` overrides do not apply to it.
+UDP traffic is matched per destination, so one flow of datagrams can use different settings for different destinations. A SOCKS5 client may send each datagram to a domain name instead of an address; the name is resolved with the system resolver, so `dns` overrides do not apply to it.
 
 A matching rule with `block = true` drops the datagrams to that destination. In TUN mode the flow is closed; a SOCKS5 association stays open for the client's other destinations.
 
-A SOCKS5 association keeps one flow per resolved address and port, and its settings come from the first datagram that opens it. When several names resolve to the same address and port, the first name to reach it decides the flow's settings for all of them. Only `block` is checked again for every datagram sent to a name, so a blocked name stays blocked even when another name already opened the flow.
+A SOCKS5 association keeps one flow per destination address, port and selected rule. Names that resolve to the same address and port share a flow only when they select the same rule, so each flow always carries its own rule's settings.
 
 ## DNS Override (`dns`)
 
