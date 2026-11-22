@@ -231,7 +231,11 @@ type (
 )
 
 var (
-	availableDNSModeValues  = []string{"udp", "https", "system"}
+	availableDNSModeValues = []string{"udp", "https", "system"}
+	// availableDNSQueryValues names the DNSQueryType values in logs. They are
+	// no longer option values: the query type follows the ipv6 option.
+	// DNSQueryIPv6 (AAAA only) is not derived yet; it is kept for the record
+	// types chosen by the host's IPv6 egress (see dnsQueryType).
 	availableDNSQueryValues = []string{"ipv4", "ipv6", "all"}
 )
 
@@ -264,29 +268,43 @@ func (t DNSQueryType) MarshalText() ([]byte, error) {
 }
 
 type DNSOptions struct {
-	Mode     DNSModeType  `toml:"mode"`
-	Addr     net.TCPAddr  `toml:"addr"`
-	HTTPSURL string       `toml:"https-url"`
-	QType    DNSQueryType `toml:"qtype"`
+	Mode     DNSModeType `toml:"mode"`
+	Addr     net.TCPAddr `toml:"addr"`
+	HTTPSURL string      `toml:"https-url"`
+	// QType is the record types to query. It is not an option: it is
+	// derived from the ipv6 option of the same RuntimeConfig (see
+	// dnsQueryType), and it is part of the DNS cache key.
+	QType DNSQueryType `toml:"-"`
 	// Timeout bounds each DNS lookup; it must be at least 1ms.
 	Timeout time.Duration `toml:"timeout"`
 }
 
+// dnsQueryType returns the record types to query for a connection whose
+// ipv6 option is ipv6.
+//
+// TODO(ipv6): with ipv6 on, pick the record types by the host's IPv6
+// egress ("auto", Phase 5 of the IPv6 plan) instead of always both.
+func dnsQueryType(ipv6 bool) DNSQueryType {
+	if ipv6 {
+		return DNSQueryAll
+	}
+	return DNSQueryIPv4
+}
+
 // MarshalJSON renders Addr as "host:port" (net.TCPAddr's default
 // JSON dumps each field separately), Timeout via String() (e.g. "5s")
-// and lets the enums use their MarshalText for string output.
+// and lets the enums use their MarshalText for string output. QType is
+// left out: it follows the ipv6 option, which RuntimeConfig shows.
 func (o DNSOptions) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Mode     DNSModeType  `json:"mode"`
-		Addr     string       `json:"addr"`
-		HTTPSURL string       `json:"https-url"`
-		QType    DNSQueryType `json:"qtype"`
-		Timeout  string       `json:"timeout"`
+		Mode     DNSModeType `json:"mode"`
+		Addr     string      `json:"addr"`
+		HTTPSURL string      `json:"https-url"`
+		Timeout  string      `json:"timeout"`
 	}{
 		Mode:     o.Mode,
 		Addr:     o.Addr.String(),
 		HTTPSURL: o.HTTPSURL,
-		QType:    o.QType,
 		Timeout:  o.Timeout.String(),
 	})
 }
@@ -314,8 +332,14 @@ func (o *DNSOptions) UnmarshalTOML(data any) (err error) {
 	) {
 		o.HTTPSURL = *p
 	}
-	if p := findFrom(m, "qtype", parseStringFn(checkDNSQueryType), &err); isOk(p, err) {
-		o.QType = MustParseDNSQueryType(*p)
+	// TODO(deprecated): the record types follow the ipv6 option since
+	// 'qtype' was removed after v1.6.0. Remove this warning with
+	// --dns-qtype (cli.go).
+	if _, ok := m["qtype"]; ok {
+		AddWarnMsg(
+			"'dns.qtype' is deprecated and ignored; " +
+				"set 'ipv6 = true' in [app], or in the rule, to resolve IPv6 addresses",
+		)
 	}
 	// TODO(deprecated): DNS answers are always cached since the 'cache'
 	// option was removed after v1.6.0. Remove this warning with

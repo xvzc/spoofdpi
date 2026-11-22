@@ -248,6 +248,22 @@ func CreateCommand(
 					return nil
 				},
 			},
+
+			// Deprecated and ignored: the record types follow --ipv6.
+			//
+			// TODO(deprecated): removed after v1.6.0; remove with the
+			// 'qtype' key of DNSOptions (types.go).
+			&cli.StringFlag{
+				Name:     "dns-qtype",
+				Hidden:   true,
+				OnlyOnce: true,
+				Action: func(ctx context.Context, cmd *cli.Command, v string) error {
+					AddWarnMsg(
+						"'--dns-qtype' is deprecated and ignored; use '--ipv6' to resolve IPv6 addresses",
+					)
+					return nil
+				},
+			},
 		},
 			DNSFlags(func(apply func(*DNSOptions)) {
 				cliOverrides = append(cliOverrides, func(cfg *Config) {
@@ -451,8 +467,8 @@ func CreateCommand(
 				&cli.BoolFlag{
 					Name: "ipv6",
 					Usage: fmt.Sprintf(`
-				Enable IPv6 (experimental). Rules without their own 'ipv6' follow
-				this option. (default: %v)`,
+				Enable IPv6 (experimental): DNS lookups ask for IPv6 addresses too.
+				Rules without their own 'ipv6' follow this option. (default: %v)`,
 						defaultCfg.App.IPv6,
 					),
 					OnlyOnce: true,
@@ -587,8 +603,8 @@ GLOBAL OPTIONS:
 	)
 }
 
-// DNSFlags builds the --dns-addr, --dns-mode, --dns-https-url, --dns-qtype
-// and --dns-timeout flags. Each flag the user sets validates its value and
+// DNSFlags builds the --dns-addr, --dns-mode, --dns-https-url and
+// --dns-timeout flags. Each flag the user sets validates its value and
 // passes a closure that writes the parsed value to override; the caller
 // decides when to run it, e.g. after the TOML is loaded so the flags win.
 func DNSFlags(override func(apply func(*DNSOptions))) []cli.Flag {
@@ -646,26 +662,6 @@ func DNSFlags(override func(apply func(*DNSOptions))) []cli.Flag {
 				url := v
 				override(func(o *DNSOptions) {
 					o.HTTPSURL = url
-				})
-				return nil
-			},
-		},
-
-		&cli.StringFlag{
-			Name: "dns-qtype",
-			Usage: fmt.Sprintf(`%s
-				Filters DNS queries by record type (A for IPv4, AAAA for IPv6).
-				(default: %q)`,
-				enumUsage(availableDNSQueryValues),
-				defaultDNS.QType.String(),
-			),
-			Value:     "ipv4",
-			OnlyOnce:  true,
-			Validator: checkDNSQueryType,
-			Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-				qtype := MustParseDNSQueryType(v)
-				override(func(o *DNSOptions) {
-					o.QType = qtype
 				})
 				return nil
 			},

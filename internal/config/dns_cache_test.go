@@ -13,8 +13,8 @@ func TestDNSCacheDeprecated(t *testing.T) {
 	const warnTOML = "'dns.cache' is deprecated and ignored; DNS answers are always cached"
 
 	t.Run("dns section", func(t *testing.T) {
-		cfg, warns := runWithTOML(t, "[dns]\ncache = true\nqtype = \"all\"\n")
-		assert.Equal(t, DNSQueryAll, cfg.DNS.QType)
+		cfg, warns := runWithTOML(t, "[dns]\ncache = true\nmode = \"system\"\n")
+		assert.Equal(t, DNSModeSystem, cfg.DNS.Mode)
 		assert.Contains(t, warns, warnTOML)
 	})
 
@@ -23,10 +23,10 @@ func TestDNSCacheDeprecated(t *testing.T) {
 [[rules]]
 name = "r"
 match = { domains = ["example.com"] }
-dns = { cache = false, qtype = "ipv6" }
+dns = { cache = false, mode = "https" }
 `)
 		require.Len(t, cfg.Rules, 1)
-		assert.Equal(t, DNSQueryIPv6, cfg.Rules[0].Config.DNS.QType)
+		assert.Equal(t, DNSModeHTTPS, cfg.Rules[0].Config.DNS.Mode)
 		assert.Contains(t, warns, "rule 0: "+warnTOML)
 	})
 
@@ -40,7 +40,7 @@ dns = { cache = false, qtype = "ipv6" }
 	})
 
 	t.Run("no warning without the option", func(t *testing.T) {
-		_, warns := runWithTOML(t, "[dns]\nqtype = \"all\"\n")
+		_, warns := runWithTOML(t, "[dns]\nmode = \"system\"\n")
 		assert.Empty(t, warns)
 	})
 }

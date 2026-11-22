@@ -183,32 +183,6 @@ func TestMustParseDNSModeType(t *testing.T) {
 	}
 }
 
-func TestMustParseDNSQueryType(t *testing.T) {
-	tcs := []struct {
-		name      string
-		input     string
-		expected  DNSQueryType
-		wantPanic bool
-	}{
-		{"ipv4", "ipv4", DNSQueryIPv4, false},
-		{"ipv6", "ipv6", DNSQueryIPv6, false},
-		{"all", "all", DNSQueryAll, false},
-		{"invalid", "invalid", 0, true},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.wantPanic {
-				assert.Panics(t, func() {
-					MustParseDNSQueryType(tc.input)
-				})
-			} else {
-				assert.Equal(t, tc.expected, MustParseDNSQueryType(tc.input))
-			}
-		})
-	}
-}
-
 func TestMustParseHTTPSSplitModeType(t *testing.T) {
 	tcs := []struct {
 		name      string

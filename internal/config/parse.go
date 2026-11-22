@@ -112,19 +112,6 @@ func MustParseDNSModeType(s string) DNSModeType {
 	}
 }
 
-func MustParseDNSQueryType(s string) DNSQueryType {
-	switch s {
-	case "ipv4":
-		return DNSQueryIPv4
-	case "ipv6":
-		return DNSQueryIPv6
-	case "all": //nolint:goconst
-		return DNSQueryAll
-	default:
-		panic(fmt.Sprintf("cannot parse %q to DNSQueryType", s))
-	}
-}
-
 // DefaultChunkSize is the chunk size of split-mode "chunk" without a size.
 const DefaultChunkSize uint8 = 35
 

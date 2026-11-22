@@ -69,7 +69,6 @@ var (
 	checkSeqOffset    = int64Range(-math.MaxUint32, math.MaxUint32)
 	checkAppMode      = checkOneOf(availableAppModeValues...)
 	checkDNSMode      = checkOneOf(availableDNSModeValues...)
-	checkDNSQueryType = checkOneOf(availableDNSQueryValues...)
 	checkLogLevel     = checkOneOf(availableLogLevelValues...)
 	checkSegmentFrom  = checkOneOf(availableSegmentFromValues...)
 	checkFreeBSDFibID = int64Range(1, 15)

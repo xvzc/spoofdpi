@@ -148,7 +148,7 @@ func TestDNSOptions_UnmarshalTOML(t *testing.T) {
 				"mode":      "https",
 				"addr":      "8.8.8.8:53",
 				"https-url": "https://dns.google/dns-query",
-				"qtype":     "ipv4",
+				"qtype":     "ipv6",
 				"cache":     true,
 				"timeout":   int64(1000),
 			},
@@ -157,7 +157,7 @@ func TestDNSOptions_UnmarshalTOML(t *testing.T) {
 				assert.Equal(t, DNSModeHTTPS, o.Mode)
 				assert.Equal(t, "8.8.8.8:53", o.Addr.String())
 				assert.Equal(t, "https://dns.google/dns-query", o.HTTPSURL)
-				assert.Equal(t, DNSQueryIPv4, o.QType)
+				assert.Equal(t, DNSQueryIPv4, o.QType, "qtype is ignored")
 				assert.Equal(t, 1000*time.Millisecond, o.Timeout)
 			},
 		},
@@ -505,14 +505,14 @@ func TestDNSOptions_MarshalJSON_addrAsString(t *testing.T) {
 		Mode:     DNSModeHTTPS,
 		Addr:     net.TCPAddr{IP: net.ParseIP("8.8.8.8"), Port: 53},
 		HTTPSURL: "https://dns.google/dns-query",
-		QType:    DNSQueryIPv4,
+		QType:    DNSQueryAll,
 		Timeout:  5000 * time.Millisecond,
 	}
 	b, err := json.Marshal(o)
 	assert.NoError(t, err)
 	const want = `{"mode":"https","addr":"8.8.8.8:53",` +
 		`"https-url":"https://dns.google/dns-query",` +
-		`"qtype":"ipv4","timeout":"5s"}`
+		`"timeout":"5s"}`
 	assert.JSONEq(t, want, string(b))
 }
 

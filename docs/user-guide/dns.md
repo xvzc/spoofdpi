@@ -87,32 +87,19 @@ https-url = "https://1.1.1.1/dns-query"
 
 ---
 
-## `qtype`
+## Record Types
 
-`type: string`
+The record types that spoofdpi asks for a name follow the `ipv6` of the [rule](rules.md#rule-fields) whose `domains` the name matches, or else the global [`ipv6`](app.md#ipv6). This is the rule whose `dns` settings the name is looked up with, which is not always the rule that the connection selects in the end (see [Rule Selection](rules.md#rule-selection)).
 
-### Description
-
-Filters DNS queries by record type (A for IPv4, AAAA for IPv6). `(default: "ipv4")`
-
-Available values are `"ipv4"`, `"ipv6"`, and `"all"`.
+- `ipv6` off (the default): A records only, so names resolve to IPv4 addresses.
+- `ipv6` on: A and AAAA records, so names resolve to IPv4 and IPv6 addresses.
 
 When a name resolves to several addresses, spoofdpi connects with Happy Eyeballs (RFC 8305). It tries the addresses in the order of RFC 6724, alternating between IPv6 and IPv4 when both are present, and starts each attempt 250 ms after the previous one, or as soon as an attempt fails. It uses the first connection that succeeds.
 
-If your *Internet Service Provider (ISP)* doesn't support IPv6, it is recommended to set this option to `"ipv4"` for stability.
+The `qtype` option (`--dns-qtype`, and `qtype` in `[dns]` and in rules) is deprecated. It is ignored with a warning. To migrate:
 
-### Usage
-
-**Command-Line Flag**
-```console
-$ spoofdpi --dns-qtype "all"
-```
-
-**TOML Config**
-```toml
-[dns]
-qtype = "all"
-```
+- `qtype = "all"` or `qtype = "ipv6"`: set `ipv6 = true` in `[app]` (`--ipv6`), or in the rule. Names then resolve to both IPv4 and IPv6 addresses; AAAA records alone can no longer be asked for.
+- `qtype = "ipv4"`: remove it; this is the default.
 
 ---
 
@@ -120,10 +107,10 @@ qtype = "all"
 
 DNS answers are always cached:
 
-- In the `udp` and `https` modes, for the TTL of the records, but at most one day. An answer with a TTL of 0 is not cached. When `qtype` is `"all"` and one of the two queries fails, the addresses of the other are cached for at most 30 seconds.
+- In the `udp` and `https` modes, for the TTL of the records, but at most one day. An answer with a TTL of 0 is not cached. When both A and AAAA records are asked for and one of the two queries fails, the addresses of the other are cached for at most 30 seconds.
 - In the `system` mode, for 30 seconds, since the system resolver does not report TTLs.
 
-An answer is cached for the options it was looked up with: `mode`, `addr` or `https-url`, and `qtype`. A [rule](rules.md#dns-override-dns) with other DNS settings looks the name up again rather than using that answer. Failed lookups are not cached.
+An answer is cached for the options it was looked up with: `mode`, `addr` or `https-url`, and the [record types](#record-types). A [rule](rules.md#dns-override-dns) with other DNS settings looks the name up again rather than using that answer. Failed lookups are not cached.
 
 The `cache` option (`--dns-cache`, and `cache` in `[dns]` and in rules) is deprecated. It is ignored with a warning.
 

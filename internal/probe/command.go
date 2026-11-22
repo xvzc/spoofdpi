@@ -35,10 +35,6 @@ func newCommand(stderr io.Writer) *cli.Command {
 	for _, f := range config.DNSFlags(func(apply func(*config.DNSOptions)) {
 		dnsOverrides = append(dnsOverrides, apply)
 	}) {
-		// Only IPv4 is probed.
-		if f.Names()[0] == "dns-qtype" {
-			continue
-		}
 		// Their usage already states the default, which is not the flag's
 		// zero value: the server's help does not print the latter either.
 		switch f := f.(type) {

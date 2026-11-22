@@ -58,6 +58,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				"--auto-configure-network",
 				"--listen-addr", "127.0.0.1:9090",
 				"--gateway", "192.168.1.1",
+				"--ipv6",
 				"--hop-count-default", "128",
 				"--dns-timeout", "6000",
 				"--tcp-timeout", "5000",
@@ -84,6 +85,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				// Server
 				assert.Equal(t, "127.0.0.1:9090", cfg.App.ListenAddr.String())
 				assert.Equal(t, net.IPv4(192, 168, 1, 1).To4(), cfg.App.Gateway)
+				assert.True(t, cfg.App.IPv6)
 				assert.Equal(t, uint8(128), cfg.Conn.HopCountDefault)
 				assert.Equal(t, 5000*time.Millisecond, cfg.Conn.TCPTimeout)
 				assert.Equal(t, 5000*time.Millisecond, cfg.Conn.UDPIdleTimeout)
@@ -96,7 +98,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 					"https://cloudflare-dns.com/dns-query",
 					cfg.DNS.HTTPSURL,
 				)
-				assert.Equal(t, DNSQueryIPv6, cfg.DNS.QType)
+				assert.Equal(t, DNSQueryAll, cfg.DNS.QType, "follows --ipv6")
 				assert.Equal(t, 6000*time.Millisecond, cfg.DNS.Timeout)
 
 				// HTTPS
@@ -119,13 +121,11 @@ func TestCreateCommand_Flags(t *testing.T) {
 				"--clean",
 				"--log-level", "error",
 				"--dns-mode", "system",
-				"--dns-qtype", "all",
 				"--tls-split-mode", "random",
 			},
 			assert: func(t *testing.T, cfg *Config) {
 				assert.Equal(t, zerolog.ErrorLevel, cfg.App.LogLevel)
 				assert.Equal(t, DNSModeSystem, cfg.DNS.Mode)
-				assert.Equal(t, DNSQueryAll, cfg.DNS.QType)
 				assert.Equal(t, HTTPSSplitModeRandom, cfg.HTTPS.SplitMode)
 			},
 		},
@@ -307,7 +307,6 @@ func TestCreateCommand_OverrideTOML(t *testing.T) {
 	assert.Equal(t, "1.1.1.1:53", capturedCfg.DNS.Addr.String())
 	assert.Equal(t, DNSModeUDP, capturedCfg.DNS.Mode)
 	assert.Equal(t, "https://8.8.8.8/dns-query", capturedCfg.DNS.HTTPSURL)
-	assert.Equal(t, DNSQueryIPv6, capturedCfg.DNS.QType)
 
 	// HTTPS
 	assert.False(t, capturedCfg.HTTPS.Disorder)
@@ -407,7 +406,6 @@ func TestCreateCommand_EnumUsageMatchesValidator(t *testing.T) {
 	}{
 		{flag: "app-mode", values: availableAppModeValues},
 		{flag: "dns-mode", values: availableDNSModeValues},
-		{flag: "dns-qtype", values: availableDNSQueryValues},
 		{flag: "tls-split-mode", values: availableHTTPSModeValues},
 	}
 

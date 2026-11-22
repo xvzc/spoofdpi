@@ -228,6 +228,7 @@ func resolveRules(raw []map[string]any, base RuntimeConfig) ([]Rule, error) {
 				return nil, fmt.Errorf("rule %d: connection: %w", i, err)
 			}
 		}
+		r.Config.DNS.QType = dnsQueryType(r.Config.IPv6)
 
 		rules = append(rules, r)
 	}

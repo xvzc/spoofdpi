@@ -97,13 +97,13 @@ func TestLoadDNS_searchesDefaultLocations(t *testing.T) {
 
 	xdg := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(xdg, "spoofdpi"), 0o755))
-	p := writeTOML(t, filepath.Join(xdg, "spoofdpi"), "[dns]\nqtype = \"all\"\n")
+	p := writeTOML(t, filepath.Join(xdg, "spoofdpi"), "[dns]\nmode = \"system\"\n")
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 
 	opts, used, err := LoadDNS("")
 	require.NoError(t, err)
 	assert.Equal(t, p, used)
-	assert.Equal(t, DNSQueryAll, opts.QType)
+	assert.Equal(t, DNSModeSystem, opts.Mode)
 }
 
 func TestResolveRules_dnsTimeout(t *testing.T) {
@@ -166,14 +166,12 @@ func TestDNSFlags(t *testing.T) {
 			"--dns-addr", "1.1.1.1:53",
 			"--dns-mode", "https",
 			"--dns-https-url", "https://1.1.1.1/dns-query",
-			"--dns-qtype", "ipv6",
 			"--dns-timeout", "1",
 		)
 		require.NoError(t, err)
 		assert.Equal(t, "1.1.1.1:53", opts.Addr.String())
 		assert.Equal(t, DNSModeHTTPS, opts.Mode)
 		assert.Equal(t, "https://1.1.1.1/dns-query", opts.HTTPSURL)
-		assert.Equal(t, DNSQueryIPv6, opts.QType)
 		assert.Equal(t, time.Millisecond, opts.Timeout)
 	})
 
@@ -181,7 +179,6 @@ func TestDNSFlags(t *testing.T) {
 		{"--dns-addr", "nope"},
 		{"--dns-mode", "tcp"},
 		{"--dns-https-url", "ftp://x"},
-		{"--dns-qtype", "a"},
 		{"--dns-timeout", "70000"},
 		{"--dns-timeout", "0"},
 	} {

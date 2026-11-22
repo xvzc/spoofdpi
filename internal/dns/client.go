@@ -26,8 +26,9 @@ type internalResolver interface {
 // cacheKey identifies a cached answer: the name and the options that
 // decide which answer a lookup gets. Rules can resolve the same name with
 // different DNS options, and must not be served each other's answers, for
-// example a DoH rule an answer obtained over plain UDP, or a qtype "ipv4"
-// rule the IPv6 addresses of a qtype "all" lookup.
+// example a DoH rule an answer obtained over plain UDP, or a rule with
+// ipv6 off the IPv6 addresses of a lookup for a rule with ipv6 on. The
+// qtype follows the ipv6 option (config.DNSOptions.QType).
 type cacheKey struct {
 	domain string
 	mode   config.DNSModeType

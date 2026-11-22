@@ -102,8 +102,9 @@ Customize how domain names are resolved for matched traffic. The available field
 | `mode`      | String | Resolver to use: `"udp"`, `"https"` (DoH), or `"system"`. |
 | `addr`      | String | Custom upstream server (e.g., `8.8.8.8:53`).     |
 | `https-url` | String | Custom DoH URL (e.g., `https://dns.google/dns-query`). |
-| `qtype`     | String | Query type: `"ipv4"`, `"ipv6"`, or `"all"`.      |
 | `timeout`   | Int    | Milliseconds to wait for each DNS lookup.        |
+
+The record types follow the rule's [`ipv6`](#rule-fields) (see [Record Types](dns.md#record-types)). The `qtype` field is deprecated and ignored with a warning: for `qtype = "all"` or `"ipv6"`, set `ipv6 = true` in the rule instead; `"ipv4"` is the default.
 
 ## TLS Override (`tls`)
 

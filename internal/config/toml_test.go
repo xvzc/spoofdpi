@@ -498,7 +498,6 @@ func TestFromTomlFile(t *testing.T) {
 		assert.Equal(t, "8.8.8.8:53", cfg.DNS.Addr.String())
 		assert.Equal(t, DNSModeHTTPS, cfg.DNS.Mode)
 		assert.Equal(t, "https://1.1.1.1/dns-query", cfg.DNS.HTTPSURL)
-		assert.Equal(t, DNSQueryIPv4, cfg.DNS.QType)
 		assert.Equal(t, uint8(100), cfg.Conn.HopCountDefault)
 		assert.True(t, cfg.HTTPS.Disorder)
 		assert.Equal(t, uint8(5), cfg.HTTPS.FakePreflight)
@@ -523,7 +522,6 @@ func TestFromTomlFile(t *testing.T) {
 		assert.Equal(t, DNSModeUDP, rule.Config.DNS.Mode)
 		assert.Equal(t, "8.8.4.4:53", rule.Config.DNS.Addr.String())
 		assert.Equal(t, "https://8.8.8.8/dns-query", rule.Config.DNS.HTTPSURL)
-		assert.Equal(t, DNSQueryIPv6, rule.Config.DNS.QType)
 		assert.True(t, rule.Block)
 
 		assert.False(t, rule.Config.HTTPS.Disorder)

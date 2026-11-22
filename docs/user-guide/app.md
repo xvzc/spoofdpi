@@ -86,6 +86,8 @@ listen-addr = "0.0.0.0:8080"
 
 Enables IPv6. `(default: false)`
 
+With IPv6 enabled, DNS lookups ask for both A and AAAA records; without it, for A records only (see [Record Types](dns.md#record-types)).
+
 A [rule](rules.md#rule-fields) can set its own `ipv6`; a rule that does not set it follows this option.
 
 !!! warning

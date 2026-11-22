@@ -160,6 +160,7 @@ func (c *Config) Finalize() error {
 	// Rules are resolved from the base RuntimeConfig after Finalize, so
 	// they inherit the global value unless they set their own.
 	c.IPv6 = c.App.IPv6
+	c.DNS.QType = dnsQueryType(c.IPv6)
 	if c.App.IPv6 {
 		AddWarnMsg("'ipv6' is an experimental feature")
 	}
