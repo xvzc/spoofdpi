@@ -1,11 +1,20 @@
 package netutil
 
 import (
+	"errors"
 	"fmt"
 	"net"
 
 	gw "github.com/jackpal/gateway"
 )
+
+// ErrNoIPv4Route is returned, wrapped, by DiscoverRoute when the OS has no
+// IPv4 default route, for example on an IPv6-only network.
+var ErrNoIPv4Route = errors.New("no IPv4 default route")
+
+// discoverGateway returns the gateway of the IPv4 default route. Tests
+// replace it to fake the routing table.
+var discoverGateway = gw.DiscoverGateway
 
 // Route represents the default network route.
 type Route struct {
@@ -39,9 +48,9 @@ func DiscoverRoute(gateway net.IP) (*Route, error) {
 		return routeForGateway(gateway)
 	}
 
-	gwIP, err := gw.DiscoverGateway()
+	gwIP, err := discoverGateway()
 	if err != nil {
-		return nil, fmt.Errorf("discover gateway: %w", err)
+		return nil, fmt.Errorf("%w: discover gateway: %w", ErrNoIPv4Route, err)
 	}
 
 	iface, localIP, err := DiscoverInterface()
@@ -117,7 +126,10 @@ func findIfaceByGateway(
 ) (*net.Interface, net.IP, error) {
 	gw4 := gateway.To4()
 	if gw4 == nil {
-		return nil, nil, fmt.Errorf("gateway %s is not an IPv4 address", gateway)
+		return nil, nil, fmt.Errorf(
+			"gateway %s: IPv6 gateways are not supported yet",
+			gateway,
+		)
 	}
 
 	for i := range candidates {

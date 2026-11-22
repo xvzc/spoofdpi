@@ -93,6 +93,15 @@ func TestCheckGateway(t *testing.T) {
 	}
 }
 
+func TestCheckGateway_IPv6(t *testing.T) {
+	for _, v := range []string{"fe80::1", "fe80::1%en0", "2001:db8::1"} {
+		assert.ErrorContains(t, checkGateway(v), "IPv6 gateways are not supported yet", v)
+	}
+
+	// An IPv4-mapped address is an IPv4 address.
+	assert.NoError(t, checkGateway("::ffff:192.168.1.1"))
+}
+
 func TestCheckCIDR(t *testing.T) {
 	tcs := []struct {
 		name    string

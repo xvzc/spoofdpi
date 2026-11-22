@@ -301,6 +301,23 @@ func setupNetworkStack(
 	return
 }
 
+// noIPv4RouteError explains err, a failed IPv4 default route discovery,
+// and what the user can do about it. hasIPv6 tells whether the host has an
+// IPv6 route to the internet.
+func noIPv4RouteError(err error, hasIPv6 bool) error {
+	ipv6Route := "absent"
+	if hasIPv6 {
+		ipv6Route = "present"
+	}
+	return fmt.Errorf(
+		"fake packets and TUN mode need an IPv4 default route; none found "+
+			"(IPv6 route: %s). IPv6-only networks are not supported yet; disable "+
+			"fake packets, use HTTP/SOCKS5 mode, or set --gateway: %w",
+		ipv6Route,
+		err,
+	)
+}
+
 func createServer(
 	appctx context.Context,
 	logger zerolog.Logger,
@@ -331,6 +348,10 @@ func createServer(
 	if cfg.NeedsRoute() {
 		var err error
 		defaultRoute, err = netutil.DiscoverRoute(cfg.App.Gateway)
+		if errors.Is(err, netutil.ErrNoIPv4Route) {
+			_, hasIPv6 := netutil.IPv6Egress()
+			return nil, noIPv4RouteError(err, hasIPv6)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to find default route: %w", err)
 		}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"net/netip"
 	"regexp"
 	"slices"
 	"strconv"
@@ -108,8 +109,12 @@ func checkHostPort(v string) error {
 }
 
 // checkGateway accepts an IPv4 unicast address. The gateway MAC is resolved
-// via ARP, so IPv6 gateways are not supported.
+// via ARP, so IPv6 gateways are not supported yet.
 func checkGateway(v string) error {
+	if addr, err := netip.ParseAddr(v); err == nil && addr.Is6() && !addr.Is4In6() {
+		return fmt.Errorf("value '%s': IPv6 gateways are not supported yet", v)
+	}
+
 	ip := net.ParseIP(v).To4()
 	if ip == nil {
 		return fmt.Errorf("value '%s' is not an IPv4 address", v)

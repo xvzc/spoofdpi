@@ -1,6 +1,7 @@
 package netutil
 
 import (
+	"errors"
 	"net"
 	"testing"
 
@@ -151,4 +152,28 @@ func TestFindIfaceByGateway(t *testing.T) {
 			assert.Equal(t, tc.wantLocal, localIP.String())
 		})
 	}
+}
+
+func TestFindIfaceByGateway_IPv6(t *testing.T) {
+	en0 := net.Interface{Index: 1, Name: "en0", Flags: net.FlagUp}
+	candidates := []ifaceAddrs{
+		{iface: en0, addrs: []net.Addr{ipNet("2001:db8::2/64")}},
+	}
+
+	for _, gateway := range []string{"fe80::1", "2001:db8::1"} {
+		_, _, err := findIfaceByGateway(candidates, net.ParseIP(gateway))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "IPv6 gateways are not supported yet")
+	}
+}
+
+func TestDiscoverRoute_NoIPv4Route(t *testing.T) {
+	orig := discoverGateway
+	t.Cleanup(func() { discoverGateway = orig })
+	noGateway := errors.New("no gateway found")
+	discoverGateway = func() (net.IP, error) { return nil, noGateway }
+
+	_, err := DiscoverRoute(nil)
+	require.ErrorIs(t, err, ErrNoIPv4Route)
+	require.ErrorIs(t, err, noGateway)
 }
