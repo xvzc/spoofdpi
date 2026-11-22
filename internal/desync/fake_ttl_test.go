@@ -30,37 +30,42 @@ var fakeTTLCases = []struct {
 	{
 		"rule hop-count-default, not learned",
 		stubHops{},
-		&config.ConnOptions{HopCountDefault: 12, HopCountMax: 255},
+		&config.ConnOptions{HopCountDefault: 12, HopCountMax: 255, HopCountOffset: -1},
 		11,
 	},
 	{
 		"rule hop-count-default, learned",
 		stubHops{hopLearned: true, hops: 16},
-		&config.ConnOptions{HopCountDefault: 12, HopCountMax: 255},
+		&config.ConnOptions{HopCountDefault: 12, HopCountMax: 255, HopCountOffset: -1},
 		15,
 	},
 	{
 		"rule hop-count-offset, learned",
 		stubHops{hopLearned: true, hops: 16},
 		&config.ConnOptions{HopCountDefault: 8, HopCountMax: 255, HopCountOffset: -5},
-		10,
+		11,
 	},
 	{
 		"rule hop-count-offset, not learned",
 		stubHops{},
 		&config.ConnOptions{HopCountDefault: 8, HopCountMax: 255, HopCountOffset: -5},
-		7,
+		3,
 	},
 	{
 		"rule hop-count-max",
 		stubHops{hopLearned: true, hops: 43},
-		&config.ConnOptions{HopCountDefault: 8, HopCountMax: 20},
+		&config.ConnOptions{HopCountDefault: 8, HopCountMax: 20, HopCountOffset: -1},
 		19,
 	},
 	{
 		"rule hop-count-min",
 		stubHops{hopLearned: true, hops: 5},
-		&config.ConnOptions{HopCountDefault: 8, HopCountMin: 10, HopCountMax: 255},
+		&config.ConnOptions{
+			HopCountDefault: 8,
+			HopCountMin:     10,
+			HopCountMax:     255,
+			HopCountOffset:  -1,
+		},
 		9,
 	},
 }

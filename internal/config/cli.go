@@ -41,7 +41,7 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 				HopCountDefault: 8,
 				HopCountMin:     0,
 				HopCountMax:     255,
-				HopCountOffset:  0,
+				HopCountOffset:  -1,
 				TCPTimeout:      10000 * time.Millisecond,
 				UDPIdleTimeout:  25000 * time.Millisecond,
 			},
@@ -145,7 +145,8 @@ func CreateCommand(
 				Name: "hop-count-default",
 				Usage: fmt.Sprintf(`
 				Hop count to the server assumed until it is learned. Fake packets
-				are sent with a TTL of the hop count minus 1. (default: %v)`,
+				are sent with a TTL of the hop count plus --hop-count-offset.
+				(default: %v)`,
 					defaultCfg.Conn.HopCountDefault,
 				),
 				OnlyOnce:  true,
@@ -215,8 +216,9 @@ func CreateCommand(
 			&cli.Int64Flag{
 				Name: "hop-count-offset",
 				Usage: fmt.Sprintf(`
-				Added to a learned hop count to correct estimation errors; use
-				'--hop-count-offset=-N' for negative values. (default: %v)`,
+				Added to the hop count, learned or default, to set the TTL of fake
+				packets; use '--hop-count-offset=-N' for negative values.
+				(default: %v)`,
 					defaultCfg.Conn.HopCountOffset,
 				),
 				OnlyOnce:  true,

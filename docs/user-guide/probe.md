@@ -54,7 +54,7 @@ blocked.example (198.51.100.40)
 
 ## What It Measures
 
-Every hop count is a number of routers between this host and the server, the unit spoofdpi learns hop counts in. A server on the local link is `0` hops away. spoofdpi sends fake packets with a TTL of the hop count minus 1, so that they expire at the last router before the server.
+Every hop count is a number of routers between this host and the server, the unit spoofdpi learns hop counts in. A server on the local link is `0` hops away. spoofdpi sends fake packets with a TTL of the hop count plus `hop-count-offset`, which is the hop count minus 1 by default, so that they expire at the last router before the server.
 
 | Value | How it is measured |
 | :--- | :--- |
@@ -64,6 +64,7 @@ Every hop count is a number of routers between this host and the server, the uni
 | `hops(udp)` learned | Captures the UDP reply to the packet at the default TTL and estimates the hop count from the TTL it arrives with, the same way spoofdpi's UDP sniffer does. |
 
 - The learned hop counts are the values before `hop-count-offset`, `hop-count-min` and `hop-count-max` apply.
+- spoofdpi keeps the TCP and UDP hop counts of a server apart. Its fake packets use the hop count learned over their own protocol, or else the one learned over the other protocol, or else `hop-count-default`.
 - A connection, or a UDP packet, at the default TTL is tried first, up to 5 times until one reaches the server. Only when one does is the TTL scan run.
 - The TTL scan tries every TTL at once, then retries the TTLs that did not get through, for up to 5 rounds in all, and stops early when every TTL got through. A packet lost at the threshold therefore does not raise the result.
 - An ICMP port unreachable comes only from the server's host, so a server without QUIC is measured too, as long as it rejects the packet instead of dropping it.
@@ -74,7 +75,7 @@ Every hop count is a number of routers between this host and the server, the uni
 
 spoofdpi learns a UDP hop count from any UDP packet the server sends. probe takes the UDP packet from the server's address and port to the local port of the packet at the default TTL that reached the server, the latest one if several arrive. The learned UDP value is `-` when:
 
-- The server answered only with an ICMP port unreachable. spoofdpi does not learn from ICMP, so it keeps its default hop count for the server. The line ends with `(not learned)`.
+- The server answered only with an ICMP port unreachable. spoofdpi does not learn from ICMP, so its UDP fake packets to the server use the TCP hop count it learned, or else `hop-count-default`. The line ends with `(not learned)`.
 - The UDP reply was not captured. The line ends with `(not learned)`.
 - Packet capture is unavailable. See [Root and Packet Capture](#root-and-packet-capture).
 

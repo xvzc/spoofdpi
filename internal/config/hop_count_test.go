@@ -106,11 +106,40 @@ connection = { default-fake-ttl = 20 }
 }
 
 func TestHopCountOptions(t *testing.T) {
-	t.Run("defaults keep the previous behavior", func(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
 		cfg, _ := runWithTOML(t, "")
 		assert.Equal(t, uint8(8), cfg.Conn.HopCountDefault)
 		assert.Equal(t, uint8(0), cfg.Conn.HopCountMin)
 		assert.Equal(t, uint8(255), cfg.Conn.HopCountMax)
+		assert.Equal(t, int8(-1), cfg.Conn.HopCountOffset)
+	})
+
+	t.Run("rule inherits the default offset", func(t *testing.T) {
+		cfg, _ := runWithTOML(t, `
+[[rules]]
+name = "r"
+match = { domains = ["example.com"] }
+connection = { hop-count-max = 12 }
+`)
+		require.Len(t, cfg.Rules, 1)
+		assert.Equal(t, int8(-1), cfg.Rules[0].Config.Conn.HopCountOffset)
+	})
+
+	t.Run("zero offset overrides the default", func(t *testing.T) {
+		cfg, _ := runWithTOML(t, `
+[connection]
+hop-count-offset = 0
+
+[[rules]]
+name = "r"
+match = { domains = ["example.com"] }
+connection = { hop-count-offset = -3 }
+`)
+		assert.Equal(t, int8(0), cfg.Conn.HopCountOffset)
+		require.Len(t, cfg.Rules, 1)
+		assert.Equal(t, int8(-3), cfg.Rules[0].Config.Conn.HopCountOffset)
+
+		cfg, _ = runWithTOML(t, "", "--hop-count-offset", "0")
 		assert.Equal(t, int8(0), cfg.Conn.HopCountOffset)
 	})
 

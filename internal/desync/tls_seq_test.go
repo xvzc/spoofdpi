@@ -58,7 +58,7 @@ func (s stubHops) Lookup(packet.Proto, net.IP) packet.HopEstimate {
 
 // baseConnOpts are the default hop-count options.
 func baseConnOpts() *config.ConnOptions {
-	return &config.ConnOptions{HopCountDefault: 8, HopCountMax: 255}
+	return &config.ConnOptions{HopCountDefault: 8, HopCountMax: 255, HopCountOffset: -1}
 }
 
 // stubConn is a net.Conn with TCP addresses that accepts every write.

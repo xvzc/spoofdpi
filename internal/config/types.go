@@ -104,10 +104,10 @@ func (t AppModeType) MarshalText() ([]byte, error) {
 // └────────────────────┘
 
 type ConnOptions struct {
-	// Hop count to the server, which sets the TTL of fake packets
-	// (hop count - 1). HopCountDefault is assumed until the hop count is
-	// learned; a learned hop count gets HopCountOffset added and is then
-	// clamped to [HopCountMin, HopCountMax].
+	// Hop count to the server, which sets the TTL of fake packets.
+	// HopCountDefault is assumed until the hop count is learned. The hop
+	// count, learned or default, is clamped to [HopCountMin, HopCountMax],
+	// and HopCountOffset is then added to it to give the TTL.
 	HopCountDefault uint8         `toml:"hop-count-default"`
 	HopCountMin     uint8         `toml:"hop-count-min"`
 	HopCountMax     uint8         `toml:"hop-count-max"`

@@ -20,7 +20,7 @@ func (c evictOnGetCache) Get(key HopKey) (HopEntry, bool) {
 }
 
 func TestHopPolicyTTL(t *testing.T) {
-	none := HopPolicy{Default: 8, Max: 255}
+	none := HopPolicy{Default: 8, Max: 255, Offset: -1}
 
 	tcs := []struct {
 		name   string
@@ -28,7 +28,7 @@ func TestHopPolicyTTL(t *testing.T) {
 		est    HopEstimate
 		want   uint8
 	}{
-		{"learned hop count minus 1", none, learned(19), 18},
+		{"learned hop count plus the default offset", none, learned(19), 18},
 		{
 			"hop count learned over the other protocol",
 			none,
@@ -38,7 +38,7 @@ func TestHopPolicyTTL(t *testing.T) {
 		{"registered default", none, HopEstimate{}, 7},
 		{
 			"registered default comes from the policy",
-			HopPolicy{Default: 12, Max: 255},
+			HopPolicy{Default: 12, Max: 255, Offset: -1},
 			HopEstimate{},
 			11,
 		},
@@ -47,41 +47,71 @@ func TestHopPolicyTTL(t *testing.T) {
 			"offset applies to learned counts",
 			HopPolicy{Default: 8, Max: 255, Offset: -5},
 			learned(16),
-			10,
+			11,
 		},
 		{
-			"offset does not apply to the default",
+			"offset applies to the other protocol's count",
+			HopPolicy{Default: 8, Max: 255, Offset: -5},
+			HopEstimate{Hops: 16, Source: HopSourceLearnedOther},
+			11,
+		},
+		{
+			"offset applies to the default",
 			HopPolicy{Default: 8, Max: 255, Offset: -5},
 			HopEstimate{},
-			7,
+			3,
+		},
+		{
+			"zero offset sends fakes with the hop count",
+			HopPolicy{Default: 8, Max: 255},
+			learned(16),
+			16,
+		},
+		{
+			"positive offset",
+			HopPolicy{Default: 8, Max: 255, Offset: 2},
+			learned(16),
+			18,
 		},
 		{
 			"max caps an overestimate",
-			HopPolicy{Default: 8, Max: 20},
+			HopPolicy{Default: 8, Max: 20, Offset: -1},
 			learned(43),
 			19,
 		},
 		{
 			"min raises a small count",
-			HopPolicy{Default: 8, Min: 10, Max: 255},
+			HopPolicy{Default: 8, Min: 10, Max: 255, Offset: -1},
 			learned(5),
 			9,
 		},
 		{
 			"default is clamped too",
-			HopPolicy{Default: 8, Min: 10, Max: 255},
+			HopPolicy{Default: 8, Min: 10, Max: 255, Offset: -1},
 			HopEstimate{},
 			9,
 		},
 		{
-			"offset is clamped too",
+			"bounds apply before the offset",
+			HopPolicy{Default: 8, Min: 3, Max: 10, Offset: -5},
+			learned(16),
+			5,
+		},
+		{
+			"at least 1 after a large negative offset",
 			HopPolicy{Default: 8, Min: 3, Max: 255, Offset: -100},
 			learned(16),
-			2,
+			1,
+		},
+		{
+			"at most 255 after a positive offset",
+			HopPolicy{Default: 8, Max: 255, Offset: 10},
+			learned(250),
+			255,
 		},
 		{
 			"zero max means no bound",
-			HopPolicy{Default: 8},
+			HopPolicy{Default: 8, Offset: -1},
 			learned(43),
 			42,
 		},
@@ -91,6 +121,64 @@ func TestHopPolicyTTL(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, tc.policy.TTL(tc.est))
 		})
+	}
+}
+
+// ttlBeforeOffsetChange is the TTL formula before hop-count-offset applied
+// to every hop count and replaced the fixed minus 1: Offset added to a
+// learned hop count only, the result clamped to [Min, Max] and to at least
+// 2, minus 1.
+func ttlBeforeOffsetChange(p HopPolicy, est HopEstimate) uint8 {
+	hops := int(p.Default)
+	if est.Learned() {
+		hops = int(est.Hops) + int(p.Offset)
+	}
+	upper := int(p.Max)
+	if upper == 0 {
+		upper = 255
+	}
+	hops = min(max(hops, int(p.Min)), upper)
+	hops = min(max(hops, 2), 255)
+	return uint8(hops - 1)
+}
+
+// TestHopPolicyTTL_DefaultOffsetKeepsTTL checks that the default offset of
+// -1 gives the TTLs the default offset of 0 gave before, for every hop
+// count, learned or not, and every hop count default and bounds.
+func TestHopPolicyTTL_DefaultOffsetKeepsTTL(t *testing.T) {
+	for _, bounds := range [][2]uint8{
+		{0, 255}, // the defaults
+		{0, 0},
+		{0, 1},
+		{0, 20},
+		{1, 1},
+		{3, 255},
+		{10, 15},
+		{11, 15},
+		{254, 255},
+		{255, 255},
+	} {
+		for _, def := range []uint8{1, 2, 8, 64, 255} {
+			before := HopPolicy{Default: def, Min: bounds[0], Max: bounds[1], Offset: 0}
+			after := before
+			after.Offset = -1
+
+			ests := []HopEstimate{{Source: HopSourceDefault}}
+			for hops := range 256 {
+				ests = append(ests,
+					HopEstimate{Hops: uint8(hops), Source: HopSourceLearned},
+					HopEstimate{Hops: uint8(hops), Source: HopSourceLearnedOther},
+				)
+			}
+			for _, est := range ests {
+				if !assert.Equal(t,
+					ttlBeforeOffsetChange(before, est), after.TTL(est),
+					"policy %+v, estimate %+v", after, est,
+				) {
+					return
+				}
+			}
+		}
 	}
 }
 

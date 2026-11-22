@@ -58,7 +58,7 @@ udp-idle-timeout = 30000
 
 The hop count to the server assumed until spoofdpi learns it. `(default: 8)`
 
-Fake packets should pass the DPI but expire before reaching the server, so they are sent with a [Time To Live (TTL)](https://en.wikipedia.org/wiki/Time_to_live) of the hop count to the server minus 1. spoofdpi learns the hop count from the TTL left on the server's replies; until then, this value is used.
+Fake packets should pass the DPI but expire before reaching the server, so they are sent with a [Time To Live (TTL)](https://en.wikipedia.org/wiki/Time_to_live) of the hop count to the server plus [`hop-count-offset`](#hop-count-offset), which is the hop count minus 1 by default. spoofdpi learns the hop count from the TTL left on the server's replies, separately for TCP and UDP. Fake packets use the hop count learned over their own protocol, or else the one learned over the other protocol; until either is learned, this value is used.
 
 !!! note
     This option was previously named `default-fake-ttl` (`--default-fake-ttl`). The old name still works but prints a deprecation warning. If both are set in the TOML config, `default-fake-ttl` is ignored.
@@ -84,9 +84,14 @@ hop-count-default = 10
 
 ### Description
 
-Added to a learned hop count before it sets the TTL of fake packets. `(default: 0)`
+Added to the hop count to give the TTL of fake packets: the TTL is the hop count plus this offset. `(default: -1)`
 
-The hop count is learned by assuming that the server started from a common initial TTL (64, 128 or 255), which is not always true, and the path back from the server can differ from the path to it. A negative offset makes fake packets expire earlier, for networks where the learned hop count tends to be too high and fakes reach the server.
+It applies to every hop count alike, whether learned or [`hop-count-default`](#hop-count-default), after [`hop-count-min` and `hop-count-max`](#hop-count-min-hop-count-max) bound it. The TTL is at least 1. The default of `-1` makes fake packets expire at the last router before the server.
+
+The hop count is learned by assuming that the server started from a common initial TTL (64, 128 or 255), which is not always true, and the path back from the server can differ from the path to it. A lower offset makes fake packets expire earlier, for networks where the learned hop count tends to be too high and fakes reach the server.
+
+!!! note
+    The offset used to default to `0`, apply to learned hop counts only, and be followed by a fixed minus 1. If you set `hop-count-offset` yourself, the same value now gives a TTL 1 higher: subtract 1 from it to keep your TTL, for example `-3` becomes `-4`. It now also applies to `hop-count-default`, and is added after `hop-count-min` and `hop-count-max` apply, so with those bounds set, check the TTL of hop counts they clip.
 
 ### Usage
 
@@ -109,9 +114,9 @@ hop-count-offset = -3
 
 ### Description
 
-Bounds for the hop count used for fake packets, applied after [`hop-count-offset`](#hop-count-offset). `(default: 0 / 255, no bounds)`
+Bounds for the hop count used for fake packets, applied before [`hop-count-offset`](#hop-count-offset) is added. `(default: 0 / 255, no bounds)`
 
-`hop-count-max` caps a hop count that was learned far too high, which would let fake packets reach the server. `hop-count-min` keeps fake packets from expiring before they reach the DPI. For example, if the DPI is 10 hops away and servers are farther than 15 hops, `hop-count-min = 11` and `hop-count-max = 15` keep the TTL of fake packets between 10 and 14.
+`hop-count-max` caps a hop count that was learned far too high, which would let fake packets reach the server. `hop-count-min` keeps fake packets from expiring before they reach the DPI. For example, if the DPI is 10 hops away and servers are farther than 15 hops, `hop-count-min = 11` and `hop-count-max = 15` keep the TTL of fake packets between 10 and 14 with the default offset.
 
 ### Usage
 

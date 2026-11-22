@@ -133,14 +133,14 @@ Customize how UDP traffic is sent to matched destinations. The available fields 
 
 Customize the connection settings of matching connections. The available fields mirror the global [Connection Configuration](connection.md).
 
-| Field               | Type | Description                                                    |
-| :------------------ | :--- | :------------------------------------------------------------- |
-| `hop-count-default` | Int  | Hop count to the server assumed until it is learned.           |
-| `hop-count-offset`  | Int  | Added to a learned hop count before it sets the TTL of fakes.  |
-| `hop-count-min`     | Int  | Lower bound of the hop count used for fake packets.            |
-| `hop-count-max`     | Int  | Upper bound of the hop count used for fake packets.            |
-| `tcp-timeout`       | Int  | Milliseconds to wait for TCP connections.                      |
-| `udp-idle-timeout`  | Int  | Milliseconds a UDP connection may stay idle before it closes.  |
+| Field               | Type | Description                                                                     |
+| :------------------ | :--- | :------------------------------------------------------------------------------ |
+| `hop-count-default` | Int  | Hop count to the server assumed until it is learned.                            |
+| `hop-count-offset`  | Int  | Added to the hop count, learned or default, to give the TTL of fakes (`-1`).    |
+| `hop-count-min`     | Int  | Lower bound of the hop count used for fake packets.                             |
+| `hop-count-max`     | Int  | Upper bound of the hop count used for fake packets.                             |
+| `tcp-timeout`       | Int  | Milliseconds to wait for TCP connections.                                       |
+| `udp-idle-timeout`  | Int  | Milliseconds a UDP connection may stay idle before it closes.                   |
 
 ## Example
 
