@@ -115,6 +115,8 @@ no-tui = true
 
 Specifies whether to automatically set up the system-wide proxy configuration. `(default: false)`
 
+The system proxy points at the address in [`listen-addr`](#listen-addr). When that address is `0.0.0.0` or `[::]`, it points at `127.0.0.1` instead, on the same port.
+
 !!! important
     This option is currently only supported on **macOS**.
 
