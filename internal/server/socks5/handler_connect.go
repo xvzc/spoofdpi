@@ -15,12 +15,13 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/rule"
+	"github.com/xvzc/spoofdpi/internal/server"
 )
 
 type ConnectHandler struct {
 	logger     zerolog.Logger
 	desyncer   *desync.TLSDesyncer
-	dns        *dns.Client
+	resolver   dns.Resolver
 	ruleSet    *rule.RuleSet
 	listenAddr net.TCPAddr
 	cfg        *config.RuntimeConfig
@@ -29,7 +30,7 @@ type ConnectHandler struct {
 func NewConnectHandler(
 	logger zerolog.Logger,
 	desyncer *desync.TLSDesyncer,
-	dnsClient *dns.Client,
+	resolver dns.Resolver,
 	ruleSet *rule.RuleSet,
 	listenAddr net.TCPAddr,
 	cfg *config.RuntimeConfig,
@@ -37,7 +38,7 @@ func NewConnectHandler(
 	return &ConnectHandler{
 		logger:     logger,
 		desyncer:   desyncer,
-		dns:        dnsClient,
+		resolver:   resolver,
 		ruleSet:    ruleSet,
 		listenAddr: listenAddr,
 		cfg:        cfg,
@@ -51,15 +52,11 @@ func (h *ConnectHandler) Handle(
 ) error {
 	logger := logging.WithLocalScope(ctx, h.logger, "connect")
 
-	dst, matched, err := h.resolveDestination(ctx, logger, req)
+	dst, sel, err := h.resolveDestination(ctx, logger, req)
 	if err != nil || dst == nil {
 		return err
 	}
-
-	cfg := h.cfg
-	if matched != nil {
-		cfg = &matched.Config
-	}
+	cfg := sel.Config
 
 	// 1. Validate destination
 	ok, err := dst.IsValid(&h.listenAddr)
@@ -72,7 +69,7 @@ func (h *ConnectHandler) Handle(
 	}
 
 	// 2. Check if blocked
-	if matched != nil && matched.Block {
+	if sel.Blocked() {
 		logger.Debug().Msg("request is blocked by policy")
 		_ = proto.SOCKS5FailureResponse().Write(lConn)
 		return netutil.ErrBlocked
@@ -162,66 +159,39 @@ func (h *ConnectHandler) Handle(
 }
 
 // resolveDestination resolves the request's destination and selects its
-// rule: the domain name is matched first and resolved with that rule's DNS
-// options (the base options when nothing matches), then the addresses are
-// matched; the higher-priority match wins, the address on a tie. It
-// returns a nil destination, without an error, when the request names no
-// address to connect to.
+// rule with server.SelectRule. It returns a nil destination, without an
+// error, when the request names no address to connect to.
 func (h *ConnectHandler) resolveDestination(
 	ctx context.Context,
 	logger zerolog.Logger,
 	req *proto.SOCKS5Request,
-) (*netutil.Destination, *config.Rule, error) {
+) (*netutil.Destination, server.Selection, error) {
+	var name string
 	var addrs []net.IP
-	var nameMatch *config.Rule
 
 	if req.IP != nil {
 		addrs = []net.IP{req.IP}
 	} else if req.ATYP == proto.SOCKS5AddrTypeFQDN && len(req.FQDN) > 1 {
-		nameMatch = h.ruleSet.Search([]rule.Query{
-			{Type: rule.MatchTypeDomain, Value: req.FQDN},
-		})
-
-		dnsOpts := &h.cfg.DNS
-		if nameMatch != nil {
-			dnsOpts = &nameMatch.Config.DNS
-		}
-
-		// Resolve Domain
-		netAddrs, err := h.dns.Resolve(ctx, dnsOpts, req.FQDN)
-		if err != nil {
-			logger.Error().Str("domain", req.FQDN).Err(err).Msgf("dns lookup failed")
-			return nil, nil, err
-		}
-
-		addrs = make([]net.IP, len(netAddrs))
-		for i, a := range netAddrs {
-			addrs[i] = a.AsSlice()
-		}
+		name = req.FQDN
 	} else {
 		logger.Trace().Msg("no addrs specified for this request. skipping")
-		return nil, nil, nil
+		return nil, server.Selection{}, nil
 	}
 
-	var addrQueries []rule.Query
-	for _, v := range addrs {
-		addrQueries = append(
-			addrQueries,
-			rule.Query{Type: rule.MatchTypeAddr, Value: v.String()},
-		)
+	sel, err := server.SelectRule(ctx, h.ruleSet, h.resolver, h.cfg, name, addrs)
+	if err != nil {
+		logger.Error().Str("domain", req.FQDN).Err(err).Msgf("dns lookup failed")
+		return nil, server.Selection{}, err
 	}
 
-	addrMatch := h.ruleSet.Search(addrQueries)
-
-	bestMatch := rule.HigherPriority(addrMatch, nameMatch)
-	if bestMatch != nil && logger.GetLevel() == zerolog.TraceLevel {
-		logger.Trace().RawJSON("summary", bestMatch.JSON()).Msg("match")
+	if sel.Rule != nil && logger.GetLevel() == zerolog.TraceLevel {
+		logger.Trace().RawJSON("summary", sel.Rule.JSON()).Msg("match")
 	}
 
 	dst := &netutil.Destination{
 		Host:  req.FQDN,
-		Addrs: addrs,
+		Addrs: sel.Addrs,
 		Port:  req.Port,
 	}
-	return dst, bestMatch, nil
+	return dst, sel, nil
 }

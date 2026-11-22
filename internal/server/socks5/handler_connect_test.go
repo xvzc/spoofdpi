@@ -330,3 +330,44 @@ func TestConnectHandler_Handle_NoAddress(t *testing.T) {
 	assert.NoError(t, <-done)
 	assert.Equal(t, int32(0), baseDNS.queries.Load())
 }
+
+func TestConnectHandler_Handle_IPLiteralName(t *testing.T) {
+	echo, _ := startTCPEcho(t)
+	baseDNS := startFakeDNSServer(t, echo.IP)
+	base := &config.RuntimeConfig{DNS: dnsOptionsFor(baseDNS)}
+	base.Conn.TCPTimeout = 2 * time.Second
+
+	literal := echo.IP.String()
+
+	// A domain rule for the literal doesn't apply: an address sent as a
+	// name is matched only as an address.
+	rs := rule.NewRuleSet()
+	require.NoError(t, rs.Add(&config.Rule{
+		Name:     "literal as domain",
+		Priority: 10,
+		Block:    true,
+		Match:    &config.MatchAttrs{Domains: []string{literal}},
+	}))
+
+	h := NewConnectHandler(
+		zerolog.Nop(),
+		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil),
+		dns.NewClient(zerolog.Nop(), &base.DNS),
+		rs,
+		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+		base,
+	)
+
+	client, done := runConnect(t, h, &proto.SOCKS5Request{
+		Cmd:  proto.SOCKS5CmdConnect,
+		ATYP: proto.SOCKS5AddrTypeFQDN,
+		FQDN: literal,
+		Port: echo.Port,
+	})
+
+	require.Equal(t, byte(proto.SOCKS5RCodeSuccess), readReply(t, client))
+	_ = client.Close()
+	<-done
+
+	assert.Equal(t, int32(0), baseDNS.queries.Load())
+}
