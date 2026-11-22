@@ -384,6 +384,8 @@ func createServer(
 			socks5.NewConnectHandler(
 				logging.WithScope(logger, "hnd"),
 				tlsDesyncer,
+				resolver,
+				ruleSet,
 				cfg.App.ListenAddr,
 				&cfg.RuntimeConfig,
 			),
@@ -395,10 +397,7 @@ func createServer(
 				ruleSet,
 				&cfg.RuntimeConfig,
 			),
-			resolver,
-			ruleSet,
 			cfg.App.ListenAddr,
-			&cfg.RuntimeConfig,
 		), nil
 
 	case config.AppModeTUN:

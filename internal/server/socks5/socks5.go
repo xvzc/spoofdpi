@@ -12,12 +12,9 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/config"
-	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/proto"
-	"github.com/xvzc/spoofdpi/internal/rule"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"github.com/xvzc/spoofdpi/internal/session"
 )
@@ -28,10 +25,7 @@ type SOCKS5Proxy struct {
 	connectHandler      *ConnectHandler
 	bindHandler         *BindHandler
 	udpAssociateHandler *UdpAssociateHandler
-	dns                 *dns.Client
-	ruleSet             *rule.RuleSet
 	listenAddr          net.TCPAddr
-	cfg                 *config.RuntimeConfig
 }
 
 func NewSOCKS5Proxy(
@@ -39,20 +33,14 @@ func NewSOCKS5Proxy(
 	connectHandler *ConnectHandler,
 	bindHandler *BindHandler,
 	udpAssociateHandler *UdpAssociateHandler,
-	dnsClient *dns.Client,
-	ruleSet *rule.RuleSet,
 	listenAddr net.TCPAddr,
-	cfg *config.RuntimeConfig,
 ) server.Server {
 	return &SOCKS5Proxy{
 		logger:              logger,
 		connectHandler:      connectHandler,
 		bindHandler:         bindHandler,
 		udpAssociateHandler: udpAssociateHandler,
-		dns:                 dnsClient,
-		ruleSet:             ruleSet,
 		listenAddr:          listenAddr,
-		cfg:                 cfg,
 	}
 }
 
@@ -142,60 +130,9 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 		Str("ip", req.IP.String()).
 		Msg("new request")
 
-	var addrs []net.IP
-	var nameMatch *config.Rule
-
-	if req.IP != nil {
-		addrs = []net.IP{req.IP}
-	} else if req.ATYP == proto.SOCKS5AddrTypeFQDN && len(req.FQDN) > 1 {
-		nameMatch = p.ruleSet.Search([]rule.Query{
-			{Type: rule.MatchTypeDomain, Value: req.FQDN},
-		})
-
-		dnsOpts := &p.cfg.DNS
-		if nameMatch != nil {
-			dnsOpts = &nameMatch.Config.DNS
-		}
-
-		// Resolve Domain
-		netAddrs, err := p.dns.Resolve(ctx, dnsOpts, req.FQDN)
-		if err != nil {
-			logger.Error().Str("domain", req.FQDN).Err(err).Msgf("dns lookup failed")
-			return
-		}
-
-		addrs = make([]net.IP, len(netAddrs))
-		for i, a := range netAddrs {
-			addrs[i] = a.AsSlice()
-		}
-	} else {
-		logger.Trace().Msg("no addrs specified for this request. skipping")
-		return
-	}
-
-	var addrQueries []rule.Query
-	for _, v := range addrs {
-		addrQueries = append(
-			addrQueries,
-			rule.Query{Type: rule.MatchTypeAddr, Value: v.String()},
-		)
-	}
-
-	addrMatch := p.ruleSet.Search(addrQueries)
-
-	bestMatch := rule.HigherPriority(addrMatch, nameMatch)
-	if bestMatch != nil && logger.GetLevel() == zerolog.TraceLevel {
-		logger.Trace().RawJSON("summary", bestMatch.JSON()).Msg("match")
-	}
-
 	switch req.Cmd {
 	case proto.SOCKS5CmdConnect:
-		dst := &netutil.Destination{
-			Host:  req.FQDN,
-			Addrs: addrs,
-			Port:  req.Port,
-		}
-		if err = p.connectHandler.Handle(ctx, conn, req, dst, bestMatch); err != nil {
+		if err = p.connectHandler.Handle(ctx, conn, req); err != nil {
 			return // Handler logs error
 		}
 
