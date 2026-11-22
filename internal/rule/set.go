@@ -2,6 +2,7 @@ package rule
 
 import (
 	"fmt"
+	"net"
 	"sync"
 
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -112,6 +113,31 @@ func (rs *RuleSet) Search(queries []Query) *config.Rule {
 		return nil
 	}
 	return best.Clone()
+}
+
+// MatchName returns the rule that matches the domain name, as Search does.
+// It returns nil for an empty name and on a nil RuleSet.
+func (rs *RuleSet) MatchName(name string) *config.Rule {
+	if rs == nil || name == "" {
+		return nil
+	}
+
+	return rs.Search([]Query{{Type: MatchTypeDomain, Value: name}})
+}
+
+// MatchAddrs returns the higher-priority rule that matches any of addrs, as
+// Search does. It returns nil for no addresses and on a nil RuleSet.
+func (rs *RuleSet) MatchAddrs(addrs []net.IP) *config.Rule {
+	if rs == nil || len(addrs) == 0 {
+		return nil
+	}
+
+	queries := make([]Query, len(addrs))
+	for i, addr := range addrs {
+		queries[i] = Query{Type: MatchTypeAddr, Value: addr.String()}
+	}
+
+	return rs.Search(queries)
 }
 
 // HigherPriority returns whichever rule has the higher Priority field.

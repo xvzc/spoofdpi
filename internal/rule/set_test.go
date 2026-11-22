@@ -1,6 +1,7 @@
 package rule
 
 import (
+	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -159,6 +160,78 @@ func TestHigherPriority(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, HigherPriority(tc.a, tc.b))
+		})
+	}
+}
+
+func TestRuleSet_MatchName(t *testing.T) {
+	rs := NewRuleSet()
+	assert.NoError(t, rs.Add(mkRule("domain", 10, []string{"example.com"}, nil)))
+	assert.NoError(t, rs.Add(mkRule("cidr", 10, nil, []string{"192.0.2.0/24"})))
+
+	tcs := []struct {
+		name  string
+		rs    *RuleSet
+		value string
+		want  string
+	}{
+		{"domain matches", rs, "example.com", "domain"},
+		{"no domain matches", rs, "other.com", ""},
+		{"empty name", rs, "", ""},
+		{"nil rule set", nil, "example.com", ""},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			r := tc.rs.MatchName(tc.value)
+			if tc.want == "" {
+				assert.Nil(t, r)
+				return
+			}
+			if assert.NotNil(t, r) {
+				assert.Equal(t, tc.want, r.Name)
+			}
+		})
+	}
+}
+
+func TestRuleSet_MatchAddrs(t *testing.T) {
+	rs := NewRuleSet()
+	assert.NoError(t, rs.Add(mkRule("low", 10, nil, []string{"192.0.2.0/24"})))
+	assert.NoError(t, rs.Add(mkRule("high", 20, nil, []string{"198.51.100.0/24"})))
+	assert.NoError(t, rs.Add(mkRule("domain", 30, []string{"example.com"}, nil)))
+
+	ips := func(ss ...string) []net.IP {
+		out := make([]net.IP, len(ss))
+		for i, s := range ss {
+			out[i] = net.ParseIP(s)
+		}
+		return out
+	}
+
+	tcs := []struct {
+		name  string
+		rs    *RuleSet
+		addrs []net.IP
+		want  string
+	}{
+		{"address matches", rs, ips("192.0.2.1"), "low"},
+		{"higher priority of all addresses", rs, ips("192.0.2.1", "198.51.100.1"), "high"},
+		{"no address matches", rs, ips("203.0.113.1"), ""},
+		{"no addresses", rs, nil, ""},
+		{"nil rule set", nil, ips("192.0.2.1"), ""},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			r := tc.rs.MatchAddrs(tc.addrs)
+			if tc.want == "" {
+				assert.Nil(t, r)
+				return
+			}
+			if assert.NotNil(t, r) {
+				assert.Equal(t, tc.want, r.Name)
+			}
 		})
 	}
 }

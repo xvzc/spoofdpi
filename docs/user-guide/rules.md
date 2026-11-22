@@ -29,7 +29,7 @@ Each TCP connection, and each UDP datagram, uses exactly one rule. Its address i
 | TUN UDP                | Destination of the packets        | None                                 |
 | SOCKS5 `UDP ASSOCIATE` | Resolved address of each datagram | Name the datagram is sent to, if any |
 
-For SOCKS5 `CONNECT` and the HTTP and HTTPS proxy, a requested name is matched before it is resolved, so the domain rule's `dns` settings decide how it is looked up. SOCKS5 `UDP ASSOCIATE` resolves names with the system resolver (see [UDP traffic](#udp-traffic)).
+For SOCKS5 `CONNECT` and the HTTP and HTTPS proxy, a requested name is matched before it is resolved, so the domain rule's `dns` settings decide how it is looked up. A rule's `dns` settings apply only when the rule is matched by domain. SOCKS5 `UDP ASSOCIATE` resolves names with the system resolver (see [UDP traffic](#udp-traffic)).
 
 ## Match Criteria (`match`)
 
