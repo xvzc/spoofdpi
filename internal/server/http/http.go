@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -71,7 +70,7 @@ func (p *HTTPProxy) Serve(ctx context.Context) error {
 	stop := context.AfterFunc(ctx, func() { _ = p.listener.Close() })
 	defer stop()
 
-	var delay time.Duration
+	var backoff server.Backoff
 	for {
 		conn, err := p.listener.Accept()
 		if err != nil {
@@ -80,10 +79,11 @@ func (p *HTTPProxy) Serve(ctx context.Context) error {
 			}
 
 			p.logger.Error().Err(err).Msgf("failed to accept new connection")
-			delay = server.BackoffOnError(delay)
+			backoff.Wait(ctx)
 
 			continue
 		}
+		backoff.Reset()
 
 		p.conns.Go(ctx, conn, func(ctx context.Context) {
 			p.handleNewConnection(ctx, conn)

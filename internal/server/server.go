@@ -34,19 +34,39 @@ type Server interface {
 	SetupNetworkJobs(ctx context.Context) (string, error)
 }
 
-func BackoffOnError(delay time.Duration) time.Duration {
-	if delay == 0 {
-		delay = 5
-	} else {
-		delay *= 2
-	}
-	if max := 10 * time.Second; delay > max {
-		delay = max
-	}
+const (
+	backoffMin = 5 * time.Millisecond
+	backoffMax = time.Second
+)
 
-	time.Sleep(delay)
+// Backoff spaces out retries after consecutive errors, such as failed
+// accepts. Each Wait sleeps twice as long as the one before, from 5ms up to
+// 1s, until Reset starts over. The zero value is ready to use.
+type Backoff struct {
+	delay time.Duration
+}
 
-	return delay
+// Wait sleeps for the next delay, or until ctx is done.
+func (b *Backoff) Wait(ctx context.Context) {
+	timer := time.NewTimer(b.next())
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+}
+
+// Reset makes the next Wait sleep for the shortest delay again. Callers
+// call it after a success.
+func (b *Backoff) Reset() {
+	b.delay = 0
+}
+
+// next advances the delay and returns it.
+func (b *Backoff) next() time.Duration {
+	b.delay = min(max(b.delay*2, backoffMin), backoffMax)
+	return b.delay
 }
 
 // ConnContext returns the context of one connection. It starts from a fresh
