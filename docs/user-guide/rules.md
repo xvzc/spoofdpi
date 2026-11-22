@@ -29,7 +29,7 @@ Each TCP connection, and each UDP datagram, uses exactly one rule. Its address i
 | TUN UDP                | Destination of the packets        | None                                         |
 | SOCKS5 `UDP ASSOCIATE` | Resolved address of each datagram | Name the datagram is sent to, if any         |
 
-For SOCKS5 `CONNECT` and the HTTP and HTTPS proxy, a requested name is matched before it is resolved, so the domain rule's `dns` settings decide how it is looked up. A rule's `dns` settings apply only when the rule is matched by domain. SOCKS5 `UDP ASSOCIATE` resolves names with the system resolver (see [UDP traffic](#udp-traffic)).
+For SOCKS5 `CONNECT` and the HTTP and HTTPS proxy, a requested name is matched before it is resolved, so the domain rule's `dns` settings decide how it is looked up. A rule's `dns` settings apply only when the rule is matched by domain. SOCKS5 `UDP ASSOCIATE` resolves names the same way (see [UDP traffic](#udp-traffic)).
 
 ## Match Criteria (`match`)
 
@@ -76,7 +76,7 @@ tls = { fake-preflight = 5 }
 
 ### UDP traffic
 
-UDP traffic is matched per datagram, by its destination, so one flow of datagrams can use different settings for different destinations. A SOCKS5 client may send each datagram to a domain name instead of an address; the name is resolved with the system resolver, so `dns` overrides do not apply to it.
+UDP traffic is matched per datagram, by its destination, so one flow of datagrams can use different settings for different destinations. A SOCKS5 client may send each datagram to a domain name instead of an address; the name is resolved like a `CONNECT` name, with the `dns` settings of the domain rule it matches, and the datagram goes to the first address it resolves to. The answer is [cached](dns.md#caching), so a name is not looked up for every datagram.
 
 A matching rule with `block = true` drops the datagrams to that destination. In TUN mode the flow is closed; a SOCKS5 association stays open for the client's other destinations.
 

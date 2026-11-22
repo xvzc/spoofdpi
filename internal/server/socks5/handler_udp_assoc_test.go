@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
+	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
@@ -194,6 +195,7 @@ func newRelayingUdpAssociateHandler(
 	return NewUdpAssociateHandler(
 		zerolog.Nop(),
 		desync.NewUDPDesyncer(zerolog.Nop(), nil, nil, nil),
+		&stubResolver{},
 		rs,
 		base,
 	)
@@ -380,6 +382,73 @@ func TestUdpAssociateHandler_Handle_NameLookup(t *testing.T) {
 	}
 	assert.Same(t, &base.DNS, resolver.lookupOpts("base.test"))
 	assert.Same(t, &base.DNS, resolver.lookupOpts("fail.test"))
+}
+
+// multiAddrResolver resolves every name to addrs and records the DNS
+// options of the latest lookup.
+type multiAddrResolver struct {
+	addrs []netip.Addr
+	opts  atomic.Pointer[config.DNSOptions]
+}
+
+func (r *multiAddrResolver) Resolve(
+	_ context.Context,
+	opts *config.DNSOptions,
+	_ string,
+) ([]netip.Addr, error) {
+	r.opts.Store(opts)
+	return r.addrs, nil
+}
+
+func TestUdpAssociateHandler_SelectRule_FirstResolvedAddress(t *testing.T) {
+	ruleDNS := &config.Rule{
+		Name:     "rule dns",
+		Priority: 10,
+		Match:    &config.MatchAttrs{Domains: []string{"dual.test"}},
+	}
+	ruleDNS.Config.DNS.QType = config.DNSQueryAll
+	base := &config.RuntimeConfig{}
+	base.DNS.QType = config.DNSQueryIPv4
+
+	rs := rule.NewRuleSet()
+	require.NoError(t, rs.Add(ruleDNS))
+	resolver := &multiAddrResolver{addrs: []netip.Addr{
+		netip.MustParseAddr("2001:db8::1"),
+		netip.MustParseAddr("192.0.2.1"),
+	}}
+	h := NewUdpAssociateHandler(zerolog.Nop(), nil, resolver, rs, base)
+	c := newUdpAssociateConn(h, nil, nil)
+	c.logger = zerolog.Nop()
+
+	dstAddr, _, ok := c.selectRule(context.Background(), "dual.test:443")
+	require.True(t, ok)
+	assert.Equal(t, "[2001:db8::1]:443", dstAddr.String())
+	// The qtype of the rule the name matches reaches the resolver.
+	if opts := resolver.opts.Load(); assert.NotNil(t, opts) {
+		assert.Equal(t, config.DNSQueryAll, opts.QType)
+	}
+}
+
+// With the DNS client the server uses, datagrams to one name are resolved
+// once while the answer's TTL lasts, not once per datagram.
+func TestUdpAssociateHandler_Handle_NameResolvedOnce(t *testing.T) {
+	dst := startUDPEcho(t)
+	dnsServer := startFakeDNSServer(t, dst.IP) // answers with a TTL of 60s
+	base := &config.RuntimeConfig{DNS: dnsOptionsFor(dnsServer)}
+	h := NewUdpAssociateHandler(
+		zerolog.Nop(),
+		desync.NewUDPDesyncer(zerolog.Nop(), nil, nil, nil),
+		dns.NewClient(zerolog.Nop(), &base.DNS),
+		rule.NewRuleSet(),
+		base,
+	)
+	a := startUdpAssociation(t, h)
+
+	for _, payload := range []string{"one", "two", "three"} {
+		a.sendToName(t, "name.test", dst.Port, payload)
+		assert.Equal(t, payload, a.receive(t))
+	}
+	assert.Equal(t, int32(1), dnsServer.queries.Load())
 }
 
 func TestUdpAssociateHandler_Handle_NameBlock(t *testing.T) {

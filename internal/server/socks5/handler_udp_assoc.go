@@ -41,6 +41,7 @@ type UdpAssociateHandler struct {
 func NewUdpAssociateHandler(
 	logger zerolog.Logger,
 	desyncer *desync.UDPDesyncer,
+	resolver dns.Resolver,
 	ruleSet *rule.RuleSet,
 	cfg *config.RuntimeConfig,
 ) *UdpAssociateHandler {
@@ -50,7 +51,7 @@ func NewUdpAssociateHandler(
 		ruleSet:  ruleSet,
 		cfg:      cfg,
 
-		resolver: dns.SystemResolver{},
+		resolver: resolver,
 		maxFlows: maxUDPFlows,
 	}
 }
@@ -293,7 +294,9 @@ func (c *udpAssociateConn) selectRule(
 
 	// A domain name is resolved first, then matched together with the
 	// address it resolves to. The rule is selected the way it is for
-	// CONNECT, but the system resolver resolves the name to one address.
+	// CONNECT, but only the first resolved address is used: the resolver
+	// returns them in the order of RFC 6724, and a datagram goes to one
+	// address.
 	dstIPs, dstRule, err := c.h.resolveUDPTarget(ctx, dstHost)
 	if err != nil {
 		c.logger.Warn().
@@ -459,8 +462,8 @@ func (c *udpAssociateConn) relayInbound(
 // resolveUDPTarget returns the addresses of a datagram's destination host:
 // the host itself when it is an IP literal, else the addresses h.resolver
 // resolves it to, with the DNS options of the domain rule the host matches,
-// else the base ones (SystemResolver ignores them). It also returns that
-// domain rule, nil for an IP literal or when none matches.
+// else the base ones. It also returns that domain rule, nil for an IP
+// literal or when none matches.
 func (h *UdpAssociateHandler) resolveUDPTarget(
 	ctx context.Context,
 	host string,

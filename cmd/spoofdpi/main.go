@@ -469,6 +469,7 @@ func createServer(
 			socks5.NewUdpAssociateHandler(
 				logging.WithScope(logger, "hnd"),
 				udpDesyncer,
+				resolver,
 				ruleSet,
 				&cfg.RuntimeConfig,
 			),
