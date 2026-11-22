@@ -13,6 +13,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/rule"
+	"github.com/xvzc/spoofdpi/internal/server"
 )
 
 type TCPHandler struct {
@@ -46,15 +47,6 @@ func (h *TCPHandler) Handle(
 
 	logger := logging.WithLocalScope(ctx, h.logger, "tcp")
 
-	// Addr-based rule matching using the destination IP
-	var addrRule *config.Rule
-	if h.ruleSet != nil {
-		q := []rule.Query{{Type: rule.MatchTypeAddr, Value: dst.Addrs[0].String()}}
-		if addrRule = h.ruleSet.Search(q); addrRule != nil {
-			logger.Trace().RawJSON("summary", addrRule.JSON()).Msg("addr match")
-		}
-	}
-
 	// Set a read deadline for the first byte to avoid hanging indefinitely
 	_ = lConn.SetReadDeadline(time.Now().Add(1 * time.Second))
 
@@ -75,7 +67,6 @@ func (h *TCPHandler) Handle(
 			logger,
 			lBufferedConn,
 			dst,
-			addrRule,
 			sysNet,
 		); err != nil {
 			logger.Debug().Err(err).Msg("tls handler failed")
@@ -83,15 +74,11 @@ func (h *TCPHandler) Handle(
 		return
 	}
 
-	if addrRule != nil && addrRule.Block {
-		logger.Debug().Msg("request is blocked by policy")
+	sel, ok := h.selectRule(ctx, logger, "", dst)
+	if !ok {
 		return
 	}
-
-	cfg := h.cfg
-	if addrRule != nil {
-		cfg = &addrRule.Config
-	}
+	cfg := sel.Config
 
 	rConn, err := netutil.DialFastest(
 		ctx, dst, "tcp", cfg.Conn.TCPTimeout, sysNet.BindDialer,
@@ -130,7 +117,6 @@ func (h *TCPHandler) handleTLS(
 	logger zerolog.Logger,
 	lConn net.Conn,
 	dst *netutil.Destination,
-	addrRule *config.Rule,
 	sysNet TUNSystemNetwork,
 ) error {
 	// Read ClientHello
@@ -152,26 +138,12 @@ func (h *TCPHandler) handleTLS(
 
 	logger.Trace().Str("value", dst.Host).Msg("extracted sni field")
 
-	// The SNI is matched as the domain; the higher-priority match wins, the
-	// address on a tie.
-	var domainRule *config.Rule
-	if h.ruleSet != nil && dst.Host != "" {
-		q := []rule.Query{{Type: rule.MatchTypeDomain, Value: dst.Host}}
-		if domainRule = h.ruleSet.Search(q); domainRule != nil {
-			logger.Trace().RawJSON("summary", domainRule.JSON()).Msg("domain match")
-		}
-	}
-	matched := rule.HigherPriority(addrRule, domainRule)
-
-	if matched != nil && matched.Block {
-		logger.Debug().Msg("request is blocked by policy")
+	// The SNI is matched as the domain name.
+	sel, ok := h.selectRule(ctx, logger, dst.Host, dst)
+	if !ok {
 		return nil
 	}
-
-	cfg := h.cfg
-	if matched != nil {
-		cfg = &matched.Config
-	}
+	cfg := sel.Config
 
 	// Dial Remote
 	h.desyncer.PrepareHopTrack(dst.Addrs, &cfg.HTTPS)
@@ -216,4 +188,30 @@ func (h *TCPHandler) handleTLS(
 		netutil.DescribeRoute(lConn, rConn),
 		nil,
 	)
+}
+
+// selectRule selects the rule for dst, matching name as its domain name
+// when it is not empty. ok is false when the connection must not be
+// dialed: the rule blocks it, or no rule could be selected.
+func (h *TCPHandler) selectRule(
+	ctx context.Context,
+	logger zerolog.Logger,
+	name string,
+	dst *netutil.Destination,
+) (sel server.Selection, ok bool) {
+	// dst always has its address, so nothing is resolved.
+	sel, err := server.SelectRule(ctx, h.ruleSet, nil, h.cfg, name, dst.Addrs)
+	if err != nil {
+		logger.Error().Err(err).Msg("failed to select rule")
+		return sel, false
+	}
+	if sel.Rule != nil {
+		logger.Trace().RawJSON("summary", sel.Rule.JSON()).Msg("match")
+	}
+	if sel.Blocked() {
+		logger.Debug().Msg("request is blocked by policy")
+		return sel, false
+	}
+
+	return sel, true
 }
