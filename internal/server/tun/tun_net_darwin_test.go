@@ -14,7 +14,7 @@ func TestBuildJobs_Darwin(t *testing.T) {
 		{
 			Description: "configure TUN interface address",
 			Apply:       "ifconfig utun9 10.200.0.1 10.200.0.2 up",
-			Reset:       "ifconfig utun9 destroy",
+			Reset:       "ifconfig utun9 down",
 		},
 		{
 			Description: "add scoped default route via physical interface",

@@ -88,7 +88,7 @@ func buildJobs(info *tunNetworkInfoDarwin) []server.NetworkJob {
 			info.TunLocalIP,
 			info.TunRemoteIP,
 		),
-		Reset: fmt.Sprintf("ifconfig %s destroy", info.TUNName),
+		Reset: fmt.Sprintf("ifconfig %s down", info.TUNName),
 	})
 
 	jobs = append(jobs, server.NetworkJob{
