@@ -268,18 +268,13 @@ func (b *BufferedConn) Peek(n int) ([]byte, error) {
 // This is useful for sessions which should stay alive as long as there is activity.
 type IdleTimeoutConn struct {
 	net.Conn
-	Key any
 
-	timeout      int64 // time.Duration atomic
-	lastActivity int64 // UnixNano atomic
-	expiredAt    int64 // UnixNano atomic
+	timeout   int64 // time.Duration atomic
+	expiredAt int64 // UnixNano atomic
 
 	// deadlineMu serializes deadline updates, so an extension computed
 	// with an old timeout can't overwrite the deadline SetTimeout set.
 	deadlineMu sync.Mutex
-
-	onActivity func()
-	onClose    func()
 }
 
 // NewIdleTimeoutConn wraps a net.Conn and securely initializes its internal atomic deadlines.
@@ -289,10 +284,8 @@ func NewIdleTimeoutConn(conn net.Conn, timeout time.Duration) *IdleTimeoutConn {
 		timeout: int64(timeout),
 	}
 
-	now := time.Now()
-	atomic.StoreInt64(&c.lastActivity, now.UnixNano())
 	if timeout > 0 {
-		c.setDeadline(now.Add(timeout))
+		c.setDeadline(time.Now().Add(timeout))
 	}
 
 	return c
@@ -350,16 +343,7 @@ func (c *IdleTimeoutConn) ExtendDeadline() bool {
 		return false
 	}
 
-	// 2. Throttle OnActivity to drastically reduce LRU Cache Lock Contention
-	lastActUnix := atomic.LoadInt64(&c.lastActivity)
-	if nowUnix-lastActUnix > int64(time.Second) {
-		atomic.StoreInt64(&c.lastActivity, nowUnix)
-		if c.onActivity != nil {
-			c.onActivity()
-		}
-	}
-
-	// 3. Throttle SetDeadline overhead (System Call)
+	// 2. Throttle SetDeadline overhead (System Call)
 	// Extends only if remaining time is under 70% of timeout
 	timeout := c.Timeout()
 	if timeout > 0 {
@@ -392,13 +376,6 @@ func (c *IdleTimeoutConn) setDeadline(t time.Time) {
 func (c *IdleTimeoutConn) IsExpired(now time.Time) bool {
 	expUnix := atomic.LoadInt64(&c.expiredAt)
 	return expUnix != 0 && now.UnixNano() > expUnix
-}
-
-func (c *IdleTimeoutConn) Close() error {
-	if c.onClose != nil {
-		c.onClose()
-	}
-	return c.Conn.Close()
 }
 
 type TrackingConn struct {

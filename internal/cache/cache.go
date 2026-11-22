@@ -43,11 +43,5 @@ type Cache[K Key, V any] interface {
 	Get(key K) (V, bool)
 	Set(key K, value V, opts *options) bool
 	Delete(key K)
-	// DeleteFunc deletes key if del reports true for its current value, and
-	// reports whether it deleted it. del runs under the cache's lock, so it
-	// must not call back into the cache, or it deadlocks.
-	DeleteFunc(key K, del func(V) bool) bool
 	Has(key K) bool
-	ForEach(f func(key K, value V) error) error
-	Size() int
 }

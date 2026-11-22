@@ -125,18 +125,6 @@ func (c *TTLCache[K, V]) Delete(key K) {
 	shard.mu.Unlock()
 }
 
-func (c *TTLCache[K, V]) DeleteFunc(key K, del func(V) bool) bool {
-	shard := c.getShard(key)
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
-	i, ok := shard.items[key]
-	if !ok || !del(i.value) {
-		return false
-	}
-	delete(shard.items, key)
-	return true
-}
-
 func (c *TTLCache[K, V]) Has(key K) bool {
 	shard := c.getShard(key)
 	shard.mu.RLock()
@@ -157,28 +145,4 @@ func (c *TTLCache[K, V]) ForceCleanup() {
 		}
 		shard.mu.Unlock()
 	}
-}
-
-func (c *TTLCache[K, V]) ForEach(f func(key K, value V) error) error {
-	for _, shard := range c.shards {
-		shard.mu.RLock()
-		for key, i := range shard.items {
-			if err := f(key, i.value); err != nil {
-				shard.mu.RUnlock()
-				return err
-			}
-		}
-		shard.mu.RUnlock()
-	}
-	return nil
-}
-
-func (c *TTLCache[K, V]) Size() int {
-	total := 0
-	for _, shard := range c.shards {
-		shard.mu.RLock()
-		total += len(shard.items)
-		shard.mu.RUnlock()
-	}
-	return total
 }
