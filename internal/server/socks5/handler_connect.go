@@ -50,124 +50,182 @@ func (h *ConnectHandler) Handle(
 	lConn net.Conn,
 	req *proto.SOCKS5Request,
 ) error {
-	logger := logging.WithLocalScope(ctx, h.logger, "connect")
+	c := &connectConn{h: h, conn: lConn, req: req}
+	return c.serve(ctx)
+}
 
-	dst, matched, cfg, err := h.resolveDestination(ctx, logger, req)
-	if err != nil || dst == nil {
+// connectConn is one CONNECT request. It owns the remote connection it dials
+// and closes it when serve returns.
+type connectConn struct {
+	h      *ConnectHandler
+	conn   net.Conn
+	req    *proto.SOCKS5Request
+	logger zerolog.Logger
+
+	dst     *netutil.Destination
+	matched *config.Rule
+	cfg     *config.RuntimeConfig
+	rConn   net.Conn
+}
+
+func (c *connectConn) serve(ctx context.Context) error {
+	c.logger = logging.WithLocalScope(ctx, c.h.logger, "connect")
+
+	if err := c.resolveDestination(ctx); err != nil || c.dst == nil {
 		return err
 	}
 
-	// 1. Validate destination
-	ok, err := dst.IsValid(&h.listenAddr)
+	if err := c.checkDestination(); err != nil {
+		return err
+	}
+
+	if err := c.dial(ctx); err != nil {
+		return err
+	}
+	defer netutil.CloseConns(c.rConn)
+
+	if err := c.reply(); err != nil {
+		return err
+	}
+
+	c.logger.Debug().Msgf("new remote conn -> %s", c.rConn.RemoteAddr())
+
+	bufConn := netutil.NewBufferedConn(c.conn)
+	proceed, err := c.forwardFirstMessage(ctx, bufConn)
+	if err != nil || !proceed {
+		return err
+	}
+
+	return c.tunnel(ctx, bufConn)
+}
+
+// checkDestination refuses a destination that is not valid or that the
+// selected rule blocks, and writes the failure reply for it.
+func (c *connectConn) checkDestination() error {
+	ok, err := c.dst.IsValid(&c.h.listenAddr)
 	if err != nil {
-		logger.Debug().Err(err).Msg("error determining if valid destination")
+		c.logger.Debug().Err(err).Msg("error determining if valid destination")
 		if !ok {
-			_ = proto.SOCKS5FailureResponse().Write(lConn)
+			_ = proto.SOCKS5FailureResponse().Write(c.conn)
 			return err
 		}
 	}
 
-	// 2. Check if blocked
-	if matched != nil && matched.Block {
-		logger.Debug().Msg("request is blocked by policy")
-		_ = proto.SOCKS5FailureResponse().Write(lConn)
+	if c.matched != nil && c.matched.Block {
+		c.logger.Debug().Msg("request is blocked by policy")
+		_ = proto.SOCKS5FailureResponse().Write(c.conn)
 		return netutil.ErrBlocked
 	}
 
-	// 3. Dial remote
-	h.desyncer.PrepareHopTrack(dst.Addrs, &cfg.HTTPS)
+	return nil
+}
 
-	rConn, err := netutil.DialFastest(ctx, dst, "tcp", cfg.Conn.TCPTimeout, nil)
+// dial connects to the destination, and writes the failure reply when it
+// can't.
+func (c *connectConn) dial(ctx context.Context) error {
+	c.h.desyncer.PrepareHopTrack(c.dst.Addrs, &c.cfg.HTTPS)
+
+	rConn, err := netutil.DialFastest(ctx, c.dst, "tcp", c.cfg.Conn.TCPTimeout, nil)
 	if err != nil {
-		_ = proto.SOCKS5FailureResponse().Write(lConn)
+		_ = proto.SOCKS5FailureResponse().Write(c.conn)
 		return err
 	}
-	defer netutil.CloseConns(rConn)
+	c.rConn = rConn
 
-	// 4. Send success response
+	return nil
+}
+
+func (c *connectConn) reply() error {
 	if err := proto.SOCKS5SuccessResponse().
 		Bind(net.IPv4zero).
 		Port(0).
-		Write(lConn); err != nil {
-		logger.Error().Err(err).Msg("failed to write socks5 success reply")
+		Write(c.conn); err != nil {
+		c.logger.Error().Err(err).Msg("failed to write socks5 success reply")
 		return err
 	}
 
-	logger.Debug().Msgf("new remote conn -> %s", rConn.RemoteAddr())
+	return nil
+}
 
-	// 5. Peek for TLS
-	bufConn := netutil.NewBufferedConn(lConn)
+// forwardFirstMessage sends the client's first TLS message to the remote,
+// desynced when it is a ClientHello. It does nothing when the client
+// doesn't start with a TLS handshake. It reports false, without an error,
+// when the client closes before sending a whole message.
+func (c *connectConn) forwardFirstMessage(
+	ctx context.Context,
+	bufConn *netutil.BufferedConn,
+) (bool, error) {
 	b, err := bufConn.Peek(1)
-
-	if err == nil && b[0] == byte(proto.TLSHandshake) {
-		// 6. Read ClientHello
-		tlsMsg, err := proto.ReadTLSMessage(bufConn)
-		if err != nil {
-			if err == io.EOF || err.Error() == "unexpected EOF" {
-				return nil
-			}
-			logger.Trace().Err(err).Msgf("failed to read first message from client")
-			return err
-		}
-
-		if tlsMsg.IsClientHello() {
-			// 7. Send ClientHello with desync
-			logger.Debug().
-				Int("len", tlsMsg.Len()).
-				Msgf("client hello received <- %s", lConn.RemoteAddr())
-			var n int
-			if cfg.HTTPS.Skip {
-				n, err = rConn.Write(tlsMsg.Raw())
-			} else {
-				n, err = h.desyncer.Desync(ctx, rConn, tlsMsg, &cfg.HTTPS, &cfg.Conn)
-			}
-			if err != nil {
-				return fmt.Errorf("failed to send client hello: %w", err)
-			}
-			logger.Debug().Int("len", n).Msgf("sent client hello -> %s", rConn.RemoteAddr())
-		} else {
-			logger.Debug().
-				Int("len", tlsMsg.Len()).
-				Msg("not a client hello. fallback to pure tcp")
-			if _, err := rConn.Write(tlsMsg.Raw()); err != nil {
-				return fmt.Errorf("failed to write initial bytes to remote: %w", err)
-			}
-		}
-	} else {
-		logger.Debug().Msg("not a tls handshake. fallback to pure tcp")
+	if err != nil || b[0] != byte(proto.TLSHandshake) {
+		c.logger.Debug().Msg("not a tls handshake. fallback to pure tcp")
+		return true, nil
 	}
 
-	// 8. Tunnel
+	tlsMsg, err := proto.ReadTLSMessage(bufConn)
+	if err != nil {
+		if err == io.EOF || err.Error() == "unexpected EOF" {
+			return false, nil
+		}
+		c.logger.Trace().Err(err).Msgf("failed to read first message from client")
+		return false, err
+	}
+
+	if !tlsMsg.IsClientHello() {
+		c.logger.Debug().
+			Int("len", tlsMsg.Len()).
+			Msg("not a client hello. fallback to pure tcp")
+		if _, err := c.rConn.Write(tlsMsg.Raw()); err != nil {
+			return false, fmt.Errorf("failed to write initial bytes to remote: %w", err)
+		}
+		return true, nil
+	}
+
+	c.logger.Debug().
+		Int("len", tlsMsg.Len()).
+		Msgf("client hello received <- %s", c.conn.RemoteAddr())
+	var n int
+	if c.cfg.HTTPS.Skip {
+		n, err = c.rConn.Write(tlsMsg.Raw())
+	} else {
+		n, err = c.h.desyncer.Desync(ctx, c.rConn, tlsMsg, &c.cfg.HTTPS, &c.cfg.Conn)
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to send client hello: %w", err)
+	}
+	c.logger.Debug().Int("len", n).Msgf("sent client hello -> %s", c.rConn.RemoteAddr())
+
+	return true, nil
+}
+
+func (c *connectConn) tunnel(ctx context.Context, bufConn *netutil.BufferedConn) error {
 	resCh := make(chan netutil.TransferResult, 2)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	startedAt := time.Now()
-	go netutil.TunnelConns(ctx, resCh, rConn, bufConn, netutil.TunnelDirOut)
-	go netutil.TunnelConns(ctx, resCh, bufConn, rConn, netutil.TunnelDirIn)
+	go netutil.TunnelConns(ctx, resCh, c.rConn, bufConn, netutil.TunnelDirOut)
+	go netutil.TunnelConns(ctx, resCh, bufConn, c.rConn, netutil.TunnelDirIn)
 
 	return netutil.WaitForTunnelCompletion(
 		ctx,
-		logger,
+		c.logger,
 		resCh,
 		startedAt,
-		netutil.DescribeRoute(bufConn, rConn),
+		netutil.DescribeRoute(bufConn, c.rConn),
 		nil,
 	)
 }
 
 // resolveDestination resolves the request's destination and selects its
 // rule with server.SelectRule. A domain name is resolved with the DNS
-// options of the domain rule it matches, else with the base ones. It
-// returns the destination, the selected rule (nil when none matches) and
-// the config to apply. It returns a nil destination, without an error,
-// when the request names no address to connect to.
-func (h *ConnectHandler) resolveDestination(
-	ctx context.Context,
-	logger zerolog.Logger,
-	req *proto.SOCKS5Request,
-) (*netutil.Destination, *config.Rule, *config.RuntimeConfig, error) {
+// options of the domain rule it matches, else with the base ones. It sets
+// the destination, the selected rule (nil when none matches) and the config
+// to apply. It leaves the destination nil, without an error, when the
+// request names no address to connect to.
+func (c *connectConn) resolveDestination(ctx context.Context) error {
+	h, req, logger := c.h, c.req, c.logger
+
 	var addrs []net.IP
 	var nameRule *config.Rule
 
@@ -184,16 +242,16 @@ func (h *ConnectHandler) resolveDestination(
 			resolved, err := h.resolver.Resolve(ctx, &nameCfg.DNS, name)
 			if err != nil {
 				logger.Error().Str("domain", req.FQDN).Err(err).Msgf("dns lookup failed")
-				return nil, nil, nil, err
+				return err
 			}
 			addrs = netutil.IPsFromAddrs(resolved)
 		}
 	} else {
 		logger.Trace().Msg("no addrs specified for this request. skipping")
-		return nil, nil, nil, nil
+		return nil
 	}
 
-	matched, cfg := server.SelectRule(
+	c.matched, c.cfg = server.SelectRule(
 		h.ruleSet,
 		h.cfg,
 		"",
@@ -201,14 +259,14 @@ func (h *ConnectHandler) resolveDestination(
 		nameRule,
 	)
 
-	if matched != nil && logger.GetLevel() == zerolog.TraceLevel {
-		logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
+	if c.matched != nil && logger.GetLevel() == zerolog.TraceLevel {
+		logger.Trace().RawJSON("summary", c.matched.JSON()).Msg("match")
 	}
 
-	dst := &netutil.Destination{
+	c.dst = &netutil.Destination{
 		Host:  req.FQDN,
 		Addrs: addrs,
 		Port:  req.Port,
 	}
-	return dst, matched, cfg, nil
+	return nil
 }
