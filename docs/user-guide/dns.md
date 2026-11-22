@@ -91,6 +91,8 @@ Filters DNS queries by record type (A for IPv4, AAAA for IPv6). `(default: "ipv4
 
 Available values are `"ipv4"`, `"ipv6"`, and `"all"`.
 
+When a name resolves to several addresses, spoofdpi connects with Happy Eyeballs (RFC 8305). It tries the addresses in the order of RFC 6724, alternating between IPv6 and IPv4 when both are present, and starts each attempt 250 ms after the previous one, or as soon as an attempt fails. It uses the first connection that succeeds.
+
 If your *Internet Service Provider (ISP)* doesn't support IPv6, it is recommended to set this option to `"ipv4"` for stability.
 
 ### Usage

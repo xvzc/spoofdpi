@@ -60,7 +60,9 @@ func (h *UDPHandler) Handle(
 	h.desyncer.PrepareHopTrack(dst.Addrs, &cfg.UDP)
 
 	// Dial remote connection
-	rawConn, err := netutil.DialFastest(ctx, dst, "udp", 0, sysNet.BindDialer)
+	rawConn, err := netutil.DialFastest(
+		ctx, dst, "udp", netutil.DialOptions{Bind: sysNet.BindDialer},
+	)
 	if err != nil {
 		logger.Error().Msgf("error dialing to %s", dst.String())
 		return

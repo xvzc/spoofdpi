@@ -361,7 +361,7 @@ func (c *udpAssociateConn) openFlow(
 	// Register destination for TTL learning when fakes will be sent.
 	c.h.desyncer.PrepareHopTrack(pktDst.Addrs, &cfg.UDP)
 
-	rRawConn, err := netutil.DialFastest(ctx, pktDst, "udp", 0, nil)
+	rRawConn, err := netutil.DialFastest(ctx, pktDst, "udp", netutil.DialOptions{})
 	if err != nil {
 		return nil, err
 	}

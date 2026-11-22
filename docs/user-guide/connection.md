@@ -10,6 +10,8 @@ Settings for network connection timeouts and packet configuration.
 
 Specifies the timeout (in milliseconds) for TCP connections. `(default: 10000, min: 1, max: 65535)`
 
+The timeout applies to each connection attempt. When a name resolves to several addresses, the attempts to further addresses start 250 ms apart (see [`qtype`](dns.md#qtype)), so connecting can take longer than the timeout in total.
+
 ### Usage
 
 **Command-Line Flag**

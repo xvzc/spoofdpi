@@ -133,8 +133,7 @@ func TestDialFastest_TwoSimultaneousSuccesses(t *testing.T) {
 		context.Background(),
 		testDestination("192.0.2.1", "192.0.2.2"),
 		"tcp",
-		0,
-		nil,
+		DialOptions{AttemptDelay: time.Nanosecond},
 	)
 	require.NoError(t, err)
 	f.requireLosersClosed(t, conn, before)
@@ -160,8 +159,7 @@ func TestDialFastest_SuccessAfterCancel(t *testing.T) {
 		context.Background(),
 		testDestination("192.0.2.1", "192.0.2.2"),
 		"tcp",
-		0,
-		nil,
+		DialOptions{AttemptDelay: time.Nanosecond},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "192.0.2.1:443", conn.(*TrackingConn).Conn.(*fakeConn).addr)
@@ -188,8 +186,7 @@ func TestDialFastest_ParentCancelledWhileDialing(t *testing.T) {
 			ctx,
 			testDestination("192.0.2.1", "192.0.2.2"),
 			"tcp",
-			0,
-			nil,
+			DialOptions{AttemptDelay: time.Nanosecond},
 		)
 		assert.Nil(t, conn)
 		errc <- err
@@ -215,8 +212,7 @@ func TestDialFastest_AllAttemptsFail(t *testing.T) {
 		context.Background(),
 		testDestination("192.0.2.1", "192.0.2.2", "192.0.2.3"),
 		"tcp",
-		0,
-		nil,
+		DialOptions{},
 	)
 	require.ErrorIs(t, err, refused)
 	assert.Nil(t, conn)
@@ -234,8 +230,9 @@ func TestDialFastest_BindFailure(t *testing.T) {
 		context.Background(),
 		testDestination("192.0.2.1"),
 		"tcp",
-		0,
-		func(*net.Dialer, string, net.IP) error { return bindErr },
+		DialOptions{
+			Bind: func(*net.Dialer, string, net.IP) error { return bindErr },
+		},
 	)
 	require.ErrorIs(t, err, bindErr)
 	assert.Nil(t, conn)
@@ -252,8 +249,7 @@ func TestDialFastest_OneAddress(t *testing.T) {
 		context.Background(),
 		testDestination("2001:db8::1"),
 		"tcp",
-		0,
-		nil,
+		DialOptions{},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "[2001:db8::1]:443", conn.(*TrackingConn).Conn.(*fakeConn).addr)
@@ -261,6 +257,195 @@ func TestDialFastest_OneAddress(t *testing.T) {
 }
 
 func TestDialFastest_NoAddresses(t *testing.T) {
-	_, err := DialFastest(context.Background(), testDestination(), "tcp", 0, nil)
+	_, err := DialFastest(context.Background(), testDestination(), "tcp", DialOptions{})
 	require.Error(t, err)
+}
+
+// dialOrder records the addresses dialed, in the order the dials start.
+type dialOrder struct {
+	mu    sync.Mutex
+	addrs []string
+}
+
+func (o *dialOrder) add(addr string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.addrs = append(o.addrs, addr)
+}
+
+func (o *dialOrder) get() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.addrs...)
+}
+
+func TestInterleaveFamilies(t *testing.T) {
+	tcs := []struct {
+		name  string
+		addrs []string
+		want  []string
+	}{
+		{
+			name:  "IPv6 first",
+			addrs: []string{"2001:db8::1", "2001:db8::2", "192.0.2.1", "192.0.2.2"},
+			want:  []string{"2001:db8::1", "192.0.2.1", "2001:db8::2", "192.0.2.2"},
+		},
+		{
+			name:  "IPv4 first",
+			addrs: []string{"192.0.2.1", "2001:db8::1", "2001:db8::2"},
+			want:  []string{"192.0.2.1", "2001:db8::1", "2001:db8::2"},
+		},
+		{
+			name:  "one family",
+			addrs: []string{"192.0.2.2", "192.0.2.1"},
+			want:  []string{"192.0.2.2", "192.0.2.1"},
+		},
+		{
+			name:  "IPv4-mapped counts as IPv4",
+			addrs: []string{"2001:db8::1", "::ffff:192.0.2.1", "2001:db8::2"},
+			want:  []string{"2001:db8::1", "192.0.2.1", "2001:db8::2"},
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, ip := range interleaveFamilies(testDestination(tc.addrs...).Addrs) {
+				got = append(got, ip.String())
+			}
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestDialFastest_FailureStartsNextAttempt(t *testing.T) {
+	before := runtime.NumGoroutine()
+
+	// Each attempt but the last fails. The attempt delay is never reached,
+	// so the attempts run one after another, in the order they are made.
+	refused := errors.New("connection refused")
+	var order dialOrder
+	f := newFakeDialer(t, func(_ context.Context, addr string) error {
+		order.add(addr)
+		if addr == "192.0.2.2:443" {
+			return nil
+		}
+		return refused
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := DialFastest(
+		ctx,
+		testDestination("2001:db8::1", "2001:db8::2", "192.0.2.1", "192.0.2.2"),
+		"tcp",
+		DialOptions{AttemptDelay: time.Hour},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "192.0.2.2:443", conn.(*TrackingConn).Conn.(*fakeConn).addr)
+	assert.Equal(t, []string{
+		"[2001:db8::1]:443",
+		"192.0.2.1:443",
+		"[2001:db8::2]:443",
+		"192.0.2.2:443",
+	}, order.get())
+	f.requireLosersClosed(t, conn, before)
+}
+
+func TestDialFastest_AllAttemptsFailInterleaved(t *testing.T) {
+	before := runtime.NumGoroutine()
+
+	refused := errors.New("connection refused")
+	var order dialOrder
+	f := newFakeDialer(t, func(_ context.Context, addr string) error {
+		order.add(addr)
+		return refused
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := DialFastest(
+		ctx,
+		testDestination("192.0.2.1", "192.0.2.2", "2001:db8::1"),
+		"tcp",
+		DialOptions{AttemptDelay: time.Hour},
+	)
+	require.ErrorIs(t, err, refused)
+	assert.Nil(t, conn)
+	assert.Contains(t, err.Error(), "total 3")
+	assert.Equal(t, []string{
+		"192.0.2.1:443",
+		"[2001:db8::1]:443",
+		"192.0.2.2:443",
+	}, order.get())
+	f.requireLosersClosed(t, nil, before)
+}
+
+func TestDialFastest_PendingAttemptHoldsBackNext(t *testing.T) {
+	before := runtime.NumGoroutine()
+
+	// The first attempt succeeds after a while, but well before the attempt
+	// delay, so the second address is never dialed.
+	var order dialOrder
+	f := newFakeDialer(t, func(_ context.Context, addr string) error {
+		order.add(addr)
+		time.Sleep(20 * time.Millisecond)
+		return nil
+	})
+
+	conn, err := DialFastest(
+		context.Background(),
+		testDestination("2001:db8::1", "192.0.2.1"),
+		"tcp",
+		DialOptions{AttemptDelay: time.Hour},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "[2001:db8::1]:443", conn.(*TrackingConn).Conn.(*fakeConn).addr)
+	assert.Equal(t, []string{"[2001:db8::1]:443"}, order.get())
+	f.requireLosersClosed(t, conn, before)
+}
+
+func TestDialFastest_AttemptDelay(t *testing.T) {
+	before := runtime.NumGoroutine()
+
+	// The first attempt hangs until it is cancelled; the second succeeds.
+	// The second attempt's start is measured from before DialFastest is
+	// called, which is before the delay starts, so the bound is never too
+	// tight.
+	const delay = 50 * time.Millisecond
+	var secondStart atomic.Pointer[time.Time]
+	// Only a timer orders the second dial after the first, which the race
+	// detector doesn't see; waiting for firstStarted makes the order, and
+	// so the fake dialer's bookkeeping, visible to it.
+	firstStarted := make(chan struct{})
+	f := newFakeDialer(t, func(ctx context.Context, addr string) error {
+		if addr == "[2001:db8::1]:443" {
+			close(firstStarted)
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		now := time.Now()
+		secondStart.Store(&now)
+		<-firstStarted
+		return nil
+	})
+
+	start := time.Now()
+	conn, err := DialFastest(
+		context.Background(),
+		testDestination("2001:db8::1", "192.0.2.1"),
+		"tcp",
+		DialOptions{AttemptDelay: delay},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "192.0.2.1:443", conn.(*TrackingConn).Conn.(*fakeConn).addr)
+	f.requireLosersClosed(t, conn, before)
+
+	require.NotNil(t, secondStart.Load())
+	assert.GreaterOrEqual(
+		t,
+		secondStart.Load().Sub(start),
+		delay,
+		"the second attempt started before the attempt delay",
+	)
 }

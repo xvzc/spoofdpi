@@ -79,9 +79,10 @@ func (h *TCPHandler) Handle(
 		return
 	}
 
-	rConn, err := netutil.DialFastest(
-		ctx, dst, "tcp", cfg.Conn.TCPTimeout, sysNet.BindDialer,
-	)
+	rConn, err := netutil.DialFastest(ctx, dst, "tcp", netutil.DialOptions{
+		Timeout: cfg.Conn.TCPTimeout,
+		Bind:    sysNet.BindDialer,
+	})
 	if err != nil {
 		logger.Error().Msgf("failed to dial %v", err)
 		return
@@ -144,9 +145,10 @@ func (h *TCPHandler) handleTLS(
 	// Dial Remote
 	h.desyncer.PrepareHopTrack(dst.Addrs, &cfg.HTTPS)
 
-	rConn, err := netutil.DialFastest(
-		ctx, dst, "tcp", cfg.Conn.TCPTimeout, sysNet.BindDialer,
-	)
+	rConn, err := netutil.DialFastest(ctx, dst, "tcp", netutil.DialOptions{
+		Timeout: cfg.Conn.TCPTimeout,
+		Bind:    sysNet.BindDialer,
+	})
 	if err != nil {
 		return err
 	}

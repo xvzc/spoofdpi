@@ -27,29 +27,52 @@ var dialContext = func(
 	return d.DialContext(ctx, network, addr)
 }
 
-// DialFastest attempts robust connections to the server
-// and returns the first successful conn. All the other connections will be
-// automatically canceled by calling `cancel()`, and every one of them that
-// was established is closed.
-// timeout is applied per-dial as a deadline; pass 0 to disable.
-// If bindFunc is not nil, it is called to configure the dialer before each dial attempt.
+// defaultAttemptDelay is the delay between connection attempts that RFC 8305,
+// section 8, recommends.
+const defaultAttemptDelay = 250 * time.Millisecond
+
+// DialOptions configures the attempts of DialFastest.
+type DialOptions struct {
+	// Timeout is applied to each attempt as a deadline, from the start of
+	// that attempt; 0 disables it. As attempts start AttemptDelay apart,
+	// dialing k addresses can take up to (k-1)*AttemptDelay + Timeout.
+	Timeout time.Duration
+	// Bind, if not nil, configures the dialer before each attempt.
+	Bind BindFunc
+	// AttemptDelay is how long DialFastest waits for an attempt before it
+	// starts the next one; 0 means 250ms.
+	AttemptDelay time.Duration
+}
+
+// DialFastest connects to dst with Happy Eyeballs (RFC 8305) and returns
+// the first successful conn. It tries the addresses of dst alternating
+// between IPv4 and IPv6, starting with the family of the first address and
+// keeping their order within each family. Each attempt starts
+// o.AttemptDelay after the previous one, or as soon as an attempt fails.
+// Once a conn is returned, the other attempts are cancelled, and every one
+// of them that was established is closed.
 func DialFastest(
 	ctx context.Context,
 	dst *Destination,
 	network string,
-	timeout time.Duration,
-	bindFunc BindFunc,
+	o DialOptions,
 ) (net.Conn, error) {
 	if len(dst.Addrs) == 0 {
 		return nil, fmt.Errorf("no addresses provided to dial")
 	}
+
+	attemptDelay := o.AttemptDelay
+	if attemptDelay == 0 {
+		attemptDelay = defaultAttemptDelay
+	}
+	addrs := interleaveFamilies(dst.Addrs)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	// Each attempt sends exactly one result, so sends never block. The
 	// channel is closed once every launched attempt has sent its result.
-	results := make(chan dialResult, len(dst.Addrs))
+	results := make(chan dialResult, len(addrs))
 	// Closes the conns DialFastest does not return, including those that
 	// arrive after it has returned.
 	defer func() {
@@ -61,6 +84,9 @@ func DialFastest(
 			}
 		}()
 	}()
+	// Each failed attempt sends one token, which starts the next attempt
+	// without waiting for attemptDelay. Sends never block.
+	failed := make(chan struct{}, len(addrs))
 
 	const maxConcurrency = 10
 	sem := make(chan struct{}, maxConcurrency) // semaphore
@@ -74,7 +100,11 @@ func DialFastest(
 
 	go func() {
 		defer attempts.Done()
-		for _, addr := range dst.Addrs {
+		for i, addr := range addrs {
+			if i > 0 && !waitNextAttempt(ctx, attemptDelay, failed) {
+				return
+			}
+
 			// Get semaphore
 			select {
 			case sem <- struct{}{}:
@@ -87,28 +117,11 @@ func DialFastest(
 				defer attempts.Done()
 				defer func() { <-sem }() // Return semaphore
 
-				targetAddr := net.JoinHostPort(ip.String(), strconv.Itoa(dst.Port))
-				dialer := &net.Dialer{}
-				if timeout > 0 {
-					dialer.Deadline = time.Now().Add(timeout)
+				res := dialAttempt(ctx, ip, dst.Port, network, o)
+				if res.err != nil {
+					failed <- struct{}{}
 				}
-
-				// Apply bind function if provided
-				if bindFunc != nil {
-					if err := bindFunc(dialer, network, ip); err != nil {
-						results <- dialResult{conn: nil, err: err}
-						return
-					}
-				}
-
-				conn, err := dialContext(ctx, dialer, network, targetAddr)
-				if err == nil && ctx.Err() != nil {
-					// DialFastest has returned or is returning without
-					// this conn.
-					_ = conn.Close()
-					conn, err = nil, ctx.Err()
-				}
-				results <- dialResult{conn: conn, err: err}
+				results <- res
 			}(addr)
 		}
 	}()
@@ -142,4 +155,81 @@ func DialFastest(
 			return nil, ctx.Err()
 		}
 	}
+}
+
+// dialAttempt dials ip on port. It closes a conn established after ctx is
+// done, as DialFastest has returned or is returning without it.
+func dialAttempt(
+	ctx context.Context,
+	ip net.IP,
+	port int,
+	network string,
+	o DialOptions,
+) dialResult {
+	targetAddr := net.JoinHostPort(ip.String(), strconv.Itoa(port))
+	dialer := &net.Dialer{}
+	if o.Timeout > 0 {
+		dialer.Deadline = time.Now().Add(o.Timeout)
+	}
+
+	if o.Bind != nil {
+		if err := o.Bind(dialer, network, ip); err != nil {
+			return dialResult{err: err}
+		}
+	}
+
+	conn, err := dialContext(ctx, dialer, network, targetAddr)
+	if err == nil && ctx.Err() != nil {
+		_ = conn.Close()
+		conn, err = nil, ctx.Err()
+	}
+	return dialResult{conn: conn, err: err}
+}
+
+// waitNextAttempt waits until the next attempt may start: after delay, or
+// at once when an attempt has failed. It reports false when ctx is done
+// first.
+func waitNextAttempt(
+	ctx context.Context,
+	delay time.Duration,
+	failed <-chan struct{},
+) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		return true
+	case <-failed:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// interleaveFamilies orders addrs as RFC 8305, section 4, does with a
+// "First Address Family Count" of 1: it alternates between IPv4 and IPv6,
+// starting with the family of addrs[0], and keeps the order of addrs within
+// each family. An IPv4-mapped IPv6 address counts as IPv4.
+func interleaveFamilies(addrs []net.IP) []net.IP {
+	firstIs4 := addrs[0].To4() != nil
+	var first, second []net.IP
+	for _, ip := range addrs {
+		if (ip.To4() != nil) == firstIs4 {
+			first = append(first, ip)
+		} else {
+			second = append(second, ip)
+		}
+	}
+
+	ordered := make([]net.IP, 0, len(addrs))
+	for i := 0; i < len(first) || i < len(second); i++ {
+		if i < len(first) {
+			ordered = append(ordered, first[i])
+		}
+		if i < len(second) {
+			ordered = append(ordered, second[i])
+		}
+	}
+	return ordered
 }
