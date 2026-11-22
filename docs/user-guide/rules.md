@@ -19,15 +19,15 @@ The top-level `[[rules]]` array contains one table per rule. Each rule consists 
 
 ## Rule Selection
 
-Each TCP connection, and each UDP datagram, uses exactly one rule. Its address is matched against `cidrs` and, when its domain name is known, the name is matched against `domains`. The higher-priority of the two matches is selected, and the address match wins a tie. All of the selected rule's settings apply: `block`, `tls`, `udp`, `connection` and `dns`. When no rule matches, the global settings apply.
+Each TCP connection, and each UDP datagram, uses exactly one rule. Its address is matched against `cidrs` and, when its domain name is known, the name is matched against `domains`. The higher-priority of the two matches is selected, and the address match wins a tie. All of the selected rule's settings apply: `block`, `tls`, `udp`, `connection` and `dns`. When no rule matches, the global settings apply. A name that is an IP literal is never matched against `domains`, only as an address.
 
-| Traffic                | Address                           | Domain name                          |
-| :--------------------- | :-------------------------------- | :----------------------------------- |
-| SOCKS5 `CONNECT`       | Requested or resolved address     | Requested name, if any               |
-| HTTP and HTTPS proxy   | Requested or resolved address     | Requested host, if a name            |
-| TUN TCP                | Destination of the packets        | TLS SNI, if present                  |
-| TUN UDP                | Destination of the packets        | None                                 |
-| SOCKS5 `UDP ASSOCIATE` | Resolved address of each datagram | Name the datagram is sent to, if any |
+| Traffic                | Address                           | Domain name                                  |
+| :--------------------- | :-------------------------------- | :------------------------------------------- |
+| SOCKS5 `CONNECT`       | Requested or resolved address     | Requested name, if any and not an IP literal |
+| HTTP and HTTPS proxy   | Requested or resolved address     | Requested host, if not an IP literal         |
+| TUN TCP                | Destination of the packets        | TLS SNI, if present and not an IP literal    |
+| TUN UDP                | Destination of the packets        | None                                         |
+| SOCKS5 `UDP ASSOCIATE` | Resolved address of each datagram | Name the datagram is sent to, if any         |
 
 For SOCKS5 `CONNECT` and the HTTP and HTTPS proxy, a requested name is matched before it is resolved, so the domain rule's `dns` settings decide how it is looked up. A rule's `dns` settings apply only when the rule is matched by domain. SOCKS5 `UDP ASSOCIATE` resolves names with the system resolver (see [UDP traffic](#udp-traffic)).
 
