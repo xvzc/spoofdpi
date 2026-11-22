@@ -104,13 +104,10 @@ func TestUDPSniffer_LearnsHops(t *testing.T) {
 
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			us := &UDPSniffer{
-				logger:    zerolog.Nop(),
-				nhopCache: cache.NewLRUCache[netutil.IPKey, HopEntry](1, 16, nil),
-			}
+			us := &UDPSniffer{logger: zerolog.Nop(), hops: newTestHopStore()}
 			server := net.ParseIP(tc.server)
 			if tc.register {
-				us.Register([]net.IP{server})
+				us.hops.Register(ProtoUDP, []net.IP{server})
 			}
 
 			us.processPacket(
@@ -118,27 +115,25 @@ func TestUDPSniffer_LearnsHops(t *testing.T) {
 				udpPacket(t, server, net.ParseIP(tc.local), tc.ttl),
 			)
 
-			hops, ok := learnedHops(us, netutil.NewIPKey(server))
+			hops, ok := learnedHops(us.hops, ProtoUDP, server)
 			assert.Equal(t, tc.wantOK, ok)
 			assert.Equal(t, tc.wantHops, hops)
+			_, ok = learnedHops(us.hops, ProtoTCP, server)
+			assert.False(t, ok, "a UDP packet teaches the UDP hop count only")
 		})
 	}
 }
 
 func TestUDPSniffer_DoesNotReinsertEvictedServer(t *testing.T) {
 	server := net.ParseIP("203.0.113.1")
-	us := &UDPSniffer{
-		logger: zerolog.Nop(),
-		nhopCache: evictOnGetCache{
-			cache.NewLRUCache[netutil.IPKey, HopEntry](1, 16, nil),
-		},
-	}
-	us.Register([]net.IP{server})
+	entries := evictOnGetCache{cache.NewLRUCache[HopKey, HopEntry](1, 16, nil)}
+	us := &UDPSniffer{logger: zerolog.Nop(), hops: newHopStore(entries)}
+	us.hops.Register(ProtoUDP, []net.IP{server})
 
 	us.processPacket(
 		context.Background(),
 		udpPacket(t, server, net.ParseIP("192.168.1.11"), 52),
 	)
 
-	assert.False(t, us.nhopCache.Has(netutil.NewIPKey(server)))
+	assert.False(t, entries.Has(HopKey{Proto: ProtoUDP, IP: netutil.NewIPKey(server)}))
 }

@@ -89,7 +89,7 @@ func stutterRunWith(
 	d := NewTLSDesyncer(
 		zerolog.Nop(),
 		eventWriter{log: log, failAt: failAt, sent: &sent},
-		stubSniffer{hopLearned: true, hops: 10},
+		stubHops{hopLearned: true, hops: 10},
 		seqs,
 	)
 	sc := newStubConn("203.0.113.1")
@@ -207,7 +207,7 @@ func TestStutter_Disabled(t *testing.T) {
 		d := NewTLSDesyncer(
 			zerolog.Nop(),
 			eventWriter{log: log},
-			stubSniffer{hopLearned: true, hops: 0},
+			stubHops{hopLearned: true, hops: 0},
 			nil,
 		)
 		opts := tlsOpts(0, 100)

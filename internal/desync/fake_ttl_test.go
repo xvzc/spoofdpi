@@ -14,51 +14,51 @@ import (
 // fakeTTLCases are fake TTLs for the connection options a connection was
 // given: the base options, or those of the rule it matched.
 var fakeTTLCases = []struct {
-	name    string
-	sniffer stubSniffer
-	conn    *config.ConnOptions
-	want    uint8
+	name string
+	hops stubHops
+	conn *config.ConnOptions
+	want uint8
 }{
-	{"base options, not learned", stubSniffer{}, baseConnOpts(), 7},
+	{"base options, not learned", stubHops{}, baseConnOpts(), 7},
 	{
 		"base options, learned",
-		stubSniffer{hopLearned: true, hops: 16},
+		stubHops{hopLearned: true, hops: 16},
 		baseConnOpts(),
 		15,
 	},
 	{
 		"rule hop-count-default, not learned",
-		stubSniffer{},
+		stubHops{},
 		&config.ConnOptions{HopCountDefault: 12, HopCountMax: 255},
 		11,
 	},
 	{
 		"rule hop-count-default, learned",
-		stubSniffer{hopLearned: true, hops: 16},
+		stubHops{hopLearned: true, hops: 16},
 		&config.ConnOptions{HopCountDefault: 12, HopCountMax: 255},
 		15,
 	},
 	{
 		"rule hop-count-offset, learned",
-		stubSniffer{hopLearned: true, hops: 16},
+		stubHops{hopLearned: true, hops: 16},
 		&config.ConnOptions{HopCountDefault: 8, HopCountMax: 255, HopCountOffset: -5},
 		10,
 	},
 	{
 		"rule hop-count-offset, not learned",
-		stubSniffer{},
+		stubHops{},
 		&config.ConnOptions{HopCountDefault: 8, HopCountMax: 255, HopCountOffset: -5},
 		7,
 	},
 	{
 		"rule hop-count-max",
-		stubSniffer{hopLearned: true, hops: 43},
+		stubHops{hopLearned: true, hops: 43},
 		&config.ConnOptions{HopCountDefault: 8, HopCountMax: 20},
 		19,
 	},
 	{
 		"rule hop-count-min",
-		stubSniffer{hopLearned: true, hops: 5},
+		stubHops{hopLearned: true, hops: 5},
 		&config.ConnOptions{HopCountDefault: 8, HopCountMin: 10, HopCountMax: 255},
 		9,
 	},
@@ -68,7 +68,7 @@ func TestDesync_FakeTTLFromConnOptions(t *testing.T) {
 	for _, tc := range fakeTTLCases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := &recordingWriter{}
-			d := NewTLSDesyncer(zerolog.Nop(), w, tc.sniffer, nil)
+			d := NewTLSDesyncer(zerolog.Nop(), w, tc.hops, nil)
 			opts := tlsOpts(1, 100)
 			opts.SynAckTimeout = 0
 
@@ -99,7 +99,7 @@ func TestUDPDesync_FakeTTLFromConnOptions(t *testing.T) {
 	for _, tc := range fakeTTLCases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := &udpWriter{}
-			d := NewUDPDesyncer(zerolog.Nop(), w, tc.sniffer)
+			d := NewUDPDesyncer(zerolog.Nop(), w, tc.hops)
 
 			_, err := d.Desync(context.Background(), conn, opts, tc.conn)
 			require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestUDPDesync_FakeTTLFromConnOptions(t *testing.T) {
 // the local link gets no fakes, even when the connection's options would
 // raise its hop count.
 func TestDesync_LocalLinkIgnoresRuleHopCount(t *testing.T) {
-	sniffer := stubSniffer{hopLearned: true, hops: 0}
+	hops := stubHops{hopLearned: true, hops: 0}
 	connOpts := &config.ConnOptions{
 		HopCountDefault: 8,
 		HopCountMin:     10,
@@ -124,7 +124,7 @@ func TestDesync_LocalLinkIgnoresRuleHopCount(t *testing.T) {
 
 	t.Run("tls", func(t *testing.T) {
 		w := &recordingWriter{}
-		d := NewTLSDesyncer(zerolog.Nop(), w, sniffer, nil)
+		d := NewTLSDesyncer(zerolog.Nop(), w, hops, nil)
 		opts := tlsOpts(1, 100)
 		opts.SynAckTimeout = 0
 
@@ -145,7 +145,7 @@ func TestDesync_LocalLinkIgnoresRuleHopCount(t *testing.T) {
 			remote: &net.UDPAddr{IP: net.ParseIP("192.168.1.20"), Port: 443},
 		}
 		w := &udpWriter{}
-		d := NewUDPDesyncer(zerolog.Nop(), w, sniffer)
+		d := NewUDPDesyncer(zerolog.Nop(), w, hops)
 
 		_, err := d.Desync(
 			context.Background(),

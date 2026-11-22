@@ -13,7 +13,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/xvzc/spoofdpi/internal/cache"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/dns"
@@ -239,6 +238,7 @@ func setupNetworkStack(
 ) (
 	tcpStack *packet.TCPStack,
 	udpStack *packet.UDPStack,
+	hops *packet.HopStore,
 	err error,
 ) {
 	if !cfg.NeedsNetworkStack() {
@@ -259,7 +259,7 @@ func setupNetworkStack(
 	}
 
 	pktLogger := logging.WithScope(logger, "pkt")
-	hopCache := cache.NewLRUCache[netutil.IPKey, packet.HopEntry](16, 8192, nil)
+	hops = packet.NewHopStore()
 
 	logger.Info().Msg("network info")
 	logger.Info().
@@ -275,7 +275,7 @@ func setupNetworkStack(
 			pktLogger,
 			&route.Iface,
 			gatewayMAC,
-			hopCache,
+			hops,
 		)
 		if hErr != nil {
 			err = fmt.Errorf("tcp pcap handle on %s: %w", route.Iface.Name, hErr)
@@ -289,7 +289,7 @@ func setupNetworkStack(
 			pktLogger,
 			&route.Iface,
 			gatewayMAC,
-			hopCache,
+			hops,
 		)
 		if hErr != nil {
 			err = fmt.Errorf("udp pcap handle on %s: %w", route.Iface.Name, hErr)
@@ -340,7 +340,7 @@ func createServer(
 			Msg("gateway is ignored; only fake packets and tun mode use it")
 	}
 
-	tcpStack, udpStack, err := setupNetworkStack(
+	tcpStack, udpStack, hops, err := setupNetworkStack(
 		appctx,
 		logger,
 		defaultRoute,
@@ -350,32 +350,33 @@ func createServer(
 		return nil, err
 	}
 
-	// A nil stack must leave the interfaces nil: a nil *TCPSniffer stored in
-	// a packet.Sniffer would be non-nil and defeat the desyncers' nil checks.
+	// A nil stack must leave the interfaces nil: a nil *HopStore stored in
+	// a packet.HopReader would be non-nil and defeat the desyncers' nil
+	// checks.
 	var (
-		tcpSniffer packet.Sniffer
-		tcpWriter  packet.TCPSeqWriter
-		seqs       *packet.SeqTracker
-		udpSniffer packet.Sniffer
-		udpWriter  packet.Writer
+		tcpHops   packet.HopReader
+		tcpWriter packet.TCPSeqWriter
+		seqs      *packet.SeqTracker
+		udpHops   packet.HopReader
+		udpWriter packet.Writer
 	)
 	if tcpStack != nil {
-		tcpSniffer, tcpWriter, seqs = tcpStack.Sniffer, tcpStack.Writer, tcpStack.Seqs
+		tcpHops, tcpWriter, seqs = hops, tcpStack.Writer, tcpStack.Seqs
 	}
 	if udpStack != nil {
-		udpSniffer, udpWriter = udpStack.Sniffer, udpStack.Writer
+		udpHops, udpWriter = hops, udpStack.Writer
 	}
 
 	tlsDesyncer := desync.NewTLSDesyncer(
 		logging.WithScope(logger, "dsn"),
 		tcpWriter,
-		tcpSniffer,
+		tcpHops,
 		seqs,
 	)
 	udpDesyncer := desync.NewUDPDesyncer(
 		logging.WithScope(logger, "dsn"),
 		udpWriter,
-		udpSniffer,
+		udpHops,
 	)
 
 	switch cfg.App.Mode {

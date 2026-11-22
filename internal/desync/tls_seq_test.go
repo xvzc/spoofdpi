@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
-	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
@@ -42,20 +41,19 @@ func (w *recordingWriter) WriteCraftedPacketWithSeq(
 	return len(payload), nil
 }
 
-// stubSniffer is a sniffer that has every server registered, with hops
+// stubHops is a hop reader that has every server registered, with hops
 // learned if hopLearned is set.
-type stubSniffer struct {
+type stubHops struct {
 	hopLearned bool
 	hops       uint8
 }
 
-func (stubSniffer) StartCapturing()   {}
-func (stubSniffer) Register([]net.IP) {}
-func (s stubSniffer) Hops(netutil.IPKey) (packet.HopEntry, bool) {
+func (stubHops) Register(packet.Proto, []net.IP) {}
+func (s stubHops) Lookup(packet.Proto, net.IP) packet.HopEstimate {
 	if !s.hopLearned {
-		return packet.HopEntry{}, true
+		return packet.HopEstimate{Source: packet.HopSourceDefault}
 	}
-	return packet.HopEntry{Hops: s.hops, Learned: true}, true
+	return packet.HopEstimate{Hops: s.hops, Source: packet.HopSourceLearned}
 }
 
 // baseConnOpts are the default hop-count options.
@@ -196,7 +194,7 @@ func TestSendSegments_AdvancesSeq(t *testing.T) {
 func TestDesync_UsesLearnedSeqAckWithOffsets(t *testing.T) {
 	w := &recordingWriter{}
 	seqs := packet.NewSeqTracker(time.Minute)
-	d := NewTLSDesyncer(zerolog.Nop(), w, stubSniffer{}, seqs)
+	d := NewTLSDesyncer(zerolog.Nop(), w, stubHops{}, seqs)
 	conn := newStubConn("203.0.113.1")
 	seqs.Put(
 		packet.SeqKey(conn.local, conn.remote),
@@ -219,7 +217,7 @@ func TestDesync_UnlearnedFakeSegmentsLineUp(t *testing.T) {
 	d := NewTLSDesyncer(
 		zerolog.Nop(),
 		w,
-		stubSniffer{},
+		stubHops{},
 		packet.NewSeqTracker(time.Minute),
 	)
 	opts := tlsOpts(1, 100)
@@ -265,7 +263,7 @@ func TestDesync_WaitRules(t *testing.T) {
 			d := NewTLSDesyncer(
 				zerolog.Nop(),
 				&recordingWriter{},
-				stubSniffer{hopLearned: tc.hopLearned},
+				stubHops{hopLearned: tc.hopLearned},
 				packet.NewSeqTracker(time.Minute),
 			)
 			opts := tlsOpts(tc.fakeCount, 100)
@@ -290,18 +288,18 @@ func TestDesync_WaitRules(t *testing.T) {
 func TestDesync_SkipsFakesOnLocalLink(t *testing.T) {
 	tcs := []struct {
 		name      string
-		sniffer   stubSniffer
+		hops      stubHops
 		wantFakes bool
 	}{
-		{"server on the local link", stubSniffer{hopLearned: true, hops: 0}, false},
-		{"server one hop away", stubSniffer{hopLearned: true, hops: 1}, true},
-		{"hop count not learned", stubSniffer{}, true},
+		{"server on the local link", stubHops{hopLearned: true, hops: 0}, false},
+		{"server one hop away", stubHops{hopLearned: true, hops: 1}, true},
+		{"hop count not learned", stubHops{}, true},
 	}
 
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			w := &recordingWriter{}
-			d := NewTLSDesyncer(zerolog.Nop(), w, tc.sniffer, nil)
+			d := NewTLSDesyncer(zerolog.Nop(), w, tc.hops, nil)
 			opts := tlsOpts(1, 100)
 			opts.SynAckTimeout = 0
 
@@ -320,6 +318,25 @@ func TestDesync_SkipsFakesOnLocalLink(t *testing.T) {
 				"the real Client Hello is still sent",
 			)
 			assert.Equal(t, tc.wantFakes, len(w.packets) > 0)
+		})
+	}
+}
+
+func TestOnLocalLink(t *testing.T) {
+	tcs := []struct {
+		est  packet.HopEstimate
+		want bool
+	}{
+		{packet.HopEstimate{Hops: 0, Source: packet.HopSourceLearned}, true},
+		{packet.HopEstimate{Hops: 0, Source: packet.HopSourceLearnedOther}, true},
+		{packet.HopEstimate{Hops: 1, Source: packet.HopSourceLearned}, false},
+		{packet.HopEstimate{Hops: 0, Source: packet.HopSourceDefault}, false},
+		{packet.HopEstimate{Hops: 0, Source: packet.HopSourceNone}, false},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.est.Source.String(), func(t *testing.T) {
+			assert.Equal(t, tc.want, onLocalLink(tc.est))
 		})
 	}
 }
@@ -357,16 +374,16 @@ func TestUDPDesync_SkipsFakesOnLocalLink(t *testing.T) {
 
 	for _, tc := range []struct {
 		name      string
-		sniffer   stubSniffer
+		hops      stubHops
 		wantFakes int
 	}{
-		{"server on the local link", stubSniffer{hopLearned: true, hops: 0}, 0},
-		{"server one hop away", stubSniffer{hopLearned: true, hops: 1}, 2},
-		{"hop count not learned", stubSniffer{}, 2},
+		{"server on the local link", stubHops{hopLearned: true, hops: 0}, 0},
+		{"server one hop away", stubHops{hopLearned: true, hops: 1}, 2},
+		{"hop count not learned", stubHops{}, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := &udpWriter{}
-			d := NewUDPDesyncer(zerolog.Nop(), w, tc.sniffer)
+			d := NewUDPDesyncer(zerolog.Nop(), w, tc.hops)
 			_, err := d.Desync(context.Background(), conn, opts, baseConnOpts())
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantFakes, w.n)
@@ -380,7 +397,7 @@ func TestUDPDesync_UsesTheFlowAddresses(t *testing.T) {
 		remote: &net.UDPAddr{IP: net.ParseIP("203.0.113.1"), Port: 443},
 	}
 	w := &udpWriter{}
-	d := NewUDPDesyncer(zerolog.Nop(), w, stubSniffer{})
+	d := NewUDPDesyncer(zerolog.Nop(), w, stubHops{})
 
 	_, err := d.Desync(
 		context.Background(),

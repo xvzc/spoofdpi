@@ -2,11 +2,9 @@ package packet
 
 import (
 	"context"
-	"net"
 
 	"github.com/google/gopacket"
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/cache"
 	"github.com/xvzc/spoofdpi/internal/capture"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
@@ -17,7 +15,7 @@ var _ Sniffer = (*UDPSniffer)(nil)
 type UDPSniffer struct {
 	logger zerolog.Logger
 
-	nhopCache cache.Cache[netutil.IPKey, HopEntry]
+	hops *HopStore
 
 	handle capture.Handle
 }
@@ -25,12 +23,12 @@ type UDPSniffer struct {
 func NewUDPSniffer(
 	logger zerolog.Logger,
 	handle capture.Handle,
-	cache cache.Cache[netutil.IPKey, HopEntry],
+	hops *HopStore,
 ) *UDPSniffer {
 	return &UDPSniffer{
-		logger:    logger,
-		handle:    handle,
-		nhopCache: cache,
+		logger: logger,
+		handle: handle,
+		hops:   hops,
 	}
 }
 
@@ -52,23 +50,6 @@ func (us *UDPSniffer) StartCapturing() {
 	}()
 }
 
-// Register registers new IP addresses for hop-count learning.
-// Addresses that are already being tracked are ignored.
-func (us *UDPSniffer) Register(addrs []net.IP) {
-	for _, v := range addrs {
-		us.nhopCache.Set(
-			netutil.NewIPKey(v),
-			HopEntry{},
-			cache.Options().WithSkipExisting(true),
-		)
-	}
-}
-
-// Hops returns the hop-count cache entry of key, and whether key is cached.
-func (us *UDPSniffer) Hops(key netutil.IPKey) (HopEntry, bool) {
-	return us.nhopCache.Get(key)
-}
-
 // processPacket analyzes a single packet to store hop counts.
 func (us *UDPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	logger := logging.WithLocalScope(ctx, us.logger, "sniff")
@@ -78,23 +59,15 @@ func (us *UDPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 		return
 	}
 
-	key := netutil.NewIPKey(u.Src)
 	nhops := u.Hops
 
-	// prev only feeds the trace log below. The update-only Set decides
-	// whether key is registered, so a key evicted after this Get is not
-	// re-inserted.
-	prev, _ := us.nhopCache.Get(key)
-	if !us.nhopCache.Set(
-		key,
-		HopEntry{Hops: nhops, Learned: true},
-		cache.Options().WithUpdateExistingOnly(true),
-	) {
+	prev, registered := us.hops.Learn(ProtoUDP, u.Src, nhops)
+	if !registered {
 		return
 	}
 	if !prev.Learned || nhops != prev.Hops {
 		logger.Trace().
-			Str("from", key.String()).
+			Str("from", netutil.NewIPKey(u.Src).String()).
 			Uint8("nhops", nhops).
 			Uint8("ttlLeft", u.TTLLeft).
 			Msgf("ttl(udp) update")

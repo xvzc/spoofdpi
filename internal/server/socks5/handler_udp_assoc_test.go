@@ -559,14 +559,13 @@ func (w *countingFakeWriter) WriteCraftedPacket(
 	return len(payload), nil
 }
 
-// unlearnedSniffer knows no hop counts, so fakes use the default TTL.
-type unlearnedSniffer struct{}
+// unlearnedHops knows no hop counts, so fakes use the default TTL.
+type unlearnedHops struct{}
 
-func (unlearnedSniffer) StartCapturing()   {}
-func (unlearnedSniffer) Register([]net.IP) {}
+func (unlearnedHops) Register(packet.Proto, []net.IP) {}
 
-func (unlearnedSniffer) Hops(netutil.IPKey) (packet.HopEntry, bool) {
-	return packet.HopEntry{}, false
+func (unlearnedHops) Lookup(packet.Proto, net.IP) packet.HopEstimate {
+	return packet.HopEstimate{Source: packet.HopSourceDefault}
 }
 
 func TestUdpAssociateHandler_Handle_RulePerDatagram(t *testing.T) {
@@ -682,7 +681,7 @@ func TestUdpAssociateHandler_Handle_RulePerDatagram(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				h, dst := start(t, domainRule(nameA, long, 2), domainRule(nameB, long, 3))
 				writer := &countingFakeWriter{}
-				h.desyncer = desync.NewUDPDesyncer(zerolog.Nop(), writer, unlearnedSniffer{})
+				h.desyncer = desync.NewUDPDesyncer(zerolog.Nop(), writer, unlearnedHops{})
 				a := startUdpAssociation(t, h)
 
 				for _, name := range []string{tc.first, tc.second, tc.first} {

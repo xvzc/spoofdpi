@@ -26,28 +26,28 @@ type Segment struct {
 // TLSDesyncer splits the data into chunks and optionally
 // disorders packets by manipulating TTL.
 type TLSDesyncer struct {
-	logger  zerolog.Logger
-	writer  packet.TCPSeqWriter
-	sniffer packet.Sniffer
-	seqs    *packet.SeqTracker
+	logger zerolog.Logger
+	writer packet.TCPSeqWriter
+	hops   packet.HopReader
+	seqs   *packet.SeqTracker
 }
 
 func NewTLSDesyncer(
 	logger zerolog.Logger,
 	writer packet.TCPSeqWriter,
-	sniffer packet.Sniffer,
+	hops packet.HopReader,
 	seqs *packet.SeqTracker,
 ) *TLSDesyncer {
-	return &TLSDesyncer{logger: logger, writer: writer, sniffer: sniffer, seqs: seqs}
+	return &TLSDesyncer{logger: logger, writer: writer, hops: hops, seqs: seqs}
 }
 
-// PrepareHopTrack registers addrs with the sniffer for hop-count learning,
-// guarded by the config so the LRU isn't touched when fakes won't be sent.
+// PrepareHopTrack registers addrs for TCP hop-count learning, guarded by
+// the config so the LRU isn't touched when fakes won't be sent.
 func (d *TLSDesyncer) PrepareHopTrack(addrs []net.IP, cfg *config.HTTPSOptions) {
-	if d.sniffer == nil || cfg.Skip || !cfg.UsesFakes() {
+	if d.hops == nil || cfg.Skip || !cfg.UsesFakes() {
 		return
 	}
-	d.sniffer.Register(addrs)
+	d.hops.Register(packet.ProtoTCP, addrs)
 }
 
 func (d *TLSDesyncer) Desync(
@@ -69,17 +69,18 @@ func (d *TLSDesyncer) Desync(
 	// are sent.
 	var seq *packet.SeqAck
 	var fakes *fakeSender
-	if httpsOpts.UsesFakes() && d.sniffer != nil && d.writer != nil {
+	if httpsOpts.UsesFakes() && d.hops != nil && d.writer != nil {
 		// Wait for the SYN/ACK first: the sniffer learns the hop count from
 		// it too, so the TTL read after it is fresher.
 		real := d.learnSeqAck(ctx, logger, conn, httpsOpts)
-		key := netutil.NewIPKey(conn.RemoteAddr().(*net.TCPAddr).IP)
-		if onLocalLink(d.sniffer, key) {
+		est := d.hops.Lookup(packet.ProtoTCP, conn.RemoteAddr().(*net.TCPAddr).IP)
+		if onLocalLink(est) {
 			logger.Debug().Msg("server is on the local link, skipping fake packets")
 			return d.sendSegments(ctx, conn, logger, split(logger, msg, httpsOpts), nil, nil)
 		}
 		seq = &real
-		oTTL := fakeTTL(d.sniffer, key, connOpts)
+		policy := hopPolicy(connOpts)
+		oTTL := policy.TTL(est)
 		fakes = newFakeSender(d.writer, conn, oTTL, httpsOpts, real)
 		logger.Trace().
 			Uint32("seq", fakes.fakeStart.Seq).
@@ -92,7 +93,12 @@ func (d *TLSDesyncer) Desync(
 			if err != nil {
 				logger.Warn().Err(err).Msg("failed to send fake packets")
 			} else {
-				logger.Debug().Int("len", n).Uint8("ttl", oTTL).Msg("sent fake packets")
+				logger.Debug().
+					Int("len", n).
+					Stringer("hop_source", est.Source).
+					Uint8("hops", policy.Hops(est)).
+					Uint8("ttl", oTTL).
+					Msg("sent fake packets")
 			}
 		}
 	}
@@ -135,27 +141,24 @@ func (d *TLSDesyncer) learnSeqAck(
 	return sa
 }
 
-// onLocalLink reports whether the server at key is known to be on the local
-// link (0 hops). No TTL can stop a fake packet before such a server, and no
-// DPI can sit in between, so fakes are pointless and only risk the
+// onLocalLink reports whether est puts the server on the local link (a
+// learned 0 hops). No TTL can stop a fake packet before such a server, and
+// no DPI can sit in between, so fakes are pointless and only risk the
 // connection.
-func onLocalLink(sniffer packet.Sniffer, key netutil.IPKey) bool {
-	e, ok := sniffer.Hops(key)
-	return ok && e.Learned && e.Hops == 0
+func onLocalLink(est packet.HopEstimate) bool {
+	return est.Learned() && est.Hops == 0
 }
 
-// fakeTTL returns the TTL of fake packets to the server at key, from the
-// hop count the sniffer cached for it and the hop-count options of the
-// connection, which a matched rule may override.
-func fakeTTL(sniffer packet.Sniffer, key netutil.IPKey, o *config.ConnOptions) uint8 {
-	e, ok := sniffer.Hops(key)
-	policy := packet.HopPolicy{
+// hopPolicy returns the policy that turns a hop count estimate into the
+// TTL of fake packets, from the hop-count options of the connection, which
+// a matched rule may override.
+func hopPolicy(o *config.ConnOptions) packet.HopPolicy {
+	return packet.HopPolicy{
 		Default: o.HopCountDefault,
 		Min:     o.HopCountMin,
 		Max:     o.HopCountMax,
 		Offset:  o.HopCountOffset,
 	}
-	return policy.TTL(e, ok)
 }
 
 // fakeSeqAck adds opts.FakeSeqOffset and opts.FakeAckOffset to the

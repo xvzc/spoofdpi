@@ -2,11 +2,9 @@ package packet
 
 import (
 	"context"
-	"net"
 
 	"github.com/google/gopacket"
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/cache"
 	"github.com/xvzc/spoofdpi/internal/capture"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
@@ -17,8 +15,8 @@ var _ Sniffer = (*TCPSniffer)(nil)
 type TCPSniffer struct {
 	logger zerolog.Logger
 
-	nhopCache cache.Cache[netutil.IPKey, HopEntry]
-	seqs      *SeqTracker
+	hops *HopStore
+	seqs *SeqTracker
 
 	handle capture.Handle
 }
@@ -26,14 +24,14 @@ type TCPSniffer struct {
 func NewTCPSniffer(
 	logger zerolog.Logger,
 	handle capture.Handle,
-	cache cache.Cache[netutil.IPKey, HopEntry],
+	hops *HopStore,
 	seqs *SeqTracker,
 ) *TCPSniffer {
 	return &TCPSniffer{
-		logger:    logger,
-		handle:    handle,
-		nhopCache: cache,
-		seqs:      seqs,
+		logger: logger,
+		handle: handle,
+		hops:   hops,
+		seqs:   seqs,
 	}
 }
 
@@ -55,23 +53,6 @@ func (ts *TCPSniffer) StartCapturing() {
 	}()
 }
 
-// Register registers new IP addresses for hop-count learning.
-// Addresses that are already being tracked are ignored.
-func (ts *TCPSniffer) Register(addrs []net.IP) {
-	for _, v := range addrs {
-		ts.nhopCache.Set(
-			netutil.NewIPKey(v),
-			HopEntry{},
-			cache.Options().WithSkipExisting(true),
-		)
-	}
-}
-
-// Hops returns the hop-count cache entry of key, and whether key is cached.
-func (ts *TCPSniffer) Hops(key netutil.IPKey) (HopEntry, bool) {
-	return ts.nhopCache.Get(key)
-}
-
 // processPacket analyzes a single packet to find SYN/ACKs and store hop
 // counts and the connection's sequence numbers.
 func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
@@ -82,18 +63,12 @@ func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 		return
 	}
 
-	key := netutil.NewIPKey(sa.Src)
 	nhops := sa.Hops
 
-	// prev only feeds the trace log below. The update-only Set decides
-	// whether key is registered, so a key evicted after this Get is not
-	// re-inserted.
-	prev, _ := ts.nhopCache.Get(key)
-	if !ts.nhopCache.Set(
-		key,
-		HopEntry{Hops: nhops, Learned: true},
-		cache.Options().WithUpdateExistingOnly(true),
-	) {
+	// Only connections to registered servers are tracked: Learn decides
+	// that, without re-inserting a server evicted meanwhile.
+	prev, registered := ts.hops.Learn(ProtoTCP, sa.Src, nhops)
+	if !registered {
 		return
 	}
 
@@ -107,7 +82,7 @@ func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	}
 	if !prev.Learned || nhops != prev.Hops {
 		logger.Trace().
-			Str("from", key.String()).
+			Str("from", netutil.NewIPKey(sa.Src).String()).
 			Uint8("nhops", nhops).
 			Uint8("ttlLeft", sa.TTLLeft).
 			Msgf("ttl(tcp) update")

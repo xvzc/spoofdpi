@@ -7,31 +7,30 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/logging"
-	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
 type UDPDesyncer struct {
-	logger  zerolog.Logger
-	writer  packet.Writer
-	sniffer packet.Sniffer
+	logger zerolog.Logger
+	writer packet.Writer
+	hops   packet.HopReader
 }
 
 func NewUDPDesyncer(
 	logger zerolog.Logger,
 	writer packet.Writer,
-	sniffer packet.Sniffer,
+	hops packet.HopReader,
 ) *UDPDesyncer {
-	return &UDPDesyncer{logger: logger, writer: writer, sniffer: sniffer}
+	return &UDPDesyncer{logger: logger, writer: writer, hops: hops}
 }
 
-// PrepareHopTrack registers addrs with the sniffer for hop-count learning,
-// guarded by the config so the LRU isn't touched when fakes won't be sent.
+// PrepareHopTrack registers addrs for UDP hop-count learning, guarded by
+// the config so the LRU isn't touched when fakes won't be sent.
 func (d *UDPDesyncer) PrepareHopTrack(addrs []net.IP, cfg *config.UDPOptions) {
-	if d.sniffer == nil || cfg.FakePreflight == 0 {
+	if d.hops == nil || cfg.FakePreflight == 0 {
 		return
 	}
-	d.sniffer.Register(addrs)
+	d.hops.Register(packet.ProtoUDP, addrs)
 }
 
 // Desync sends fake packets on the flow of rConn, the connection to the
@@ -44,17 +43,17 @@ func (d *UDPDesyncer) Desync(
 ) (int, error) {
 	logger := logging.WithLocalScope(ctx, d.logger, "udp_desync")
 
-	if opts.FakePreflight == 0 || d.sniffer == nil || d.writer == nil {
+	if opts.FakePreflight == 0 || d.hops == nil || d.writer == nil {
 		return 0, nil
 	}
 
-	dstIP := rConn.RemoteAddr().(*net.UDPAddr).IP
-	key := netutil.NewIPKey(dstIP)
-	if onLocalLink(d.sniffer, key) {
+	est := d.hops.Lookup(packet.ProtoUDP, rConn.RemoteAddr().(*net.UDPAddr).IP)
+	if onLocalLink(est) {
 		logger.Trace().Msg("server is on the local link, skipping fake packets")
 		return 0, nil
 	}
-	oTTL := fakeTTL(d.sniffer, key, connOpts)
+	policy := hopPolicy(connOpts)
+	oTTL := policy.TTL(est)
 
 	var totalSent int
 	for range opts.FakePreflight {
@@ -77,6 +76,8 @@ func (d *UDPDesyncer) Desync(
 		logger.Debug().
 			Uint8("count", opts.FakePreflight).
 			Int("bytes", totalSent).
+			Stringer("hop_source", est.Source).
+			Uint8("hops", policy.Hops(est)).
 			Uint8("ttl", oTTL).
 			Msg("sent fake packets")
 	}

@@ -13,26 +13,21 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
-	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
-// stubSniffer is a sniffer that has learned a hop count of 0 for every
+// stubHops is a hop reader that has learned a hop count of 0 for every
 // server, which makes spoofdpi's desyncer skip the fakes.
-type stubSniffer struct {
+type stubHops struct {
 	registered []net.IP
 }
 
-func (s *stubSniffer) StartCapturing() {}
-
-func (s *stubSniffer) Register(
-	addrs []net.IP,
-) {
+func (s *stubHops) Register(_ packet.Proto, addrs []net.IP) {
 	s.registered = append(s.registered, addrs...)
 }
 
-func (s *stubSniffer) Hops(netutil.IPKey) (packet.HopEntry, bool) {
-	return packet.HopEntry{Hops: 0, Learned: true}, true
+func (s *stubHops) Lookup(packet.Proto, net.IP) packet.HopEstimate {
+	return packet.HopEstimate{Hops: 0, Source: packet.HopSourceLearned}
 }
 
 // sentFake is a fake packet a stubWriter was asked to send.
@@ -72,13 +67,18 @@ func (w *stubWriter) WriteCraftedPacketWithSeq(
 	return len(payload), nil
 }
 
-func TestUnlearnedSniffer(t *testing.T) {
-	inner := &stubSniffer{}
-	s := unlearnedSniffer{Sniffer: inner}
-	_, ok := s.Hops(netutil.NewIPKey(net.IPv4(203, 0, 113, 1)))
-	assert.False(t, ok, "the desyncer must not skip the fakes")
-	s.Register([]net.IP{net.IPv4(203, 0, 113, 1)})
-	assert.Len(t, inner.registered, 1, "registration reaches the sniffer")
+func TestUnlearnedHops(t *testing.T) {
+	inner := &stubHops{}
+	h := unlearnedHops{HopReader: inner}
+	est := h.Lookup(packet.ProtoTCP, net.IPv4(203, 0, 113, 1))
+	assert.Equal(
+		t,
+		packet.HopEstimate{Source: packet.HopSourceDefault},
+		est,
+		"the desyncer must not skip the fakes",
+	)
+	h.Register(packet.ProtoTCP, []net.IP{net.IPv4(203, 0, 113, 1)})
+	assert.Len(t, inner.registered, 1, "registration reaches the store")
 }
 
 func TestFixedTTLWriter(t *testing.T) {
@@ -164,7 +164,7 @@ func TestFakeDesyncer(t *testing.T) {
 					TCPSeqWriter: fixedTTLWriter{TCPSeqWriter: w, ttl: 7},
 					log:          log,
 				},
-				unlearnedSniffer{Sniffer: &stubSniffer{}},
+				unlearnedHops{HopReader: &stubHops{}},
 				seqs,
 			)
 			msg, err := buildClientHello("www.example.com")

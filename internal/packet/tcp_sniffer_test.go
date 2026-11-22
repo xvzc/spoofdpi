@@ -54,11 +54,16 @@ func synAck(
 	return gopacket.NewPacket(buf.Bytes(), layers.LayerTypeEthernet, gopacket.Default)
 }
 
+// newTestHopStore returns a HopStore small enough for tests.
+func newTestHopStore() *HopStore {
+	return newHopStore(cache.NewLRUCache[HopKey, HopEntry](1, 16, nil))
+}
+
 func newTestSniffer(seqs *SeqTracker) *TCPSniffer {
 	return &TCPSniffer{
-		logger:    zerolog.Nop(),
-		nhopCache: cache.NewLRUCache[netutil.IPKey, HopEntry](1, 16, nil),
-		seqs:      seqs,
+		logger: zerolog.Nop(),
+		hops:   newTestHopStore(),
+		seqs:   seqs,
 	}
 }
 
@@ -68,7 +73,7 @@ func TestTCPSniffer_RecordsSeqFromSynAck(t *testing.T) {
 
 	seqs := NewSeqTracker(time.Minute)
 	ts := newTestSniffer(seqs)
-	ts.Register([]net.IP{remote.IP})
+	ts.hops.Register(ProtoTCP, []net.IP{remote.IP})
 
 	ts.processPacket(context.Background(), synAck(t, remote, local, 52, 7000, 1001))
 
@@ -97,12 +102,13 @@ func TestTCPSniffer_DoesNotReinsertEvictedServer(t *testing.T) {
 
 	seqs := NewSeqTracker(time.Minute)
 	ts := newTestSniffer(seqs)
-	ts.nhopCache = evictOnGetCache{ts.nhopCache}
-	ts.Register([]net.IP{remote.IP})
+	entries := evictOnGetCache{cache.NewLRUCache[HopKey, HopEntry](1, 16, nil)}
+	ts.hops = newHopStore(entries)
+	ts.hops.Register(ProtoTCP, []net.IP{remote.IP})
 
 	ts.processPacket(context.Background(), synAck(t, remote, local, 52, 7000, 1001))
 
-	assert.False(t, ts.nhopCache.Has(netutil.NewIPKey(remote.IP)))
+	assert.False(t, entries.Has(HopKey{Proto: ProtoTCP, IP: netutil.NewIPKey(remote.IP)}))
 	assert.Equal(t, 0, seqs.Len())
 }
 
@@ -125,43 +131,29 @@ func TestCanLearnSeq(t *testing.T) {
 	}
 }
 
-// learnedHops returns the hop count s learned for key, and whether it
-// learned one.
-func learnedHops(s Sniffer, key netutil.IPKey) (uint8, bool) {
-	e, ok := s.Hops(key)
+// learnedHops returns the hop count s learned for ip over p, and whether
+// it learned one.
+func learnedHops(s *HopStore, p Proto, ip net.IP) (uint8, bool) {
+	e, ok := s.entries.Get(HopKey{Proto: p, IP: netutil.NewIPKey(ip)})
 	if !ok || !e.Learned {
 		return 0, false
 	}
 	return e.Hops, true
 }
 
-func TestTCPSniffer_Hops(t *testing.T) {
+func TestTCPSniffer_LearnsHops(t *testing.T) {
 	local := &net.TCPAddr{IP: net.ParseIP("192.168.1.11"), Port: 50000}
 	remote := &net.TCPAddr{IP: net.ParseIP("203.0.113.1"), Port: 443}
-	key := netutil.NewIPKey(remote.IP)
 
 	ts := newTestSniffer(nil)
-	_, ok := ts.Hops(key)
-	assert.False(t, ok, "unknown server")
-
-	ts.Register([]net.IP{remote.IP})
-	e, ok := ts.Hops(key)
-	assert.True(t, ok, "registered server is cached")
-	assert.Equal(t, HopEntry{}, e, "registered server has no hop count until learned")
-
+	ts.hops.Register(ProtoTCP, []net.IP{remote.IP})
 	ts.processPacket(context.Background(), synAck(t, remote, local, 52, 7000, 1001))
-	e, ok = ts.Hops(key)
-	assert.True(t, ok)
-	assert.Equal(t, HopEntry{Hops: 12, Learned: true}, e)
 
-	ts.Register([]net.IP{remote.IP})
-	e, _ = ts.Hops(key)
-	assert.Equal(
-		t,
-		HopEntry{Hops: 12, Learned: true},
-		e,
-		"registering again keeps the learned value",
-	)
+	hops, ok := learnedHops(ts.hops, ProtoTCP, remote.IP)
+	assert.True(t, ok)
+	assert.Equal(t, uint8(12), hops)
+	_, ok = learnedHops(ts.hops, ProtoUDP, remote.IP)
+	assert.False(t, ok, "a SYN/ACK teaches the TCP hop count only")
 }
 
 func TestTCPSniffer_LearnsFromPrivateServer(t *testing.T) {
@@ -170,12 +162,12 @@ func TestTCPSniffer_LearnsFromPrivateServer(t *testing.T) {
 
 	seqs := NewSeqTracker(time.Minute)
 	ts := newTestSniffer(seqs)
-	ts.Register([]net.IP{remote.IP})
+	ts.hops.Register(ProtoTCP, []net.IP{remote.IP})
 
 	// A server on the local link: its TTL arrives unchanged.
 	ts.processPacket(context.Background(), synAck(t, remote, local, 64, 7000, 1001))
 
-	hops, ok := learnedHops(ts, netutil.NewIPKey(remote.IP))
+	hops, ok := learnedHops(ts.hops, ProtoTCP, remote.IP)
 	assert.True(t, ok)
 	assert.Equal(t, uint8(0), hops)
 
@@ -190,11 +182,11 @@ func TestTCPSniffer_IgnoresPacketToItself(t *testing.T) {
 
 	seqs := NewSeqTracker(time.Minute)
 	ts := newTestSniffer(seqs)
-	ts.Register([]net.IP{remote.IP})
+	ts.hops.Register(ProtoTCP, []net.IP{remote.IP})
 
 	ts.processPacket(context.Background(), synAck(t, remote, self, 7, 7000, 1001))
 
-	_, ok := learnedHops(ts, netutil.NewIPKey(remote.IP))
+	_, ok := learnedHops(ts.hops, ProtoTCP, remote.IP)
 	assert.False(t, ok)
 	assert.Equal(t, 0, seqs.Len())
 }

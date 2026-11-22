@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/cache"
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
@@ -52,9 +51,11 @@ type fakeStack interface {
 // openFakesFunc opens the fake stack, for connections to servers.
 type openFakesFunc func(ctx context.Context, servers []netip.Addr) (fakeStack, error)
 
-// packetFakes is the fake stack of spoofdpi's packet package.
+// packetFakes is the fake stack of spoofdpi's packet package, and the hop
+// store its sniffer learns into.
 type packetFakes struct {
 	stack *packet.TCPStack
+	hops  *packet.HopStore
 }
 
 func (f packetFakes) desyncer(ttl uint8) (helloSender, *fakeLog) {
@@ -65,15 +66,15 @@ func (f packetFakes) desyncer(ttl uint8) (helloSender, *fakeLog) {
 			TCPSeqWriter: fixedTTLWriter{TCPSeqWriter: f.stack.Writer, ttl: ttl},
 			log:          log,
 		},
-		unlearnedSniffer{Sniffer: f.stack.Sniffer},
+		unlearnedHops{HopReader: f.hops},
 		f.stack.Seqs,
 	), log
 }
 
 // openFakeStack opens spoofdpi's packet stack on the interface of the
 // default route, as spoofdpi does without --gateway, and registers servers
-// with its sniffer, which then learns the sequence numbers of their
-// connections. Like spoofdpi's, the stack stays open until the process
+// for TCP hop-count learning, so that its sniffer learns the sequence
+// numbers of their connections. Like spoofdpi's, the stack stays open until the process
 // exits.
 func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error) {
 	route, err := netutil.DiscoverRoute(nil)
@@ -91,12 +92,12 @@ func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error)
 	if err != nil {
 		return nil, err
 	}
-	hopCache := cache.NewLRUCache[netutil.IPKey, packet.HopEntry](16, 8192, nil)
+	hops := packet.NewHopStore()
 	stack, err := packet.OpenTCPStack(
 		zerolog.Nop(),
 		&route.Iface,
 		gatewayMAC,
-		hopCache,
+		hops,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errFakeCapture, err)
@@ -105,19 +106,19 @@ func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error)
 	for i, s := range servers {
 		ips[i] = s.AsSlice()
 	}
-	stack.Sniffer.Register(ips)
-	return packetFakes{stack: stack}, nil
+	hops.Register(packet.ProtoTCP, ips)
+	return packetFakes{stack: stack, hops: hops}, nil
 }
 
-// unlearnedSniffer is a sniffer that reports no hop count for any server,
-// so that the desyncer sends the fake packets to a server whatever hop
-// count the sniffer learned, even one on the local link.
-type unlearnedSniffer struct {
-	packet.Sniffer
+// unlearnedHops is a hop reader that reports no learned hop count for any
+// server, so that the desyncer sends the fake packets to a server whatever
+// hop count the sniffer learned, even one on the local link.
+type unlearnedHops struct {
+	packet.HopReader
 }
 
-func (unlearnedSniffer) Hops(netutil.IPKey) (packet.HopEntry, bool) {
-	return packet.HopEntry{}, false
+func (unlearnedHops) Lookup(packet.Proto, net.IP) packet.HopEstimate {
+	return packet.HopEstimate{Source: packet.HopSourceDefault}
 }
 
 // fixedTTLWriter is a writer whose fake packets leave with ttl, the TTL
