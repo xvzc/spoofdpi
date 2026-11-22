@@ -19,7 +19,7 @@ The top-level `[[rules]]` array contains one table per rule. Each rule consists 
 
 ## Rule Selection
 
-Each TCP connection, and each UDP destination, uses exactly one rule. Its address is matched against `cidrs` and, when its domain name is known, the name is matched against `domains`. The higher-priority of the two matches is selected, and the address match wins a tie. All of the selected rule's settings apply: `block`, `tls`, `udp`, `connection` and `dns`. When no rule matches, the global settings apply.
+Each TCP connection, and each UDP datagram, uses exactly one rule. Its address is matched against `cidrs` and, when its domain name is known, the name is matched against `domains`. The higher-priority of the two matches is selected, and the address match wins a tie. All of the selected rule's settings apply: `block`, `tls`, `udp`, `connection` and `dns`. When no rule matches, the global settings apply.
 
 | Traffic                | Address                           | Domain name                          |
 | :--------------------- | :-------------------------------- | :----------------------------------- |
@@ -76,11 +76,15 @@ tls = { fake-preflight = 5 }
 
 ### UDP traffic
 
-UDP traffic is matched per destination, so one flow of datagrams can use different settings for different destinations. A SOCKS5 client may send each datagram to a domain name instead of an address; the name is resolved with the system resolver, so `dns` overrides do not apply to it.
+UDP traffic is matched per datagram, by its destination, so one flow of datagrams can use different settings for different destinations. A SOCKS5 client may send each datagram to a domain name instead of an address; the name is resolved with the system resolver, so `dns` overrides do not apply to it.
 
 A matching rule with `block = true` drops the datagrams to that destination. In TUN mode the flow is closed; a SOCKS5 association stays open for the client's other destinations.
 
-A SOCKS5 association keeps one flow per destination address, port and selected rule. Names that resolve to the same address and port share a flow only when they select the same rule, so each flow always carries its own rule's settings.
+A SOCKS5 association selects and applies a rule for each datagram, and keeps one flow per client address and destination address and port. Names that resolve to the same address and port share that flow even when they select different rules:
+
+- `block` drops each datagram whose rule blocks it; the flow stays open for the others.
+- Fake packets are sent only at the start of a flow, with the `udp` and `connection` settings of the rule its first datagram selects.
+- The flow's `udp-idle-timeout` follows the rule of its latest datagram.
 
 ## DNS Override (`dns`)
 

@@ -38,8 +38,8 @@ func TestConnRegistry_Store_PerConnTimeout(t *testing.T) {
 	short := p.Store(testKey(1), dialLoopbackUDP(t), 50*time.Millisecond)
 	long := p.Store(testKey(2), dialLoopbackUDP(t), time.Hour)
 
-	assert.Equal(t, 50*time.Millisecond, short.Timeout)
-	assert.Equal(t, time.Hour, long.Timeout)
+	assert.Equal(t, 50*time.Millisecond, short.Timeout())
+	assert.Equal(t, time.Hour, long.Timeout())
 
 	// The read deadline follows the connection's own timeout.
 	_, err := short.Read(make([]byte, 1))
@@ -125,4 +125,64 @@ func TestConnRegistry_CloseReplacedConn(t *testing.T) {
 	// Closing the replaced wrapper leaves the newer connection in place.
 	_ = oldConn.Close()
 	assert.True(t, p.Has(testKey(1)))
+}
+
+func TestIdleTimeoutConn_SetTimeout(t *testing.T) {
+	t.Run("shorter timeout expires sooner", func(t *testing.T) {
+		conn := NewIdleTimeoutConn(dialLoopbackUDP(t), time.Hour)
+		conn.SetTimeout(50 * time.Millisecond)
+
+		assert.Equal(t, 50*time.Millisecond, conn.Timeout())
+		_, err := conn.Read(make([]byte, 1))
+		assert.ErrorIs(t, err, os.ErrDeadlineExceeded)
+		assert.True(t, conn.IsExpired(time.Now()))
+	})
+
+	t.Run("longer timeout restarts the idle period", func(t *testing.T) {
+		conn := NewIdleTimeoutConn(dialLoopbackUDP(t), 50*time.Millisecond)
+		conn.SetTimeout(time.Hour)
+
+		time.Sleep(100 * time.Millisecond)
+		assert.False(t, conn.IsExpired(time.Now()))
+	})
+
+	t.Run("zero timeout never expires", func(t *testing.T) {
+		conn := NewIdleTimeoutConn(dialLoopbackUDP(t), 50*time.Millisecond)
+		conn.SetTimeout(0)
+
+		time.Sleep(100 * time.Millisecond)
+		assert.False(t, conn.IsExpired(time.Now()))
+		_, err := conn.Write([]byte{0})
+		assert.NoError(t, err)
+	})
+
+	t.Run("expired connection stays expired", func(t *testing.T) {
+		conn := NewIdleTimeoutConn(dialLoopbackUDP(t), 50*time.Millisecond)
+
+		time.Sleep(100 * time.Millisecond)
+		conn.SetTimeout(time.Hour)
+
+		assert.True(t, conn.IsExpired(time.Now()))
+	})
+
+	t.Run("unblocks a pending read", func(t *testing.T) {
+		conn := NewIdleTimeoutConn(dialLoopbackUDP(t), time.Hour)
+
+		readErr := make(chan error, 1)
+		go func() {
+			_, err := conn.Read(make([]byte, 1))
+			readErr <- err
+		}()
+
+		// Let the read block before the deadline moves.
+		time.Sleep(50 * time.Millisecond)
+		conn.SetTimeout(50 * time.Millisecond)
+
+		select {
+		case err := <-readErr:
+			assert.ErrorIs(t, err, os.ErrDeadlineExceeded)
+		case <-time.After(5 * time.Second):
+			t.Fatal("read outlived the shorter timeout")
+		}
+	})
 }

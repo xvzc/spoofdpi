@@ -19,7 +19,7 @@ import (
 
 type UdpAssociateHandler struct {
 	logger   zerolog.Logger
-	pool     *netutil.ConnRegistry[UDPFlowKey]
+	pool     *netutil.ConnRegistry[netutil.NATKey]
 	desyncer *desync.UDPDesyncer
 	ruleSet  *rule.RuleSet
 	cfg      *config.RuntimeConfig
@@ -31,7 +31,7 @@ type UdpAssociateHandler struct {
 
 func NewUdpAssociateHandler(
 	logger zerolog.Logger,
-	pool *netutil.ConnRegistry[UDPFlowKey],
+	pool *netutil.ConnRegistry[netutil.NATKey],
 	desyncer *desync.UDPDesyncer,
 	ruleSet *rule.RuleSet,
 	cfg *config.RuntimeConfig,
@@ -169,9 +169,10 @@ func (h *UdpAssociateHandler) Handle(
 			continue
 		}
 
-		// Each destination and selected rule gets its own flow, so the flow
-		// carries that rule's settings whichever name or address reached it.
-		key := newUDPFlowKey(srcAddr, dstAddr, matched)
+		// Key: Client Addr -> Target Addr (Zero Allocation Struct). Names
+		// that resolve to the same address share the flow, whichever rule
+		// each selects.
+		key := netutil.NewNATKey(srcAddr.IP, srcAddr.Port, dstAddr.IP, dstAddr.Port)
 
 		// Check if connection already exists in the pool
 		cachedConn, cached := h.pool.Fetch(key)
@@ -179,6 +180,10 @@ func (h *UdpAssociateHandler) Handle(
 			logger.Debug().
 				Str("key", fmt.Sprintf("%s > %s", srcAddr.String(), dstAddr.String())).
 				Msg("session cache hit")
+
+			// The flow idles out after the timeout of the rule its latest
+			// datagram selected.
+			cachedConn.SetTimeout(cfg.Conn.UDPIdleTimeout)
 
 			// Write payload to target
 			if _, err := cachedConn.Write(payload); err != nil {
@@ -267,39 +272,13 @@ func (h *UdpAssociateHandler) destinationConfig(
 	return matched, &matched.Config
 }
 
-// UDPFlowKey identifies a remote flow of a UDP association: the client's
-// address, the destination's address, and the rule selected for the
-// destination.
-type UDPFlowKey struct {
-	nat netutil.NATKey
-
-	// rule identifies the selected rule by its Match, which each rule
-	// allocates once and shares with the clones that rule.RuleSet.Search
-	// returns; nil when no rule matched.
-	rule *config.MatchAttrs
-}
-
-func newUDPFlowKey(src, dst *net.UDPAddr, matched *config.Rule) UDPFlowKey {
-	key := UDPFlowKey{nat: netutil.NewNATKey(src.IP, src.Port, dst.IP, dst.Port)}
-	if matched != nil {
-		key.rule = matched.Match
-	}
-	return key
-}
-
-// Bytes returns the address part of the key; the flows of one client and
-// destination under different rules share a cache shard.
-func (k UDPFlowKey) Bytes() []byte {
-	return k.nat.Bytes()
-}
-
 func (h *UdpAssociateHandler) relayInboundUDP(
 	logger zerolog.Logger,
 	lUDPConn *net.UDPConn,
 	rConn *netutil.IdleTimeoutConn,
 	clientAddr *net.UDPAddr,
 	targetAddr *net.UDPAddr,
-	key UDPFlowKey,
+	key netutil.NATKey,
 	flows *associationFlows,
 ) {
 	defer flows.release(key, rConn)
@@ -332,22 +311,22 @@ func (h *UdpAssociateHandler) relayInboundUDP(
 // terminates when the TCP connection that the UDP ASSOCIATE request arrived
 // on terminates" (RFC 1928, section 6).
 type associationFlows struct {
-	pool *netutil.ConnRegistry[UDPFlowKey]
+	pool *netutil.ConnRegistry[netutil.NATKey]
 
 	mu    sync.Mutex
-	conns map[UDPFlowKey]*netutil.IdleTimeoutConn
+	conns map[netutil.NATKey]*netutil.IdleTimeoutConn
 }
 
 func newAssociationFlows(
-	pool *netutil.ConnRegistry[UDPFlowKey],
+	pool *netutil.ConnRegistry[netutil.NATKey],
 ) *associationFlows {
 	return &associationFlows{
 		pool:  pool,
-		conns: make(map[UDPFlowKey]*netutil.IdleTimeoutConn),
+		conns: make(map[netutil.NATKey]*netutil.IdleTimeoutConn),
 	}
 }
 
-func (f *associationFlows) add(key UDPFlowKey, conn *netutil.IdleTimeoutConn) {
+func (f *associationFlows) add(key netutil.NATKey, conn *netutil.IdleTimeoutConn) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.conns[key] = conn
@@ -355,7 +334,7 @@ func (f *associationFlows) add(key UDPFlowKey, conn *netutil.IdleTimeoutConn) {
 
 // release stops tracking conn and evicts it from the pool, which closes it.
 // A newer flow stored under the same key is left alone.
-func (f *associationFlows) release(key UDPFlowKey, conn *netutil.IdleTimeoutConn) {
+func (f *associationFlows) release(key netutil.NATKey, conn *netutil.IdleTimeoutConn) {
 	f.mu.Lock()
 	if f.conns[key] == conn {
 		delete(f.conns, key)
@@ -370,7 +349,7 @@ func (f *associationFlows) release(key UDPFlowKey, conn *netutil.IdleTimeoutConn
 func (f *associationFlows) releaseAll() {
 	f.mu.Lock()
 	conns := f.conns
-	f.conns = make(map[UDPFlowKey]*netutil.IdleTimeoutConn)
+	f.conns = make(map[netutil.NATKey]*netutil.IdleTimeoutConn)
 	f.mu.Unlock()
 
 	for key, conn := range conns {

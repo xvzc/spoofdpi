@@ -268,11 +268,15 @@ func (b *BufferedConn) Peek(n int) ([]byte, error) {
 // This is useful for sessions which should stay alive as long as there is activity.
 type IdleTimeoutConn struct {
 	net.Conn
-	Key     any
-	Timeout time.Duration
+	Key any
 
+	timeout      int64 // time.Duration atomic
 	lastActivity int64 // UnixNano atomic
 	expiredAt    int64 // UnixNano atomic
+
+	// deadlineMu serializes deadline updates, so an extension computed
+	// with an old timeout can't overwrite the deadline SetTimeout set.
+	deadlineMu sync.Mutex
 
 	onActivity func()
 	onClose    func()
@@ -282,16 +286,13 @@ type IdleTimeoutConn struct {
 func NewIdleTimeoutConn(conn net.Conn, timeout time.Duration) *IdleTimeoutConn {
 	c := &IdleTimeoutConn{
 		Conn:    conn,
-		Timeout: timeout,
+		timeout: int64(timeout),
 	}
 
 	now := time.Now()
 	atomic.StoreInt64(&c.lastActivity, now.UnixNano())
 	if timeout > 0 {
-		expTime := now.Add(timeout)
-		atomic.StoreInt64(&c.expiredAt, expTime.UnixNano())
-		_ = c.SetReadDeadline(expTime)
-		_ = c.SetWriteDeadline(expTime)
+		c.setDeadline(now.Add(timeout))
 	}
 
 	return c
@@ -305,6 +306,36 @@ func (c *IdleTimeoutConn) Read(b []byte) (int, error) {
 func (c *IdleTimeoutConn) Write(b []byte) (int, error) {
 	c.ExtendDeadline()
 	return c.Conn.Write(b)
+}
+
+// Timeout returns the idle timeout; 0 means the connection never expires.
+func (c *IdleTimeoutConn) Timeout() time.Duration {
+	return time.Duration(atomic.LoadInt64(&c.timeout))
+}
+
+// SetTimeout changes the idle timeout. When it changes, the idle period
+// restarts with the new timeout, which later reads and writes extend; an
+// already expired connection is left expired.
+func (c *IdleTimeoutConn) SetTimeout(timeout time.Duration) {
+	if c.Timeout() == timeout {
+		// Unchanged: skip the lock and deadline syscalls on the hot path.
+		return
+	}
+
+	c.deadlineMu.Lock()
+	defer c.deadlineMu.Unlock()
+
+	now := time.Now()
+	if c.IsExpired(now) {
+		return
+	}
+
+	atomic.StoreInt64(&c.timeout, int64(timeout))
+	if timeout > 0 {
+		c.setDeadline(now.Add(timeout))
+	} else {
+		c.setDeadline(time.Time{})
+	}
 }
 
 // ExtendDeadline attempts to extend the connection's deadline.
@@ -330,18 +361,31 @@ func (c *IdleTimeoutConn) ExtendDeadline() bool {
 
 	// 3. Throttle SetDeadline overhead (System Call)
 	// Extends only if remaining time is under 70% of timeout
-	if c.Timeout > 0 {
-		if expUnix == 0 || (expUnix-nowUnix) < (c.Timeout.Nanoseconds()*7/10) {
-			newExpUnix := now.Add(c.Timeout).UnixNano()
-			atomic.StoreInt64(&c.expiredAt, newExpUnix)
-
-			newExpTime := time.Unix(0, newExpUnix)
-			_ = c.SetReadDeadline(newExpTime)
-			_ = c.SetWriteDeadline(newExpTime)
+	timeout := c.Timeout()
+	if timeout > 0 {
+		if expUnix == 0 || (expUnix-nowUnix) < (timeout.Nanoseconds()*7/10) {
+			c.deadlineMu.Lock()
+			// SetTimeout may have changed the timeout since it was loaded.
+			if timeout = c.Timeout(); timeout > 0 {
+				c.setDeadline(now.Add(timeout))
+			}
+			c.deadlineMu.Unlock()
 		}
 	}
 
 	return true
+}
+
+// setDeadline sets the expiry and the read and write deadlines to t; the
+// zero t means no expiry.
+func (c *IdleTimeoutConn) setDeadline(t time.Time) {
+	var expUnix int64
+	if !t.IsZero() {
+		expUnix = t.UnixNano()
+	}
+	atomic.StoreInt64(&c.expiredAt, expUnix)
+	_ = c.SetReadDeadline(t)
+	_ = c.SetWriteDeadline(t)
 }
 
 // IsExpired safely checks if the connection has surpassed its calculated expiration time.

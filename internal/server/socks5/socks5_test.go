@@ -20,7 +20,7 @@ func TestSOCKS5Proxy_HandleConnection_UDPAssociateWithName(t *testing.T) {
 	// sets up the association.
 	for _, name := range []string{"x", "unresolvable.invalid"} {
 		t.Run(name, func(t *testing.T) {
-			pool := netutil.NewConnRegistry[UDPFlowKey](16)
+			pool := netutil.NewConnRegistry[netutil.NATKey](16)
 			p := &SOCKS5Proxy{
 				logger: zerolog.Nop(),
 				udpAssociateHandler: newRelayingUdpAssociateHandler(
