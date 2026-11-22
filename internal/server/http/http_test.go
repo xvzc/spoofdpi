@@ -414,6 +414,50 @@ func TestHTTPProxy_HandleNewConnection_ForbiddenSelf(t *testing.T) {
 	}
 }
 
+// An unspecified destination, which Go dials as the local host, gets a 403
+// on any port, and is not dialed.
+func TestHTTPProxy_HandleNewConnection_ForbiddenUnspecified(t *testing.T) {
+	echo, accepted := startTCPEcho(t)
+	listens := []struct {
+		name   string
+		listen net.TCPAddr
+	}{
+		{"the listen port", *echo},
+		{"another port", net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}},
+	}
+
+	for _, host := range []string{"0.0.0.0", "::"} {
+		for _, l := range listens {
+			for _, build := range []func(string, int) string{
+				connectRequest,
+				func(host string, port int) string { return getRequest(host, port, "/") },
+			} {
+				p := newTestProxy(
+					zerolog.Nop(),
+					&fakeResolver{},
+					rule.NewRuleSet(),
+					&config.RuntimeConfig{},
+					l.listen,
+				)
+				req := build(host, echo.Port)
+				t.Run(host+" on "+l.name+": "+strings.Fields(req)[0], func(t *testing.T) {
+					client, done := runConn(t, p)
+					br := bufio.NewReader(client)
+					_, err := client.Write([]byte(req))
+					require.NoError(t, err)
+
+					// require: a tunnel opened by mistake would keep done
+					// open.
+					require.Equal(t, "403 Forbidden", readStatus(t, br))
+					<-done
+				})
+			}
+		}
+	}
+
+	assert.Equal(t, int32(0), accepted.Load(), "the upstream is not dialed")
+}
+
 // startHTTPOrigin runs a loopback HTTP/1.1 server that answers every request
 // with "200 OK" and sends each request it reads on the returned channel. It
 // keeps a connection open between requests unless a request asks to close

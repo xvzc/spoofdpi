@@ -373,6 +373,54 @@ func TestConnectHandler_Handle_IPLiteralName(t *testing.T) {
 	assert.Equal(t, int32(0), baseDNS.queries.Load())
 }
 
+// An unspecified destination, which Go dials as the local host, gets a
+// failure reply on any port, and is not dialed.
+func TestConnectHandler_Handle_Unspecified(t *testing.T) {
+	echo, accepted := startTCPEcho(t)
+	listens := []struct {
+		name   string
+		listen net.TCPAddr
+	}{
+		{"the listen port", *echo},
+		{"another port", net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1}},
+	}
+	reqs := []*proto.SOCKS5Request{
+		{
+			Cmd:  proto.SOCKS5CmdConnect,
+			ATYP: proto.SOCKS5AddrTypeIPv4,
+			IP:   net.IPv4zero,
+			Port: echo.Port,
+		},
+		{
+			Cmd:  proto.SOCKS5CmdConnect,
+			ATYP: proto.SOCKS5AddrTypeIPv6,
+			IP:   net.IPv6unspecified,
+			Port: echo.Port,
+		},
+	}
+
+	for _, l := range listens {
+		for _, req := range reqs {
+			t.Run(req.IP.String()+" on "+l.name, func(t *testing.T) {
+				h := NewConnectHandler(
+					zerolog.Nop(),
+					desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil),
+					&stubResolver{},
+					rule.NewRuleSet(),
+					l.listen,
+					&config.RuntimeConfig{},
+				)
+
+				client, done := runConnect(t, h, req)
+				require.Equal(t, byte(proto.SOCKS5RCodeGenFailure), readReply(t, client))
+				assert.Error(t, <-done)
+			})
+		}
+	}
+
+	assert.Equal(t, int32(0), accepted.Load(), "the upstream is not dialed")
+}
+
 func TestConnectHandler_Handle_LookupError(t *testing.T) {
 	errLookup := errors.New("lookup failed")
 	resolver := &stubResolver{errs: map[string]error{"fail.test": errLookup}}

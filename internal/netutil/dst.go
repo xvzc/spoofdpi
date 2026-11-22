@@ -20,7 +20,17 @@ func (d *Destination) String() string {
 	return net.JoinHostPort(d.Host, strconv.Itoa(d.Port))
 }
 
+// IsValid reports whether d may be dialed by a proxy listening on
+// listenAddr. It refuses an unspecified address (0.0.0.0, ::) on any port,
+// as Go dials it as the local host, and a loopback or local interface
+// address on the listen port, which is the proxy itself.
 func (d *Destination) IsValid(listenAddr *net.TCPAddr) (bool, error) {
+	for _, ip := range d.Addrs {
+		if ip.IsUnspecified() {
+			return false, fmt.Errorf("unspecified addr detected %v", ip.String())
+		}
+	}
+
 	if d.Port != listenAddr.Port {
 		return true, nil
 	}
