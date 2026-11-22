@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/logging"
@@ -47,6 +48,16 @@ type TunServer struct {
 	udpHandler *UDPHandler
 
 	sysNet TUNSystemNetwork
+
+	device   tun.Device
+	netStack *stack.Stack
+	ep       *channel.Endpoint
+	conns    server.ConnTracker
+
+	// serveCtx is the context Serve runs with. Serve sets it before it starts
+	// the packet pump, and the forwarders only see connections once packets
+	// flow, so the forwarder callbacks always read it after it is set.
+	serveCtx context.Context
 }
 
 func NewTUNServer(
@@ -63,10 +74,8 @@ func NewTUNServer(
 	}
 }
 
-func (s *TunServer) ListenAndServe(
-	appctx context.Context,
-) error {
-	logger := logging.WithLocalScope(appctx, s.logger, "tun")
+func (s *TunServer) Listen(ctx context.Context) error {
+	logger := logging.WithLocalScope(ctx, s.logger, "tun")
 
 	tunDevice := s.sysNet.TunDevice()
 	if tunDevice == nil {
@@ -90,11 +99,6 @@ func (s *TunServer) ListenAndServe(
 		return fmt.Errorf("failed to create NIC: %v", err)
 	}
 	stk.EnableNIC(nicID)
-
-	go func() {
-		<-appctx.Done()
-		_ = tunDevice.Close()
-	}()
 
 	// 3. Enable Promiscuous mode & Spoofing
 	stk.SetPromiscuousMode(nicID, true)
@@ -143,11 +147,9 @@ func (s *TunServer) ListenAndServe(
 			_ = conn.Close()
 			return
 		}
-		go func() {
-			ctx, cancel := server.ConnContext(appctx)
-			defer cancel()
+		s.conns.Go(s.serveCtx, conn, func(ctx context.Context) {
 			s.tcpHandler.Handle(ctx, conn, dst, s.sysNet)
-		}()
+		})
 	})
 	stk.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpFwd.HandlePacket)
 
@@ -170,20 +172,54 @@ func (s *TunServer) ListenAndServe(
 			_ = conn.Close()
 			return true
 		}
-		go func() {
-			ctx, cancel := server.ConnContext(appctx)
-			defer cancel()
+		s.conns.Go(s.serveCtx, conn, func(ctx context.Context) {
 			s.udpHandler.Handle(ctx, conn, dst, s.sysNet)
-		}()
+		})
 		return true
 	})
 	stk.SetTransportProtocolHandler(udp.ProtocolNumber, udpFwd.HandlePacket)
 
+	s.device = tunDevice
+	s.netStack = stk
+	s.ep = ep
+
+	return nil
+}
+
+// Serve pumps packets between the TUN device and the network stack until ctx
+// is cancelled. It then closes the TUN device, waits for open connections to
+// end, and destroys the network stack, waiting at most
+// server.ShutdownSafetyTimeout for each of the last two steps.
+func (s *TunServer) Serve(ctx context.Context) error {
+	logger := logging.WithLocalScope(ctx, s.logger, "tun")
+	s.serveCtx = ctx
+
 	// 6. Start packet pump
 	go func() {
-		go s.tunToStack(appctx, logger, ep, tunDevice)
-		s.stackToTun(appctx, logger, ep, tunDevice)
+		go s.tunToStack(ctx, logger, s.ep, s.device)
+		s.stackToTun(ctx, logger, s.ep, s.device)
 	}()
+
+	<-ctx.Done()
+	_ = s.device.Close()
+
+	if !s.conns.Wait(server.ShutdownSafetyTimeout) {
+		s.logger.Warn().
+			Int64("count", s.conns.Active()).
+			Msg("connections still open at shutdown")
+	}
+
+	// The connections' gonet conns belong to the stack, so it goes last.
+	destroyed := make(chan struct{})
+	go func() {
+		s.netStack.Destroy()
+		close(destroyed)
+	}()
+	select {
+	case <-destroyed:
+	case <-time.After(server.ShutdownSafetyTimeout):
+		s.logger.Warn().Msg("network stack still stopping at shutdown")
+	}
 
 	return nil
 }

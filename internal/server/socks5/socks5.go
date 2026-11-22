@@ -25,6 +25,9 @@ type SOCKS5Proxy struct {
 	bindHandler         *BindHandler
 	udpAssociateHandler *UdpAssociateHandler
 	listenAddr          net.TCPAddr
+
+	listener *net.TCPListener
+	conns    server.ConnTracker
 }
 
 func NewSOCKS5Proxy(
@@ -43,9 +46,7 @@ func NewSOCKS5Proxy(
 	}
 }
 
-func (p *SOCKS5Proxy) ListenAndServe(
-	appctx context.Context,
-) error {
+func (p *SOCKS5Proxy) Listen(_ context.Context) error {
 	listener, err := net.ListenTCP("tcp", &p.listenAddr)
 	if err != nil {
 		return fmt.Errorf(
@@ -54,34 +55,40 @@ func (p *SOCKS5Proxy) ListenAndServe(
 			err,
 		)
 	}
+	p.listener = listener
 
-	go func() {
-		<-appctx.Done()
-		_ = listener.Close()
-	}()
+	return nil
+}
 
-	go func() {
-		var delay time.Duration
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				if errors.Is(err, net.ErrClosed) {
-					return // Normal shutdown
-				}
+func (p *SOCKS5Proxy) Serve(ctx context.Context) error {
+	// Closing the listener when ctx ends makes Accept return net.ErrClosed.
+	stop := context.AfterFunc(ctx, func() { _ = p.listener.Close() })
+	defer stop()
 
-				p.logger.Error().Err(err).Msg("failed to accept new connection")
-				server.BackoffOnError(delay)
-
-				continue
+	var delay time.Duration
+	for {
+		conn, err := p.listener.Accept()
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				break // Normal shutdown
 			}
 
-			go func() {
-				ctx, cancel := server.ConnContext(appctx)
-				defer cancel()
-				p.handleConnection(ctx, conn)
-			}()
+			p.logger.Error().Err(err).Msg("failed to accept new connection")
+			delay = server.BackoffOnError(delay)
+
+			continue
 		}
-	}()
+
+		p.conns.Go(ctx, conn, func(ctx context.Context) {
+			p.handleConnection(ctx, conn)
+		})
+	}
+
+	if !p.conns.Wait(server.ShutdownSafetyTimeout) {
+		p.logger.Warn().
+			Int64("count", p.conns.Active()).
+			Msg("connections still open at shutdown")
+	}
 
 	return nil
 }
@@ -117,7 +124,9 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 	// 2. Request Phase
 	req, err := proto.ReadSocks5Request(conn)
 	if err != nil {
-		if err != io.EOF {
+		// The server closes conn and cancels ctx when it shuts down.
+		shutdown := ctx.Err() != nil || errors.Is(err, net.ErrClosed)
+		if err != io.EOF && !shutdown {
 			logger.Warn().Err(err).Msg("failed to read request")
 		}
 		return

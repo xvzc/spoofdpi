@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -87,6 +88,9 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 		syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP,
 	)
 	defer cancel()
+	// Once shutdown starts, a second signal gets its default behavior and
+	// ends the process at once.
+	context.AfterFunc(appctx, cancel)
 
 	var writer io.Writer
 	// Channel to capture critical TUI execution failures
@@ -187,8 +191,8 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	}
 
 	time.Sleep(300 * time.Millisecond)
-	if err := srv.ListenAndServe(appctx); err != nil {
-		return fmt.Errorf("listen and serve: %w", err)
+	if err := srv.Listen(appctx); err != nil {
+		return fmt.Errorf("listen: %w", err)
 	}
 	// livetest waits for this message to know that spoofdpi is ready
 	// (internal/livetest/case.go).
@@ -201,15 +205,30 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 		} else if acErr := server.ApplyJobs(logger, stateFile); acErr != nil {
 			logger.Error().Err(acErr).Msg("failed to apply network config")
 		} else {
-			defer server.ResetJobs(logger, stateFile)
+			// Restore the network config as soon as shutdown starts, not
+			// after the server has drained its connections.
+			defer runOnceWhenDone(appctx, func() {
+				server.ResetJobs(logger, stateFile)
+			})()
 		}
 	}
 
 	sw.SetWriter(writer)
 
-	<-appctx.Done()
+	return srv.Serve(appctx)
+}
 
-	return nil
+// runOnceWhenDone runs fn once, as soon as ctx is done, and returns a func
+// that runs fn now if it has not run yet. A call of the returned func while
+// fn is running waits for fn to return.
+func runOnceWhenDone(ctx context.Context, fn func()) func() {
+	once := sync.OnceFunc(fn)
+	stop := context.AfterFunc(ctx, once)
+
+	return func() {
+		stop()
+		once()
+	}
 }
 
 func setupNetworkStack(

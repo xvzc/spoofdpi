@@ -7,10 +7,22 @@ import (
 	"github.com/xvzc/spoofdpi/internal/logging"
 )
 
+// ShutdownSafetyTimeout bounds how long Serve waits for open connections to
+// end after its context is cancelled.
+const ShutdownSafetyTimeout = 10 * time.Second
+
 // Server represents a core component that processes network traffic.
-// ListenAndServe blocks until ctx is cancelled, then releases all resources.
+// Callers call Listen once and then Serve.
 type Server interface {
-	ListenAndServe(ctx context.Context) error
+	// Listen acquires what the server needs to accept traffic, such as the
+	// listening socket or the TUN device and its network stack, and returns
+	// without blocking. An error means the server cannot start.
+	Listen(ctx context.Context) error
+
+	// Serve handles traffic until ctx is cancelled. It then stops taking new
+	// connections, waits at most ShutdownSafetyTimeout for open ones to end,
+	// and releases what Listen acquired. It returns nil on a normal stop.
+	Serve(ctx context.Context) error
 
 	// Addr returns the network address or interface name the server is bound to
 	Addr() string
