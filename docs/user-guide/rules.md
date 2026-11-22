@@ -29,6 +29,8 @@ Each TCP connection, and each UDP datagram, uses exactly one rule. Its address i
 | TUN UDP                | Destination of the packets        | None                                         |
 | SOCKS5 `UDP ASSOCIATE` | Resolved address of each datagram | Name the datagram is sent to, if any         |
 
+When a name resolves to several addresses, an address rule matches if any of them is in its `cidrs`, even one that is never connected to. In TUN mode, and for each SOCKS5 `UDP ASSOCIATE` datagram, only the single destination address is matched.
+
 For SOCKS5 `CONNECT` and the HTTP and HTTPS proxy, a requested name is matched before it is resolved, so the domain rule's `dns` settings decide how it is looked up. A rule's `dns` settings apply only when the rule is matched by domain. SOCKS5 `UDP ASSOCIATE` resolves names the same way (see [UDP traffic](#udp-traffic)).
 
 ## Match Criteria (`match`)
