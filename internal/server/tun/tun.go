@@ -21,6 +21,7 @@ import (
 	"gvisor.dev/gvisor/pkg/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
+	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/link/channel"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
 	"gvisor.dev/gvisor/pkg/tcpip/network/ipv6"
@@ -41,8 +42,21 @@ type TUNSystemNetwork interface {
 	BuildJobs() ([]server.NetworkJob, error)
 }
 
+// ipv6Policy decides what the TUN server does with connections to IPv6
+// destinations.
+type ipv6Policy int
+
+const (
+	// ipv6PolicyReject refuses them: TCP gets a RST and UDP an ICMPv6 port
+	// unreachable, so dual-stack clients fall back to IPv4, which goes
+	// through the desync path.
+	ipv6PolicyReject ipv6Policy = iota
+)
+
 type TunServer struct {
 	logger zerolog.Logger
+
+	v6Policy ipv6Policy
 
 	tcpHandler *TCPHandler
 	udpHandler *UDPHandler
@@ -68,6 +82,7 @@ func NewTUNServer(
 ) server.Server {
 	return &TunServer{
 		logger:     logger,
+		v6Policy:   ipv6PolicyReject,
 		tcpHandler: tcpHandler,
 		udpHandler: udpHandler,
 		sysNet:     sysNet,
@@ -84,7 +99,10 @@ func (s *TunServer) Listen(ctx context.Context) error {
 
 	// 1. Create gVisor stack
 	stk := stack.New(stack.Options{
-		NetworkProtocols: []stack.NetworkProtocolFactory{ipv4.NewProtocol},
+		NetworkProtocols: []stack.NetworkProtocolFactory{
+			ipv4.NewProtocol,
+			ipv6.NewProtocol,
+		},
 		TransportProtocols: []stack.TransportProtocolFactory{
 			tcp.NewProtocol,
 			udp.NewProtocol,
@@ -125,6 +143,14 @@ func (s *TunServer) Listen(ctx context.Context) error {
 
 	// 4. Register TCP Forwarder
 	tcpFwd := tcp.NewForwarder(stk, 0, 65535, func(r *tcp.ForwarderRequest) {
+		if s.refuses(r.ID()) {
+			logger.Debug().
+				Str("dst", r.ID().LocalAddress.String()).
+				Msg("refusing tcp connection to ipv6 destination")
+			r.Complete(true)
+			return
+		}
+
 		var wq waiter.Queue
 		ep, err := r.CreateEndpoint(&wq)
 		if err != nil {
@@ -155,6 +181,15 @@ func (s *TunServer) Listen(ctx context.Context) error {
 
 	// 5. Register UDP Forwarder
 	udpFwd := udp.NewForwarder(stk, func(r *udp.ForwarderRequest) bool {
+		if s.refuses(r.ID()) {
+			logger.Debug().
+				Str("dst", r.ID().LocalAddress.String()).
+				Msg("refusing udp flow to ipv6 destination")
+			// An unhandled datagram makes the stack answer with an ICMP port
+			// unreachable.
+			return false
+		}
+
 		var wq waiter.Queue
 		ep, err := r.CreateEndpoint(&wq)
 		if err != nil {
@@ -222,6 +257,26 @@ func (s *TunServer) Serve(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// refuses reports whether the server refuses the connection id, whose local
+// address is the original packet destination.
+func (s *TunServer) refuses(id stack.TransportEndpointID) bool {
+	return id.LocalAddress.Len() == header.IPv6AddressSize &&
+		s.v6Policy == ipv6PolicyReject
+}
+
+// networkProtocol returns the network protocol of the IP packet from its
+// version nibble, and false for a version the stack does not handle.
+func networkProtocol(packet []byte) (tcpip.NetworkProtocolNumber, bool) {
+	switch packet[0] >> 4 {
+	case 4:
+		return ipv4.ProtocolNumber, true
+	case 6:
+		return ipv6.ProtocolNumber, true
+	default:
+		return 0, false
+	}
 }
 
 // connToDst builds a Destination from the connection's local address.
@@ -323,14 +378,15 @@ func (s *TunServer) tunToStack(
 
 			packet := bufs[i][readOffset : readOffset+sizes[i]]
 
-			if packet[0]>>4 != 4 {
-				logger.Trace().Int("version", int(packet[0]>>4)).Msg("skipping non-ipv4 packet")
+			proto, ok := networkProtocol(packet)
+			if !ok {
+				logger.Trace().Int("version", int(packet[0]>>4)).Msg("skipping non-ip packet")
 				continue
 			}
 
 			payload := buffer.MakeWithData(append([]byte(nil), packet...))
 			pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: payload})
-			ep.InjectInbound(ipv4.ProtocolNumber, pkt)
+			ep.InjectInbound(proto, pkt)
 			pkt.DecRef()
 		}
 	}
