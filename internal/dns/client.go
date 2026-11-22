@@ -26,9 +26,19 @@ type hostname string
 
 func (h hostname) Bytes() []byte { return []byte(h) }
 
+// Resolver looks up the addresses of a domain name with the given options.
+type Resolver interface {
+	Resolve(
+		ctx context.Context,
+		opts *config.DNSOptions,
+		domain string,
+	) ([]netip.Addr, error)
+}
+
+var _ Resolver = (*Client)(nil)
+
 // Client is the top-level DNS resolver. It holds the three backends and a
-// shared cache; the options of each lookup are passed to Resolve. Callers
-// hold *Client directly — it does not implement an interface.
+// shared cache; the options of each lookup are passed to Resolve.
 type Client struct {
 	logger zerolog.Logger
 	https  *httpsResolver
