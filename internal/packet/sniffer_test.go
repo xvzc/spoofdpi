@@ -1,11 +1,80 @@
 package packet
 
 import (
+	"errors"
+	"io"
+	"sync/atomic"
 	"testing"
 
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/cache"
+	"github.com/xvzc/spoofdpi/internal/capture"
 )
+
+// filterHandle is a capture handle that has no packets to read, and that
+// records the filter installed on it or rejects it with setErr.
+type filterHandle struct {
+	captureHandle
+	setErr error
+	filter []capture.BPFInstruction
+	reads  atomic.Int32
+}
+
+func (h *filterHandle) ReadPacketData() ([]byte, gopacket.CaptureInfo, error) {
+	h.reads.Add(1)
+	return nil, gopacket.CaptureInfo{}, io.EOF
+}
+
+func (h *filterHandle) SetBPFRawInstructionFilter(f []capture.BPFInstruction) error {
+	if h.setErr != nil {
+		return h.setErr
+	}
+	h.filter = f
+	return nil
+}
+
+func TestSniffer_StartCapturing(t *testing.T) {
+	rejected := errors.New("program rejected")
+
+	tcs := []struct {
+		name   string
+		start  func(h capture.Handle) error
+		filter []capture.BPFInstruction
+	}{
+		{
+			"tcp",
+			func(h capture.Handle) error {
+				return NewTCPSniffer(zerolog.Nop(), h, newTestHopStore(), nil).StartCapturing()
+			},
+			capture.SynAckFilter(layers.LinkTypeEthernet),
+		},
+		{
+			"udp",
+			func(h capture.Handle) error {
+				return NewUDPSniffer(zerolog.Nop(), h, newTestHopStore()).StartCapturing()
+			},
+			capture.UDPFilter(layers.LinkTypeEthernet),
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name+" installs its filter", func(t *testing.T) {
+			h := &filterHandle{}
+			require.NoError(t, tc.start(h))
+			assert.Equal(t, tc.filter, h.filter)
+		})
+
+		t.Run(tc.name+" fails when the filter is rejected", func(t *testing.T) {
+			h := &filterHandle{setErr: rejected}
+			err := tc.start(h)
+			require.ErrorIs(t, err, rejected)
+			assert.Zero(t, h.reads.Load(), "must not read unfiltered packets")
+		})
+	}
+}
 
 // evictOnGetCache deletes each key right after returning it, as if LRU
 // eviction ran between a store's lookup and its write.

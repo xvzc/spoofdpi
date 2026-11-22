@@ -2,6 +2,7 @@ package packet
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/google/gopacket"
 	"github.com/rs/zerolog"
@@ -35,10 +36,17 @@ func NewTCPSniffer(
 	}
 }
 
-// StartCapturing begins monitoring for SYN/ACK packets in a background goroutine.
-func (ts *TCPSniffer) StartCapturing() {
+// StartCapturing begins monitoring for SYN/ACK packets in a background
+// goroutine. It returns an error if the SYN/ACK filter cannot be installed.
+func (ts *TCPSniffer) StartCapturing() error {
+	// Detaching fails on a Linux socket that has no filter yet (ENOENT),
+	// and attaching a filter replaces any previous one, so a failed clear
+	// is harmless.
 	_ = ts.handle.ClearBPF()
-	_ = ts.handle.SetBPFRawInstructionFilter(capture.SynAckFilter(ts.handle.LinkType()))
+	filter := capture.SynAckFilter(ts.handle.LinkType())
+	if err := ts.handle.SetBPFRawInstructionFilter(filter); err != nil {
+		return fmt.Errorf("set SYN/ACK capture filter: %w", err)
+	}
 
 	packetSource := gopacket.NewPacketSource(ts.handle, ts.handle.LinkType())
 	packets := packetSource.Packets()
@@ -51,6 +59,8 @@ func (ts *TCPSniffer) StartCapturing() {
 			)
 		}
 	}()
+
+	return nil
 }
 
 // processPacket analyzes a single packet to find SYN/ACKs and store hop

@@ -17,8 +17,9 @@ type UDPStack struct {
 
 // OpenUDPStack opens one capture handle on iface, shared by a sniffer that
 // records hop counts in hops and a writer that injects packets to
-// gatewayMAC, and starts the sniffer. The handle stays open for the life of
-// the process: the sniffer reads it until then.
+// gatewayMAC, and starts the sniffer. It fails, closing the handle, if the
+// sniffer cannot start. The handle stays open for the life of the process:
+// the sniffer reads it until then.
 func OpenUDPStack(
 	logger zerolog.Logger,
 	iface *net.Interface,
@@ -31,6 +32,9 @@ func OpenUDPStack(
 	}
 	sniffer := NewUDPSniffer(logger, handle, hops)
 	writer := NewUDPWriter(logger, handle, iface, gatewayMAC)
-	sniffer.StartCapturing()
+	if err := sniffer.StartCapturing(); err != nil {
+		handle.Close()
+		return nil, err
+	}
 	return &UDPStack{Sniffer: sniffer, Writer: writer}, nil
 }

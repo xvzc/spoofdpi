@@ -2,6 +2,7 @@ package packet
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/google/gopacket"
 	"github.com/rs/zerolog"
@@ -32,10 +33,17 @@ func NewUDPSniffer(
 	}
 }
 
-// StartCapturing begins monitoring for UDP packets in a background goroutine.
-func (us *UDPSniffer) StartCapturing() {
+// StartCapturing begins monitoring for UDP packets in a background
+// goroutine. It returns an error if the UDP filter cannot be installed.
+func (us *UDPSniffer) StartCapturing() error {
+	// Detaching fails on a Linux socket that has no filter yet (ENOENT),
+	// and attaching a filter replaces any previous one, so a failed clear
+	// is harmless.
 	_ = us.handle.ClearBPF()
-	_ = us.handle.SetBPFRawInstructionFilter(capture.UDPFilter(us.handle.LinkType()))
+	filter := capture.UDPFilter(us.handle.LinkType())
+	if err := us.handle.SetBPFRawInstructionFilter(filter); err != nil {
+		return fmt.Errorf("set UDP capture filter: %w", err)
+	}
 
 	packetSource := gopacket.NewPacketSource(us.handle, us.handle.LinkType())
 	packets := packetSource.Packets()
@@ -48,6 +56,8 @@ func (us *UDPSniffer) StartCapturing() {
 			)
 		}
 	}()
+
+	return nil
 }
 
 // processPacket analyzes a single packet to store hop counts.

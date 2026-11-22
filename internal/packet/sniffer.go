@@ -3,7 +3,10 @@ package packet
 // Sniffer captures packets in the background and records the hop counts
 // they reveal in a HopStore.
 type Sniffer interface {
-	StartCapturing()
+	// StartCapturing installs the sniffer's capture filter and starts
+	// reading packets. It fails, without reading, if the filter cannot be
+	// installed: the handle would then pass every packet up.
+	StartCapturing() error
 }
 
 // HopPolicy turns a hop count estimate into the TTL of fake packets.
