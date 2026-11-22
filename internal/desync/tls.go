@@ -73,9 +73,14 @@ func (d *TLSDesyncer) Desync(
 		// Wait for the SYN/ACK first: the sniffer learns the hop count from
 		// it too, so the TTL read after it is fresher.
 		real := d.learnSeqAck(ctx, logger, conn, httpsOpts)
-		est := d.hops.Lookup(packet.ProtoTCP, conn.RemoteAddr().(*net.TCPAddr).IP)
+		dstIP := conn.RemoteAddr().(*net.TCPAddr).IP
+		est := d.hops.Lookup(packet.ProtoTCP, dstIP)
 		if onLocalLink(est) {
-			logger.Debug().Msg("server is on the local link, skipping fake packets")
+			if d.hops.MarkWarned(packet.ProtoTCP, dstIP) {
+				warnLocalLink(logger, dstIP)
+			} else {
+				logger.Debug().Msg("server is on the local link, skipping fake packets")
+			}
 			return d.sendSegments(ctx, conn, logger, split(logger, msg, httpsOpts), nil, nil)
 		}
 		seq = &real
@@ -147,6 +152,16 @@ func (d *TLSDesyncer) learnSeqAck(
 // connection.
 func onLocalLink(est packet.HopEstimate) bool {
 	return est.Learned() && est.Hops == 0
+}
+
+// warnLocalLink warns that the fake packets to the server at ip are
+// skipped because it is on the local link, which also reveals a wrong hop
+// count when the server is not meant to be local. Desyncers warn once per
+// destination.
+func warnLocalLink(logger zerolog.Logger, ip net.IP) {
+	logger.Warn().
+		Str("dst", ip.String()).
+		Msg("server is on the local link, skipping fake packets")
 }
 
 // hopPolicy returns the policy that turns a hop count estimate into the

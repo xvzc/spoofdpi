@@ -2,6 +2,8 @@ package packet
 
 import (
 	"net"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -122,4 +124,58 @@ func TestHopSource_String(t *testing.T) {
 	assert.Equal(t, "learned", HopSourceLearned.String())
 	assert.Equal(t, "learned-other", HopSourceLearnedOther.String())
 	assert.Equal(t, "default", HopSourceDefault.String())
+}
+
+func TestHopStore_MarkWarned(t *testing.T) {
+	server := net.ParseIP("203.0.113.1")
+
+	s := newTestHopStore()
+	s.Register(ProtoTCP, []net.IP{server})
+	s.Register(ProtoUDP, []net.IP{server})
+	s.Learn(ProtoTCP, server, 0)
+
+	assert.True(t, s.MarkWarned(ProtoTCP, server), "first warning")
+	assert.False(t, s.MarkWarned(ProtoTCP, server), "already warned")
+
+	s.Learn(ProtoTCP, server, 0)
+	s.Register(ProtoTCP, []net.IP{server})
+	assert.False(t, s.MarkWarned(ProtoTCP, server),
+		"learning and registering again keep the mark")
+	assert.Equal(t, HopEstimate{Hops: 0, Source: HopSourceLearned},
+		s.Lookup(ProtoTCP, server), "the mark does not change the hop count")
+
+	assert.True(t, s.MarkWarned(ProtoUDP, server), "each protocol has its own mark")
+
+	other := net.ParseIP("203.0.113.2")
+	assert.True(t, s.MarkWarned(ProtoTCP, other), "a missing destination keeps no mark")
+	assert.True(t, s.MarkWarned(ProtoTCP, other))
+	assert.False(t, s.entries.Has(HopKey{Proto: ProtoTCP, IP: netutil.NewIPKey(other)}),
+		"marking does not insert")
+}
+
+func TestHopStore_MarkWarnedOnceConcurrently(t *testing.T) {
+	server := net.ParseIP("203.0.113.1")
+
+	s := newTestHopStore()
+	s.Register(ProtoTCP, []net.IP{server})
+
+	var firsts atomic.Int32
+	var wg sync.WaitGroup
+	for i := range 32 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if s.MarkWarned(ProtoTCP, server) {
+				firsts.Add(1)
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			s.Learn(ProtoTCP, server, uint8(i))
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, int32(1), firsts.Load())
+	assert.False(t, s.MarkWarned(ProtoTCP, server), "no Learn dropped the mark")
 }

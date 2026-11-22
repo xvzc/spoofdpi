@@ -48,7 +48,8 @@ type stubHops struct {
 	hops       uint8
 }
 
-func (stubHops) Register(packet.Proto, []net.IP) {}
+func (stubHops) Register(packet.Proto, []net.IP)      {}
+func (stubHops) MarkWarned(packet.Proto, net.IP) bool { return true }
 func (s stubHops) Lookup(packet.Proto, net.IP) packet.HopEstimate {
 	if !s.hopLearned {
 		return packet.HopEstimate{Source: packet.HopSourceDefault}

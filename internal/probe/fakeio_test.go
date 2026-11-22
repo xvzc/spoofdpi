@@ -30,6 +30,8 @@ func (s *stubHops) Lookup(packet.Proto, net.IP) packet.HopEstimate {
 	return packet.HopEstimate{Hops: 0, Source: packet.HopSourceLearned}
 }
 
+func (s *stubHops) MarkWarned(packet.Proto, net.IP) bool { return true }
+
 // sentFake is a fake packet a stubWriter was asked to send.
 type sentFake struct {
 	ttl     uint8

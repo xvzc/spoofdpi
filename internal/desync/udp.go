@@ -47,9 +47,14 @@ func (d *UDPDesyncer) Desync(
 		return 0, nil
 	}
 
-	est := d.hops.Lookup(packet.ProtoUDP, rConn.RemoteAddr().(*net.UDPAddr).IP)
+	dstIP := rConn.RemoteAddr().(*net.UDPAddr).IP
+	est := d.hops.Lookup(packet.ProtoUDP, dstIP)
 	if onLocalLink(est) {
-		logger.Trace().Msg("server is on the local link, skipping fake packets")
+		if d.hops.MarkWarned(packet.ProtoUDP, dstIP) {
+			warnLocalLink(logger, dstIP)
+		} else {
+			logger.Trace().Msg("server is on the local link, skipping fake packets")
+		}
 		return 0, nil
 	}
 	policy := hopPolicy(connOpts)

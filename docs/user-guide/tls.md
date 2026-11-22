@@ -82,7 +82,7 @@ Specifies the number of fake packets to be sent before the actual Client Hello. 
 Sending fake packets can trick DPI systems into inspecting invalid traffic, allowing the real Client Hello to pass through.
 Each fake packet is split the same way as the real Client Hello.
 
-Fake packets are not sent to a server found to be on the local link (0 hops away), since no TTL can stop them before such a server. To turn fake packets off for other servers, such as those on a LAN or a corporate network, use a [rule](rules.md), for example `tls = { fake-preflight = 0, fake-stutter = 0 }` for their CIDRs.
+Fake packets are not sent to a server found to be on the local link (0 hops away), since no TTL can stop them before such a server. spoofdpi logs a warning with the server's address the first time it skips them for a server. To turn fake packets off for other servers, such as those on a LAN or a corporate network, use a [rule](rules.md), for example `tls = { fake-preflight = 0, fake-stutter = 0 }` for their CIDRs.
 
 By default, fake packets carry the connection's real TCP sequence and acknowledgment numbers, learned from the server's SYN/ACK, so they overlap the real Client Hello. See [`fake-seq-offset`](#fake-seq-offset), [`fake-ack-offset`](#fake-ack-offset) and [`syn-ack-timeout`](#syn-ack-timeout) to change this.
 

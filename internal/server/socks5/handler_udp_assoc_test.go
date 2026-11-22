@@ -568,6 +568,8 @@ func (unlearnedHops) Lookup(packet.Proto, net.IP) packet.HopEstimate {
 	return packet.HopEstimate{Source: packet.HopSourceDefault}
 }
 
+func (unlearnedHops) MarkWarned(packet.Proto, net.IP) bool { return true }
+
 func TestUdpAssociateHandler_Handle_RulePerDatagram(t *testing.T) {
 	const nameA, nameB = "a.test", "b.test"
 	const short, long = 400 * time.Millisecond, time.Hour

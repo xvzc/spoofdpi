@@ -2,6 +2,7 @@ package packet
 
 import (
 	"net"
+	"sync"
 
 	"github.com/xvzc/spoofdpi/internal/cache"
 	"github.com/xvzc/spoofdpi/internal/netutil"
@@ -48,6 +49,7 @@ func (k HopKey) Bytes() []byte { return k.IP.Bytes() }
 type HopEntry struct {
 	Hops    uint8 // the learned hop count; 0 until Learned
 	Learned bool  // learned from a captured packet, not only registered
+	Warned  bool  // a warning about the destination was logged
 }
 
 // HopSource is where the hop count of a HopEstimate comes from.
@@ -91,6 +93,9 @@ type HopReader interface {
 	Register(p Proto, addrs []net.IP)
 	// Lookup returns the hop count to ip over p.
 	Lookup(p Proto, ip net.IP) HopEstimate
+	// MarkWarned marks the destination ip over p as warned about, and
+	// reports whether it was not yet.
+	MarkWarned(p Proto, ip net.IP) bool
 }
 
 var _ HopReader = (*HopStore)(nil)
@@ -99,6 +104,10 @@ var _ HopReader = (*HopStore)(nil)
 // IP, in an LRU cache. Only registered destinations are learned.
 type HopStore struct {
 	entries cache.Cache[HopKey, HopEntry]
+	// mu makes each read-modify-write of an entry atomic, so that Learn
+	// and MarkWarned do not lose each other's fields. Register only
+	// inserts, and Lookup only reads.
+	mu sync.Mutex
 }
 
 // NewHopStore returns an empty HopStore.
@@ -130,13 +139,14 @@ func (s *HopStore) Learn(
 	hops uint8,
 ) (prev HopEntry, registered bool) {
 	key := HopKey{Proto: p, IP: netutil.NewIPKey(ip)}
-	// prev only informs the caller. The update-only Set decides whether
-	// key is registered, so a key evicted after this Get is not
-	// re-inserted.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// The update-only Set decides whether key is registered, so a key
+	// evicted after this Get is not re-inserted.
 	prev, _ = s.entries.Get(key)
 	registered = s.entries.Set(
 		key,
-		HopEntry{Hops: hops, Learned: true},
+		HopEntry{Hops: hops, Learned: true, Warned: prev.Warned},
 		cache.Options().WithUpdateExistingOnly(true),
 	)
 	return prev, registered
@@ -154,4 +164,24 @@ func (s *HopStore) Lookup(p Proto, ip net.IP) HopEstimate {
 		return HopEstimate{Hops: other.Hops, Source: HopSourceLearnedOther}
 	}
 	return HopEstimate{Source: HopSourceDefault}
+}
+
+// MarkWarned marks the destination ip over p as warned about, and reports
+// whether it was not yet. A destination missing from the store, never
+// registered or evicted, keeps no mark, so it is always reported as not
+// warned about.
+func (s *HopStore) MarkWarned(p Proto, ip net.IP) bool {
+	key := HopKey{Proto: p, IP: netutil.NewIPKey(ip)}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries.Get(key)
+	if !ok {
+		return true
+	}
+	if e.Warned {
+		return false
+	}
+	e.Warned = true
+	s.entries.Set(key, e, cache.Options().WithUpdateExistingOnly(true))
+	return true
 }
