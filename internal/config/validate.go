@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/xvzc/spoofdpi/internal/trie"
 )
 
 func isOk[T any](p *T, err error) bool {
@@ -127,10 +129,11 @@ func checkGateway(v string) error {
 	return nil
 }
 
+// checkCIDR accepts the CIDRs a rule set accepts: an IPv4-mapped prefix,
+// which matches IPv4 addresses, must not reach beyond ::ffff:0:0/96.
 func checkCIDR(v string) error {
-	_, _, err := net.ParseCIDR(v)
-	if err != nil {
-		// Go's net package error is already descriptive enough,
+	if _, err := trie.CanonicalCIDR(v); err != nil {
+		// The parse error is already descriptive enough,
 		// but we wrap it to give context about the specific value.
 		return fmt.Errorf("wrongCIDR '%s': %w", v, err)
 	}

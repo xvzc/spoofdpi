@@ -20,7 +20,8 @@ type RuleSet struct {
 	domain     *trie.DomainTrie[*config.Rule]
 	cidr       *trie.CIDRTrie[*config.Rule]
 	domainKeys map[string]*config.Rule
-	cidrKeys   map[string]*config.Rule
+	// cidrKeys holds the rule of each prefix, by its canonical form.
+	cidrKeys map[string]*config.Rule
 }
 
 func NewRuleSet() *RuleSet {
@@ -66,7 +67,13 @@ func (rs *RuleSet) Add(r *config.Rule) error {
 	}
 
 	for _, cidr := range r.Match.CIDRs {
-		if existing, ok := rs.cidrKeys[cidr]; ok {
+		// Spellings of the same prefix share one entry of the trie.
+		prefix, err := trie.CanonicalCIDR(cidr)
+		if err != nil {
+			return fmt.Errorf("invalid cidr %q: %w", cidr, err)
+		}
+		key := prefix.String()
+		if existing, ok := rs.cidrKeys[key]; ok {
 			if existing.Priority == r.Priority {
 				return fmt.Errorf(
 					"rules '%s' and '%s' conflict on '%s' (priority %d)",
@@ -80,7 +87,7 @@ func (rs *RuleSet) Add(r *config.Rule) error {
 		if err := rs.cidr.Add(cidr, r); err != nil {
 			return err
 		}
-		rs.cidrKeys[cidr] = r
+		rs.cidrKeys[key] = r
 	}
 
 	return nil

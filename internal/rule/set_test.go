@@ -50,6 +50,45 @@ func TestRuleSet_Add(t *testing.T) {
 		assert.Equal(t, "high", r.Name)
 	})
 
+	// Spellings of the same prefix are the same CIDR.
+	spellings := [][2]string{
+		{"10.0.0.0/8", "::ffff:10.0.0.0/104"},
+		{"10.0.0.0/8", "10.0.0.1/8"},
+	}
+	for _, sp := range spellings {
+		t.Run("cidr conflict "+sp[0]+" "+sp[1], func(t *testing.T) {
+			rs := NewRuleSet()
+			assert.NoError(t, rs.Add(mkRule("a", 10, nil, []string{sp[0]})))
+			err := rs.Add(mkRule("b", 10, nil, []string{sp[1]}))
+			if assert.Error(t, err) {
+				assert.Contains(t, err.Error(), "conflict")
+			}
+		})
+
+		for _, order := range [][2]string{{sp[0], sp[1]}, {sp[1], sp[0]}} {
+			t.Run(
+				"cidr higher priority wins "+order[0]+" then "+order[1],
+				func(t *testing.T) {
+					for _, highFirst := range []bool{true, false} {
+						rs := NewRuleSet()
+						high := mkRule("high", 20, nil, []string{order[0]})
+						low := mkRule("low", 10, nil, []string{order[1]})
+						first, second := low, high
+						if highFirst {
+							first, second = high, low
+						}
+						assert.NoError(t, rs.Add(first))
+						assert.NoError(t, rs.Add(second))
+						r := rs.Search([]Query{{MatchTypeAddr, "10.1.2.3"}})
+						if assert.NotNil(t, r) {
+							assert.Equal(t, "high", r.Name)
+						}
+					}
+				},
+			)
+		}
+	}
+
 	t.Run("lower priority is dropped", func(t *testing.T) {
 		rs := NewRuleSet()
 		assert.NoError(t, rs.Add(mkRule("high", 20, []string{"dup.com"}, nil)))

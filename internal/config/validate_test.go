@@ -112,6 +112,10 @@ func TestCheckCIDR(t *testing.T) {
 		{"valid ipv6 cidr", "2001:db8::/32", false},
 		{"invalid cidr", "192.168.1.0", true},
 		{"invalid ip", "300.300.300.300/24", true},
+		{"ipv4-mapped cidr", "::ffff:10.0.0.0/104", false},
+		{"ipv4-mapped /96", "::ffff:0:0/96", false},
+		{"ipv4-mapped shorter than /96", "::ffff:0:0/64", true},
+		{"ipv6 cidr covering ipv4-mapped", "::/64", false},
 	}
 
 	for _, tc := range tcs {

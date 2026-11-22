@@ -40,6 +40,8 @@ You can specify a `domains` list or a `cidrs` list.
 | `domains` | Array  | List of domain patterns. Supports wildcards (`*`, `**`).                    |
 | `cidrs`   | Array  | List of IP ranges in CIDR notation (e.g., `["10.0.0.0/8"]`).               |
 
+An IPv4-mapped IPv6 range, such as `::ffff:10.0.0.0/104`, matches the IPv4 addresses it maps, here `10.0.0.0/8`. Its prefix length must be at least 96. Ranges written differently but covering the same addresses, such as `10.0.0.1/8`, `10.0.0.0/8` and `::ffff:10.0.0.0/104`, are the same range: for it, the rule with the higher priority is kept, and two rules of equal priority are an error.
+
 ### File-based match lists
 
 Both `domains` and `cidrs` accept items with a `file:` prefix. The path after the prefix is read line by line, and each non-empty, non-comment line is treated as an additional item.
