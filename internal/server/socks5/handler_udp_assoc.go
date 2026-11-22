@@ -146,7 +146,7 @@ func (h *UdpAssociateHandler) Handle(
 		// A domain name is resolved first, then matched together with the
 		// address it resolves to. The rule is selected the way it is for
 		// CONNECT, but the system resolver resolves the name to one address.
-		dstIPs, err := h.resolveUDPTarget(ctx, dstHost)
+		dstIPs, dstRule, err := h.resolveUDPTarget(ctx, dstHost)
 		if err != nil {
 			logger.Warn().
 				Err(err).
@@ -162,7 +162,13 @@ func (h *UdpAssociateHandler) Handle(
 		}
 		dstAddr := &net.UDPAddr{IP: dstIPs[0], Port: dstPort}
 
-		matched, cfg := server.SelectRule(h.ruleSet, h.cfg, dstHost, []net.IP{dstAddr.IP})
+		matched, cfg := server.SelectRule(
+			h.ruleSet,
+			h.cfg,
+			"",
+			[]net.IP{dstAddr.IP},
+			dstRule,
+		)
 		if matched != nil {
 			logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
 		}
@@ -246,22 +252,23 @@ func (h *UdpAssociateHandler) Handle(
 // resolveUDPTarget returns the addresses of a datagram's destination host:
 // the host itself when it is an IP literal, else the addresses h.resolver
 // resolves it to, with the DNS options of the domain rule the host matches,
-// else the base ones (SystemResolver ignores them).
+// else the base ones (SystemResolver ignores them). It also returns that
+// domain rule, nil for an IP literal or when none matches.
 func (h *UdpAssociateHandler) resolveUDPTarget(
 	ctx context.Context,
 	host string,
-) ([]net.IP, error) {
+) ([]net.IP, *config.Rule, error) {
 	if ip := net.ParseIP(host); ip != nil {
-		return []net.IP{ip}, nil
+		return []net.IP{ip}, nil, nil
 	}
 
-	_, nameCfg := server.SelectRule(h.ruleSet, h.cfg, host, nil)
+	nameRule, nameCfg := server.SelectRule(h.ruleSet, h.cfg, host, nil)
 	resolved, err := h.resolver.Resolve(ctx, &nameCfg.DNS, host)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return netutil.IPsFromAddrs(resolved), nil
+	return netutil.IPsFromAddrs(resolved), nameRule, nil
 }
 
 func (h *UdpAssociateHandler) relayInboundUDP(

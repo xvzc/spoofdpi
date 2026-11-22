@@ -190,3 +190,89 @@ func TestSelectRule_NameOnlyGivesLookupConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestSelectRule_Candidates(t *testing.T) {
+	const name = "example.com"
+	hostAddrs := ips("192.0.2.1")
+
+	t.Run("candidate beats a lower-priority address match", func(t *testing.T) {
+		cand := selectionRule("cand", 20, []string{name}, nil)
+		addr := selectionRule("addr", 10, nil, []string{"192.0.2.0/24"})
+		rs := newRuleSet(t, cand, addr)
+
+		matched, cfg := SelectRule(
+			rs,
+			&config.RuntimeConfig{},
+			"",
+			hostAddrs,
+			cand,
+		)
+
+		assert.Same(t, cand, matched)
+		assert.Same(t, &cand.Config, cfg)
+	})
+
+	t.Run("address match wins a tie with a candidate", func(t *testing.T) {
+		cand := selectionRule("cand", 10, []string{name}, nil)
+		addr := selectionRule("addr", 10, nil, []string{"192.0.2.0/24"})
+		rs := newRuleSet(t, cand, addr)
+
+		matched, _ := SelectRule(
+			rs,
+			&config.RuntimeConfig{},
+			"",
+			hostAddrs,
+			cand,
+		)
+
+		require.NotNil(t, matched)
+		assert.Equal(t, addr.Name, matched.Name)
+	})
+
+	t.Run("candidate wins a tie with the name match", func(t *testing.T) {
+		cand := selectionRule("cand", 10, nil, nil)
+		dom := selectionRule("domain", 10, []string{name}, nil)
+		rs := newRuleSet(t, dom)
+
+		matched, _ := SelectRule(
+			rs,
+			&config.RuntimeConfig{},
+			name,
+			nil,
+			cand,
+		)
+
+		assert.Same(t, cand, matched)
+	})
+
+	t.Run("nil candidate is ignored", func(t *testing.T) {
+		base := &config.RuntimeConfig{}
+		addr := selectionRule("addr", 10, nil, []string{"192.0.2.0/24"})
+		rs := newRuleSet(t, addr)
+
+		matched, _ := SelectRule(rs, base, "", hostAddrs, nil)
+		require.NotNil(t, matched)
+		assert.Equal(t, addr.Name, matched.Name)
+
+		matched, cfg := SelectRule(rs, base, "", ips("198.51.100.1"), nil)
+		assert.Nil(t, matched)
+		assert.Same(t, base, cfg)
+	})
+
+	t.Run("candidate with an empty name equals the two-call result", func(t *testing.T) {
+		for _, domPriority := range []uint16{5, 10, 20} {
+			dom := selectionRule("domain", domPriority, []string{name}, nil)
+			addr := selectionRule("addr", 10, nil, []string{"192.0.2.0/24"})
+			rs := newRuleSet(t, dom, addr)
+			base := &config.RuntimeConfig{}
+
+			domRule, _ := SelectRule(rs, base, name, nil)
+			want, wantCfg := SelectRule(rs, base, name, hostAddrs)
+			got, gotCfg := SelectRule(rs, base, "", hostAddrs, domRule)
+
+			// The rule set returns copies, so compare by content.
+			assert.Equal(t, want.Name, got.Name)
+			assert.Equal(t, wantCfg.DNS.HTTPSURL, gotCfg.DNS.HTTPSURL)
+		}
+	})
+}

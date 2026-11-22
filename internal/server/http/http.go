@@ -156,7 +156,7 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 		Str("from", conn.RemoteAddr().String()).
 		Msg("new request")
 
-	addrs, err := p.resolveHost(ctx, logger, host)
+	addrs, hostRule, err := p.resolveHost(ctx, logger, host)
 	if err != nil {
 		_ = proto.HTTPBadGatewayResponse().Write(conn)
 		logger.Error().Err(err).Msgf("dns lookup failed for %s", host)
@@ -164,7 +164,7 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	matched, _ := server.SelectRule(p.ruleSet, p.cfg, host, addrs)
+	matched, _ := server.SelectRule(p.ruleSet, p.cfg, "", addrs, hostRule)
 
 	dst := &netutil.Destination{
 		Host:  host,
@@ -206,26 +206,27 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 
 // resolveHost returns the addresses of host: host itself when it is an IP
 // literal, else the addresses p.resolver resolves it to with the DNS options
-// of the domain rule it matches, else with the base ones.
+// of the domain rule it matches, else with the base ones. It also returns
+// that domain rule, nil for an IP literal or when none matches.
 func (p *HTTPProxy) resolveHost(
 	ctx context.Context,
 	logger zerolog.Logger,
 	host string,
-) ([]net.IP, error) {
+) ([]net.IP, *config.Rule, error) {
 	if ip := net.ParseIP(host); ip != nil {
 		logger.Trace().Msgf("skipping dns lookup for non-domain host %q", host)
-		return []net.IP{ip}, nil
+		return []net.IP{ip}, nil, nil
 	}
 	if host == "" {
-		return nil, errors.New("no host to look up")
+		return nil, nil, errors.New("no host to look up")
 	}
 
 	// Matching the host alone gives the DNS options to resolve it with.
-	_, hostCfg := server.SelectRule(p.ruleSet, p.cfg, host, nil)
+	hostRule, hostCfg := server.SelectRule(p.ruleSet, p.cfg, host, nil)
 	resolved, err := p.resolver.Resolve(ctx, &hostCfg.DNS, host)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return netutil.IPsFromAddrs(resolved), nil
+	return netutil.IPsFromAddrs(resolved), hostRule, nil
 }

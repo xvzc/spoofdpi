@@ -168,18 +168,19 @@ func (h *ConnectHandler) resolveDestination(
 	logger zerolog.Logger,
 	req *proto.SOCKS5Request,
 ) (*netutil.Destination, *config.Rule, *config.RuntimeConfig, error) {
-	var name string
 	var addrs []net.IP
+	var nameRule *config.Rule
 
 	if req.IP != nil {
 		addrs = []net.IP{req.IP}
 	} else if req.ATYP == proto.SOCKS5AddrTypeFQDN && len(req.FQDN) > 1 {
-		name = req.FQDN
+		name := req.FQDN
 		if ip := net.ParseIP(name); ip != nil {
 			addrs = []net.IP{ip}
 		} else {
 			// Matching the name alone gives the DNS options to resolve it with.
-			_, nameCfg := server.SelectRule(h.ruleSet, h.cfg, name, nil)
+			var nameCfg *config.RuntimeConfig
+			nameRule, nameCfg = server.SelectRule(h.ruleSet, h.cfg, name, nil)
 			resolved, err := h.resolver.Resolve(ctx, &nameCfg.DNS, name)
 			if err != nil {
 				logger.Error().Str("domain", req.FQDN).Err(err).Msgf("dns lookup failed")
@@ -192,7 +193,13 @@ func (h *ConnectHandler) resolveDestination(
 		return nil, nil, nil, nil
 	}
 
-	matched, cfg := server.SelectRule(h.ruleSet, h.cfg, name, addrs)
+	matched, cfg := server.SelectRule(
+		h.ruleSet,
+		h.cfg,
+		"",
+		addrs,
+		nameRule,
+	)
 
 	if matched != nil && logger.GetLevel() == zerolog.TraceLevel {
 		logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
