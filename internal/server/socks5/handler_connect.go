@@ -52,11 +52,10 @@ func (h *ConnectHandler) Handle(
 ) error {
 	logger := logging.WithLocalScope(ctx, h.logger, "connect")
 
-	dst, sel, err := h.resolveDestination(ctx, logger, req)
+	dst, matched, cfg, err := h.resolveDestination(ctx, logger, req)
 	if err != nil || dst == nil {
 		return err
 	}
-	cfg := sel.Config
 
 	// 1. Validate destination
 	ok, err := dst.IsValid(&h.listenAddr)
@@ -69,7 +68,7 @@ func (h *ConnectHandler) Handle(
 	}
 
 	// 2. Check if blocked
-	if sel.Blocked() {
+	if matched != nil && matched.Block {
 		logger.Debug().Msg("request is blocked by policy")
 		_ = proto.SOCKS5FailureResponse().Write(lConn)
 		return netutil.ErrBlocked
@@ -159,13 +158,16 @@ func (h *ConnectHandler) Handle(
 }
 
 // resolveDestination resolves the request's destination and selects its
-// rule with server.SelectRule. It returns a nil destination, without an
-// error, when the request names no address to connect to.
+// rule with server.SelectRule. A domain name is resolved with the DNS
+// options of the domain rule it matches, else with the base ones. It
+// returns the destination, the selected rule (nil when none matches) and
+// the config to apply. It returns a nil destination, without an error,
+// when the request names no address to connect to.
 func (h *ConnectHandler) resolveDestination(
 	ctx context.Context,
 	logger zerolog.Logger,
 	req *proto.SOCKS5Request,
-) (*netutil.Destination, server.Selection, error) {
+) (*netutil.Destination, *config.Rule, *config.RuntimeConfig, error) {
 	var name string
 	var addrs []net.IP
 
@@ -173,25 +175,33 @@ func (h *ConnectHandler) resolveDestination(
 		addrs = []net.IP{req.IP}
 	} else if req.ATYP == proto.SOCKS5AddrTypeFQDN && len(req.FQDN) > 1 {
 		name = req.FQDN
+		if ip := net.ParseIP(name); ip != nil {
+			addrs = []net.IP{ip}
+		} else {
+			// Matching the name alone gives the DNS options to resolve it with.
+			_, nameCfg := server.SelectRule(h.ruleSet, h.cfg, name, nil)
+			resolved, err := h.resolver.Resolve(ctx, &nameCfg.DNS, name)
+			if err != nil {
+				logger.Error().Str("domain", req.FQDN).Err(err).Msgf("dns lookup failed")
+				return nil, nil, nil, err
+			}
+			addrs = netutil.IPsFromAddrs(resolved)
+		}
 	} else {
 		logger.Trace().Msg("no addrs specified for this request. skipping")
-		return nil, server.Selection{}, nil
+		return nil, nil, nil, nil
 	}
 
-	sel, err := server.SelectRule(ctx, h.ruleSet, h.resolver, h.cfg, name, addrs)
-	if err != nil {
-		logger.Error().Str("domain", req.FQDN).Err(err).Msgf("dns lookup failed")
-		return nil, server.Selection{}, err
-	}
+	matched, cfg := server.SelectRule(h.ruleSet, h.cfg, name, addrs)
 
-	if sel.Rule != nil && logger.GetLevel() == zerolog.TraceLevel {
-		logger.Trace().RawJSON("summary", sel.Rule.JSON()).Msg("match")
+	if matched != nil && logger.GetLevel() == zerolog.TraceLevel {
+		logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
 	}
 
 	dst := &netutil.Destination{
 		Host:  req.FQDN,
-		Addrs: sel.Addrs,
+		Addrs: addrs,
 		Port:  req.Port,
 	}
-	return dst, sel, nil
+	return dst, matched, cfg, nil
 }

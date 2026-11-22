@@ -3,6 +3,7 @@ package socks5
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 	"net/netip"
@@ -262,24 +263,76 @@ func TestUdpAssociateHandler_Handle_IdleTimeout(t *testing.T) {
 }
 
 // stubResolver resolves domain names from a fixed table and counts the
-// lookups; a name not in the table resolves to no address.
+// lookups; a name not in the table resolves to no address, and a name in
+// errs fails with its error. It records the DNS options of each name's
+// latest lookup.
 type stubResolver struct {
 	names   map[string]net.IP
+	errs    map[string]error
 	lookups atomic.Int32
+	opts    sync.Map // domain -> *config.DNSOptions
 }
 
 func (r *stubResolver) Resolve(
 	_ context.Context,
-	_ *config.DNSOptions,
+	opts *config.DNSOptions,
 	domain string,
 ) ([]netip.Addr, error) {
 	r.lookups.Add(1)
+	r.opts.Store(domain, opts)
+	if err, ok := r.errs[domain]; ok {
+		return nil, err
+	}
 	ip, ok := r.names[domain]
 	if !ok {
 		return nil, nil
 	}
 	addr, _ := netip.AddrFromSlice(ip)
 	return []netip.Addr{addr.Unmap()}, nil
+}
+
+// lookupOpts returns the DNS options of domain's latest lookup, or nil.
+func (r *stubResolver) lookupOpts(domain string) *config.DNSOptions {
+	opts, ok := r.opts.Load(domain)
+	if !ok {
+		return nil
+	}
+	return opts.(*config.DNSOptions)
+}
+
+func TestUdpAssociateHandler_Handle_NameLookup(t *testing.T) {
+	ruleDNS := &config.Rule{
+		Name:     "rule dns",
+		Priority: 10,
+		Match:    &config.MatchAttrs{Domains: []string{"rule.test"}},
+	}
+	ruleDNS.Config.DNS.HTTPSURL = "rule"
+	base := &config.RuntimeConfig{}
+	base.DNS.HTTPSURL = "base"
+
+	pool := netutil.NewConnRegistry[netutil.NATKey](16)
+	h := newRelayingUdpAssociateHandler(t, pool, base, ruleDNS)
+	dst := startUDPEcho(t)
+	resolver := &stubResolver{
+		names: map[string]net.IP{"rule.test": dst.IP, "base.test": dst.IP},
+		errs:  map[string]error{"fail.test": errors.New("lookup failed")},
+	}
+	h.resolver = resolver
+	a := startUdpAssociation(t, h)
+
+	// A failed lookup drops only that datagram.
+	a.sendToName(t, "fail.test", dst.Port, "failed")
+	a.sendToName(t, "rule.test", dst.Port, "by rule")
+	assert.Equal(t, "by rule", a.receive(t))
+	a.sendToName(t, "base.test", dst.Port, "by base")
+	assert.Equal(t, "by base", a.receive(t))
+
+	assert.Equal(t, int32(3), resolver.lookups.Load())
+	if opts := resolver.lookupOpts("rule.test"); assert.NotNil(t, opts) {
+		assert.Equal(t, "rule", opts.HTTPSURL)
+	}
+	assert.Same(t, &base.DNS, resolver.lookupOpts("base.test"))
+	assert.Same(t, &base.DNS, resolver.lookupOpts("fail.test"))
 }
 
 func TestUdpAssociateHandler_Handle_NameBlock(t *testing.T) {

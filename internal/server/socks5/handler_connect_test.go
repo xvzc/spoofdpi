@@ -2,6 +2,7 @@ package socks5
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"sync/atomic"
@@ -370,4 +371,30 @@ func TestConnectHandler_Handle_IPLiteralName(t *testing.T) {
 	<-done
 
 	assert.Equal(t, int32(0), baseDNS.queries.Load())
+}
+
+func TestConnectHandler_Handle_LookupError(t *testing.T) {
+	errLookup := errors.New("lookup failed")
+	resolver := &stubResolver{errs: map[string]error{"fail.test": errLookup}}
+	base := &config.RuntimeConfig{}
+
+	h := NewConnectHandler(
+		zerolog.Nop(),
+		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil),
+		resolver,
+		rule.NewRuleSet(),
+		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+		base,
+	)
+
+	_, done := runConnect(t, h, &proto.SOCKS5Request{
+		Cmd:  proto.SOCKS5CmdConnect,
+		ATYP: proto.SOCKS5AddrTypeFQDN,
+		FQDN: "fail.test",
+		Port: 443,
+	})
+
+	assert.ErrorIs(t, <-done, errLookup)
+	assert.Equal(t, int32(1), resolver.lookups.Load())
+	assert.Same(t, &base.DNS, resolver.lookupOpts("fail.test"))
 }

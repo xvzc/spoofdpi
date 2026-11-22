@@ -146,7 +146,7 @@ func (h *UdpAssociateHandler) Handle(
 		// A domain name is resolved first, then matched together with the
 		// address it resolves to. The rule is selected the way it is for
 		// CONNECT, but the system resolver resolves the name to one address.
-		sel, err := server.SelectRule(ctx, h.ruleSet, h.resolver, h.cfg, dstHost, nil)
+		dstIPs, err := h.resolveUDPTarget(ctx, dstHost)
 		if err != nil {
 			logger.Warn().
 				Err(err).
@@ -154,19 +154,19 @@ func (h *UdpAssociateHandler) Handle(
 				Msg("failed to resolve udp target")
 			continue
 		}
-		if len(sel.Addrs) == 0 || sel.Addrs[0].IsUnspecified() {
+		if len(dstIPs) == 0 || dstIPs[0].IsUnspecified() {
 			logger.Debug().
 				Str("addr", dstAddrStr).
 				Msg("dropped udp packet to an unspecified address")
 			continue
 		}
-		dstAddr := &net.UDPAddr{IP: sel.Addrs[0], Port: dstPort}
+		dstAddr := &net.UDPAddr{IP: dstIPs[0], Port: dstPort}
 
-		if sel.Rule != nil {
-			logger.Trace().RawJSON("summary", sel.Rule.JSON()).Msg("match")
+		matched, cfg := server.SelectRule(h.ruleSet, h.cfg, dstHost, []net.IP{dstAddr.IP})
+		if matched != nil {
+			logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
 		}
-		cfg := sel.Config
-		if sel.Blocked() {
+		if matched != nil && matched.Block {
 			// Drop only this datagram; the association stays up for the
 			// client's other destinations.
 			logger.Debug().Str("addr", dstAddrStr).Msg("request is blocked by policy")
@@ -241,6 +241,27 @@ func (h *UdpAssociateHandler) Handle(
 			logger.Warn().Err(err).Msg("failed to write udp to target")
 		}
 	}
+}
+
+// resolveUDPTarget returns the addresses of a datagram's destination host:
+// the host itself when it is an IP literal, else the addresses h.resolver
+// resolves it to, with the DNS options of the domain rule the host matches,
+// else the base ones (SystemResolver ignores them).
+func (h *UdpAssociateHandler) resolveUDPTarget(
+	ctx context.Context,
+	host string,
+) ([]net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		return []net.IP{ip}, nil
+	}
+
+	_, nameCfg := server.SelectRule(h.ruleSet, h.cfg, host, nil)
+	resolved, err := h.resolver.Resolve(ctx, &nameCfg.DNS, host)
+	if err != nil {
+		return nil, err
+	}
+
+	return netutil.IPsFromAddrs(resolved), nil
 }
 
 func (h *UdpAssociateHandler) relayInboundUDP(

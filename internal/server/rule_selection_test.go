@@ -1,10 +1,7 @@
 package server
 
 import (
-	"context"
-	"errors"
 	"net"
-	"net/netip"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,40 +10,15 @@ import (
 	"github.com/xvzc/spoofdpi/internal/rule"
 )
 
-// fakeResolver answers every lookup with addrs and err, and records the
-// lookups.
-type fakeResolver struct {
-	addrs []netip.Addr
-	err   error
-
-	lookups []fakeLookup
-}
-
-type fakeLookup struct {
-	opts   *config.DNSOptions
-	domain string
-}
-
-func (r *fakeResolver) Resolve(
-	_ context.Context,
-	opts *config.DNSOptions,
-	domain string,
-) ([]netip.Addr, error) {
-	r.lookups = append(r.lookups, fakeLookup{opts: opts, domain: domain})
-	return r.addrs, r.err
-}
-
 // selectionRule returns a rule whose DNS options are tagged with its name.
 func selectionRule(
 	name string,
 	priority uint16,
-	block bool,
 	domains, cidrs []string,
 ) *config.Rule {
 	r := &config.Rule{
 		Name:     name,
 		Priority: priority,
-		Block:    block,
 		Match:    &config.MatchAttrs{Domains: domains, CIDRs: cidrs},
 	}
 	r.Config.DNS.HTTPSURL = name
@@ -61,14 +33,23 @@ func ips(ss ...string) []net.IP {
 	return out
 }
 
+func newRuleSet(t *testing.T, rules ...*config.Rule) *rule.RuleSet {
+	t.Helper()
+	rs := rule.NewRuleSet()
+	for _, r := range rules {
+		require.NoError(t, rs.Add(r))
+	}
+	return rs
+}
+
 func TestSelectRule(t *testing.T) {
 	const name = "example.com"
 
 	domain := func(priority uint16) *config.Rule {
-		return selectionRule("domain", priority, false, []string{name}, nil)
+		return selectionRule("domain", priority, []string{name}, nil)
 	}
 	addr := func(priority uint16) *config.Rule {
-		return selectionRule("addr", priority, false, nil, []string{"192.0.2.0/24"})
+		return selectionRule("addr", priority, nil, []string{"192.0.2.0/24"})
 	}
 
 	tcs := []struct {
@@ -76,253 +57,136 @@ func TestSelectRule(t *testing.T) {
 		rules    []*config.Rule
 		host     string
 		addrs    []net.IP
-		resolved []netip.Addr
-
-		// wantLookupOpts is the HTTPSURL tag of the DNS options of the
-		// lookup: "base", a rule's name, or "" for no lookup.
-		wantLookupOpts string
-		wantRule       string // "" for no rule
-		wantAddrs      []net.IP
+		wantRule string // "" for no rule
 	}{
 		{
-			name:           "name without a rule is resolved with the base options",
-			host:           name,
-			resolved:       []netip.Addr{netip.MustParseAddr("198.51.100.1")},
-			wantLookupOpts: "base",
-			wantAddrs:      ips("198.51.100.1"),
+			name:     "domain rule matches the name",
+			rules:    []*config.Rule{domain(10)},
+			host:     name,
+			wantRule: "domain",
 		},
 		{
-			name:           "name is resolved with its domain rule's options",
-			rules:          []*config.Rule{domain(10)},
-			host:           name,
-			resolved:       []netip.Addr{netip.MustParseAddr("198.51.100.1")},
-			wantLookupOpts: "domain",
-			wantRule:       "domain",
-			wantAddrs:      ips("198.51.100.1"),
+			name:     "address rule matches the addresses",
+			rules:    []*config.Rule{addr(10)},
+			host:     name,
+			addrs:    ips("192.0.2.1"),
+			wantRule: "addr",
 		},
 		{
-			name:           "address rule does not set the lookup options",
-			rules:          []*config.Rule{addr(10)},
-			host:           name,
-			resolved:       []netip.Addr{netip.MustParseAddr("192.0.2.1")},
-			wantLookupOpts: "base",
-			wantRule:       "addr",
-			wantAddrs:      ips("192.0.2.1"),
+			name:     "higher-priority domain rule wins",
+			rules:    []*config.Rule{domain(20), addr(10)},
+			host:     name,
+			addrs:    ips("192.0.2.1"),
+			wantRule: "domain",
 		},
 		{
-			name:           "higher-priority domain rule wins",
-			rules:          []*config.Rule{domain(20), addr(10)},
-			host:           name,
-			resolved:       []netip.Addr{netip.MustParseAddr("192.0.2.1")},
-			wantLookupOpts: "domain",
-			wantRule:       "domain",
-			wantAddrs:      ips("192.0.2.1"),
+			name:     "higher-priority address rule wins",
+			rules:    []*config.Rule{domain(10), addr(20)},
+			host:     name,
+			addrs:    ips("192.0.2.1"),
+			wantRule: "addr",
 		},
 		{
-			name:           "higher-priority address rule wins",
-			rules:          []*config.Rule{domain(10), addr(20)},
-			host:           name,
-			resolved:       []netip.Addr{netip.MustParseAddr("192.0.2.1")},
-			wantLookupOpts: "domain",
-			wantRule:       "addr",
-			wantAddrs:      ips("192.0.2.1"),
+			name:     "address rule wins a tie",
+			rules:    []*config.Rule{domain(10), addr(10)},
+			host:     name,
+			addrs:    ips("192.0.2.1"),
+			wantRule: "addr",
 		},
 		{
-			name:           "address rule wins a tie",
-			rules:          []*config.Rule{domain(10), addr(10)},
-			host:           name,
-			resolved:       []netip.Addr{netip.MustParseAddr("192.0.2.1")},
-			wantLookupOpts: "domain",
-			wantRule:       "addr",
-			wantAddrs:      ips("192.0.2.1"),
+			name:     "any address matches",
+			rules:    []*config.Rule{addr(10)},
+			addrs:    ips("198.51.100.1", "192.0.2.1"),
+			wantRule: "addr",
 		},
 		{
-			name:  "any resolved address matches",
-			rules: []*config.Rule{addr(10)},
-			host:  name,
-			resolved: []netip.Addr{
-				netip.MustParseAddr("198.51.100.1"),
-				netip.MustParseAddr("192.0.2.1"),
-			},
-			wantLookupOpts: "base",
-			wantRule:       "addr",
-			wantAddrs:      ips("198.51.100.1", "192.0.2.1"),
+			name:     "addresses only",
+			rules:    []*config.Rule{domain(20), addr(10)},
+			addrs:    ips("192.0.2.1"),
+			wantRule: "addr",
 		},
 		{
-			name:      "name with addresses is not resolved",
-			rules:     []*config.Rule{domain(20), addr(10)},
-			host:      name,
-			addrs:     ips("192.0.2.1"),
-			wantRule:  "domain",
-			wantAddrs: ips("192.0.2.1"),
-		},
-		{
-			name:      "addresses only",
-			rules:     []*config.Rule{domain(20), addr(10)},
-			addrs:     ips("192.0.2.1"),
-			wantRule:  "addr",
-			wantAddrs: ips("192.0.2.1"),
-		},
-		{
-			name:      "no rule matches the addresses",
-			rules:     []*config.Rule{addr(10)},
-			addrs:     ips("198.51.100.1"),
-			wantAddrs: ips("198.51.100.1"),
-		},
-		{
-			name: "ip literal name is the address and not a domain name",
+			name: "ip literal name without addresses is the address",
 			rules: []*config.Rule{
-				selectionRule("literal", 20, false, []string{"192.0.2.1"}, nil),
+				selectionRule("literal", 20, []string{"192.0.2.1"}, nil),
 				addr(10),
 			},
-			host:      "192.0.2.1",
-			wantRule:  "addr",
-			wantAddrs: ips("192.0.2.1"),
+			host:     "192.0.2.1",
+			wantRule: "addr",
 		},
 		{
-			name:      "ip literal name does not replace the addresses",
-			host:      "192.0.2.1",
-			addrs:     ips("198.51.100.1"),
-			wantAddrs: ips("198.51.100.1"),
+			name: "ip literal name with addresses is ignored",
+			rules: []*config.Rule{
+				selectionRule("literal", 20, []string{"192.0.2.1"}, nil),
+				addr(10),
+			},
+			host:  "192.0.2.1",
+			addrs: ips("198.51.100.1"),
 		},
 		{
-			name:           "empty lookup result is not an error",
-			rules:          []*config.Rule{domain(10), addr(20)},
-			host:           name,
-			resolved:       []netip.Addr{},
-			wantLookupOpts: "domain",
-			wantRule:       "domain",
-			wantAddrs:      []net.IP{},
+			name:  "no rule matches",
+			rules: []*config.Rule{domain(10), addr(10)},
+			host:  "other.test",
+			addrs: ips("198.51.100.1"),
+		},
+		{
+			name: "no name or address",
 		},
 	}
 
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			rs := rule.NewRuleSet()
-			for _, r := range tc.rules {
-				require.NoError(t, rs.Add(r))
-			}
+			rs := newRuleSet(t, tc.rules...)
 			base := &config.RuntimeConfig{}
-			base.DNS.HTTPSURL = "base"
-			resolver := &fakeResolver{addrs: tc.resolved}
 
-			sel, err := SelectRule(
-				context.Background(), rs, resolver, base, tc.host, tc.addrs,
-			)
-			require.NoError(t, err)
-
-			if tc.wantLookupOpts == "" {
-				assert.Empty(t, resolver.lookups)
-			} else if assert.Len(t, resolver.lookups, 1) {
-				assert.Equal(t, tc.host, resolver.lookups[0].domain)
-				assert.Equal(t, tc.wantLookupOpts, resolver.lookups[0].opts.HTTPSURL)
-				if tc.wantLookupOpts == "base" {
-					assert.Same(t, &base.DNS, resolver.lookups[0].opts)
-				}
-			}
+			matched, cfg := SelectRule(rs, base, tc.host, tc.addrs)
 
 			if tc.wantRule == "" {
-				assert.Nil(t, sel.Rule)
-				assert.Same(t, base, sel.Config)
-			} else if assert.NotNil(t, sel.Rule) {
-				assert.Equal(t, tc.wantRule, sel.Rule.Name)
-				assert.Same(t, &sel.Rule.Config, sel.Config)
+				assert.Nil(t, matched)
+				assert.Same(t, base, cfg)
+			} else if assert.NotNil(t, matched) {
+				assert.Equal(t, tc.wantRule, matched.Name)
+				assert.Same(t, &matched.Config, cfg)
 			}
-
-			assert.Equal(t, len(tc.wantAddrs), len(sel.Addrs))
-			for i := range tc.wantAddrs {
-				assert.True(t, tc.wantAddrs[i].Equal(sel.Addrs[i]),
-					"addr %d: got %s, want %s", i, sel.Addrs[i], tc.wantAddrs[i])
-			}
-		})
-	}
-}
-
-func TestSelectRule_Blocked(t *testing.T) {
-	rs := rule.NewRuleSet()
-	require.NoError(t, rs.Add(
-		selectionRule("block", 10, true, nil, []string{"192.0.2.0/24"}),
-	))
-	require.NoError(t, rs.Add(
-		selectionRule("allow", 10, false, nil, []string{"198.51.100.0/24"}),
-	))
-	base := &config.RuntimeConfig{}
-
-	tcs := []struct {
-		name string
-		addr string
-		want bool
-	}{
-		{"blocking rule", "192.0.2.1", true},
-		{"allowing rule", "198.51.100.1", false},
-		{"no rule", "203.0.113.1", false},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			sel, err := SelectRule(
-				context.Background(), rs, nil, base, "", ips(tc.addr),
-			)
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, sel.Blocked())
 		})
 	}
 }
 
 func TestSelectRule_NilRuleSet(t *testing.T) {
 	base := &config.RuntimeConfig{}
-	resolver := &fakeResolver{addrs: []netip.Addr{netip.MustParseAddr("192.0.2.1")}}
 
-	sel, err := SelectRule(
-		context.Background(), nil, resolver, base, "example.com", nil,
+	matched, cfg := SelectRule(nil, base, "example.com", ips("192.0.2.1"))
+
+	assert.Nil(t, matched)
+	assert.Same(t, base, cfg)
+}
+
+func TestSelectRule_NameOnlyGivesLookupConfig(t *testing.T) {
+	rs := newRuleSet(t,
+		selectionRule("domain", 10, []string{"example.com"}, nil),
+		selectionRule("addr", 20, nil, []string{"0.0.0.0/0"}),
 	)
-	require.NoError(t, err)
 
-	assert.Nil(t, sel.Rule)
-	assert.Same(t, base, sel.Config)
-	assert.False(t, sel.Blocked())
-	if assert.Len(t, resolver.lookups, 1) {
-		assert.Same(t, &base.DNS, resolver.lookups[0].opts)
+	tcs := []struct {
+		name    string
+		host    string
+		wantDNS string // HTTPSURL tag of the config's DNS options
+	}{
+		{"domain match gives the domain rule's config", "example.com", "domain"},
+		{"no domain match gives base", "other.test", "base"},
 	}
-	assert.Equal(t, ips("192.0.2.1")[0].To4(), sel.Addrs[0].To4())
-}
 
-func TestSelectRule_ResolverError(t *testing.T) {
-	errLookup := errors.New("lookup failed")
-	resolver := &fakeResolver{err: errLookup}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			base := &config.RuntimeConfig{}
+			base.DNS.HTTPSURL = "base"
 
-	_, err := SelectRule(
-		context.Background(),
-		rule.NewRuleSet(),
-		resolver,
-		&config.RuntimeConfig{},
-		"example.com",
-		nil,
-	)
+			_, cfg := SelectRule(rs, base, tc.host, nil)
 
-	assert.Same(t, errLookup, err)
-}
-
-func TestSelectRule_NoNameOrAddress(t *testing.T) {
-	resolver := &fakeResolver{}
-
-	for _, host := range []string{"", "::"} {
-		t.Run(host, func(t *testing.T) {
-			_, err := SelectRule(
-				context.Background(),
-				rule.NewRuleSet(),
-				resolver,
-				&config.RuntimeConfig{},
-				host,
-				nil,
-			)
-			if host == "" {
-				assert.Error(t, err)
-			} else {
-				// An IP literal name is an address.
-				assert.NoError(t, err)
+			assert.Equal(t, tc.wantDNS, cfg.DNS.HTTPSURL)
+			if tc.wantDNS == "base" {
+				assert.Same(t, base, cfg)
 			}
 		})
 	}
-	assert.Empty(t, resolver.lookups)
 }

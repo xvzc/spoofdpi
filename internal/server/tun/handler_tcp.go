@@ -74,11 +74,10 @@ func (h *TCPHandler) Handle(
 		return
 	}
 
-	sel, ok := h.selectRule(ctx, logger, "", dst)
+	cfg, ok := h.selectRule(logger, "", dst)
 	if !ok {
 		return
 	}
-	cfg := sel.Config
 
 	rConn, err := netutil.DialFastest(
 		ctx, dst, "tcp", cfg.Conn.TCPTimeout, sysNet.BindDialer,
@@ -139,11 +138,10 @@ func (h *TCPHandler) handleTLS(
 	logger.Trace().Str("value", dst.Host).Msg("extracted sni field")
 
 	// The SNI is matched as the domain name.
-	sel, ok := h.selectRule(ctx, logger, dst.Host, dst)
+	cfg, ok := h.selectRule(logger, dst.Host, dst)
 	if !ok {
 		return nil
 	}
-	cfg := sel.Config
 
 	// Dial Remote
 	h.desyncer.PrepareHopTrack(dst.Addrs, &cfg.HTTPS)
@@ -191,27 +189,21 @@ func (h *TCPHandler) handleTLS(
 }
 
 // selectRule selects the rule for dst, matching name as its domain name
-// when it is not empty. ok is false when the connection must not be
-// dialed: the rule blocks it, or no rule could be selected.
+// when it is not empty, and returns the config to apply. ok is false when
+// the rule blocks the connection, so it must not be dialed.
 func (h *TCPHandler) selectRule(
-	ctx context.Context,
 	logger zerolog.Logger,
 	name string,
 	dst *netutil.Destination,
-) (sel server.Selection, ok bool) {
-	// dst always has its address, so nothing is resolved.
-	sel, err := server.SelectRule(ctx, h.ruleSet, nil, h.cfg, name, dst.Addrs)
-	if err != nil {
-		logger.Error().Err(err).Msg("failed to select rule")
-		return sel, false
+) (cfg *config.RuntimeConfig, ok bool) {
+	matched, cfg := server.SelectRule(h.ruleSet, h.cfg, name, dst.Addrs)
+	if matched != nil {
+		logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
 	}
-	if sel.Rule != nil {
-		logger.Trace().RawJSON("summary", sel.Rule.JSON()).Msg("match")
-	}
-	if sel.Blocked() {
+	if matched != nil && matched.Block {
 		logger.Debug().Msg("request is blocked by policy")
-		return sel, false
+		return cfg, false
 	}
 
-	return sel, true
+	return cfg, true
 }

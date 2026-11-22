@@ -132,6 +132,13 @@ func TestHTTPProxy_HandleNewConnection_RuleSelection(t *testing.T) {
 			wantLookup: "rule",
 		},
 		{
+			name:        "empty host is a bad gateway",
+			host:        "",
+			resolver:    &fakeResolver{},
+			wantReply:   "HTTP/1.1 502",
+			wantLogPart: "dns lookup failed for ",
+		},
+		{
 			name:        "ip literal is not looked up",
 			host:        "192.0.2.1",
 			resolver:    &fakeResolver{},

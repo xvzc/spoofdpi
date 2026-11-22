@@ -156,11 +156,7 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 		Str("from", conn.RemoteAddr().String()).
 		Msg("new request")
 
-	if net.ParseIP(host) != nil {
-		logger.Trace().Msgf("skipping dns lookup for non-domain host %q", host)
-	}
-
-	sel, err := server.SelectRule(ctx, p.ruleSet, p.resolver, p.cfg, host, nil)
+	addrs, err := p.resolveHost(ctx, logger, host)
 	if err != nil {
 		_ = proto.HTTPBadGatewayResponse().Write(conn)
 		logger.Error().Err(err).Msgf("dns lookup failed for %s", host)
@@ -168,9 +164,11 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 		return
 	}
 
+	matched, _ := server.SelectRule(p.ruleSet, p.cfg, host, addrs)
+
 	dst := &netutil.Destination{
 		Host:  host,
-		Addrs: sel.Addrs,
+		Addrs: addrs,
 		Port:  dstPort,
 	}
 
@@ -183,20 +181,20 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 		}
 	}
 
-	if sel.Rule != nil && logger.GetLevel() == zerolog.TraceLevel {
-		logger.Trace().RawJSON("summary", sel.Rule.JSON()).Msg("match")
+	if matched != nil && logger.GetLevel() == zerolog.TraceLevel {
+		logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
 	}
 
-	if sel.Blocked() {
+	if matched != nil && matched.Block {
 		logger.Debug().Msg("request is blocked by policy")
 		return
 	}
 
 	var handleErr error
 	if req.IsConnectMethod() {
-		handleErr = p.httpsHandler.HandleRequest(ctx, conn, dst, sel.Rule)
+		handleErr = p.httpsHandler.HandleRequest(ctx, conn, dst, matched)
 	} else {
-		handleErr = p.httpHandler.HandleRequest(ctx, conn, req, dst, sel.Rule)
+		handleErr = p.httpHandler.HandleRequest(ctx, conn, req, dst, matched)
 	}
 
 	if handleErr == nil { // Early exit if no error found
@@ -204,4 +202,30 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 	}
 
 	logger.Warn().Err(handleErr).Msg("error handling request")
+}
+
+// resolveHost returns the addresses of host: host itself when it is an IP
+// literal, else the addresses p.resolver resolves it to with the DNS options
+// of the domain rule it matches, else with the base ones.
+func (p *HTTPProxy) resolveHost(
+	ctx context.Context,
+	logger zerolog.Logger,
+	host string,
+) ([]net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		logger.Trace().Msgf("skipping dns lookup for non-domain host %q", host)
+		return []net.IP{ip}, nil
+	}
+	if host == "" {
+		return nil, errors.New("no host to look up")
+	}
+
+	// Matching the host alone gives the DNS options to resolve it with.
+	_, hostCfg := server.SelectRule(p.ruleSet, p.cfg, host, nil)
+	resolved, err := p.resolver.Resolve(ctx, &hostCfg.DNS, host)
+	if err != nil {
+		return nil, err
+	}
+
+	return netutil.IPsFromAddrs(resolved), nil
 }

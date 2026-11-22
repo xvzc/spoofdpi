@@ -45,21 +45,16 @@ func (h *UDPHandler) Handle(
 
 	logger := logging.WithLocalScope(ctx, h.logger, "udp")
 
-	// Addr-based rule matching; no name is given, so nothing is resolved.
-	sel, err := server.SelectRule(ctx, h.ruleSet, nil, h.cfg, "", dst.Addrs)
-	if err != nil {
-		logger.Error().Err(err).Msg("failed to select rule")
-		return
+	// Addr-based rule matching; no name is given.
+	matched, cfg := server.SelectRule(h.ruleSet, h.cfg, "", dst.Addrs)
+	if matched != nil {
+		logger.Trace().RawJSON("summary", matched.JSON()).Msg("match")
 	}
-	if sel.Rule != nil {
-		logger.Trace().RawJSON("summary", sel.Rule.JSON()).Msg("match")
-	}
-	if sel.Blocked() {
+	if matched != nil && matched.Block {
 		// Returning closes lConn, which ends the flow.
 		logger.Debug().Msg("request is blocked by policy")
 		return
 	}
-	cfg := sel.Config
 
 	// Register destination for TTL learning when fakes will be sent.
 	h.desyncer.PrepareHopTrack(dst.Addrs, &cfg.UDP)
