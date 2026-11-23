@@ -177,3 +177,37 @@ func TestDiscoverRoute_NoIPv4Route(t *testing.T) {
 	require.ErrorIs(t, err, ErrNoIPv4Route)
 	require.ErrorIs(t, err, noGateway)
 }
+
+func TestRoute_GatewayString(t *testing.T) {
+	tcs := []struct {
+		name  string
+		route Route
+		want  string
+	}{
+		{
+			name:  "ipv4",
+			route: Route{Family: FamilyV4, Gateway: net.ParseIP("192.168.1.1")},
+			want:  "192.168.1.1",
+		},
+		{
+			name:  "ipv6 global",
+			route: Route{Family: FamilyV6, Gateway: net.ParseIP("2001:db8::1")},
+			want:  "2001:db8::1",
+		},
+		{
+			name: "ipv6 link-local with zone",
+			route: Route{
+				Family:  FamilyV6,
+				Gateway: net.ParseIP("fe80::1"),
+				Zone:    "en0",
+			},
+			want: "fe80::1%en0",
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.route.GatewayString())
+		})
+	}
+}

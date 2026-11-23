@@ -16,11 +16,32 @@ var ErrNoIPv4Route = errors.New("no IPv4 default route")
 // replace it to fake the routing table.
 var discoverGateway = gw.DiscoverGateway
 
-// Route represents the default network route.
+// Route represents the default network route of one address family.
 type Route struct {
-	Iface   net.Interface
+	Family Family
+	Iface  net.Interface
+	// LocalIP is the address of Iface on the route. It is nil for IPv6.
 	LocalIP net.IP
 	Gateway net.IP
+	// Zone is the zone of Gateway, Iface's name, when Gateway is an IPv6
+	// link-local address, and empty otherwise.
+	Zone string
+}
+
+// Routes holds the default route of each address family. Either is nil
+// when it was not discovered.
+type Routes struct {
+	V4 *Route
+	V6 *Route
+}
+
+// GatewayString returns the gateway address with its zone, if any, such
+// as "192.168.1.1" or "fe80::1%en0".
+func (r *Route) GatewayString() string {
+	if r.Zone == "" {
+		return r.Gateway.String()
+	}
+	return r.Gateway.String() + "%" + r.Zone
 }
 
 // DiscoverInterface discovers the interface of the default route and its
@@ -59,6 +80,7 @@ func DiscoverRoute(gateway net.IP) (*Route, error) {
 	}
 
 	return &Route{
+		Family:  FamilyV4,
 		Iface:   *iface,
 		LocalIP: localIP,
 		Gateway: gwIP,
@@ -111,6 +133,7 @@ func routeForGateway(gateway net.IP) (*Route, error) {
 	}
 
 	return &Route{
+		Family:  FamilyV4,
 		Iface:   *iface,
 		LocalIP: localIP,
 		Gateway: gateway,
