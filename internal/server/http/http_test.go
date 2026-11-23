@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -733,6 +734,12 @@ func TestHTTPProxy_HandleNewConnection_PlainUpgradeTunnels(t *testing.T) {
 // for longer than any timeout a test sets, until the connect is canceled.
 func startUnreachableTCP(t *testing.T) *net.TCPAddr {
 	t.Helper()
+
+	// FreeBSD (syncookies on by default) completes or fails a connect to a
+	// listener with a full backlog at once, so no connect hangs there.
+	if runtime.GOOS == "freebsd" {
+		t.Skip("a full listen backlog does not stall connects on FreeBSD")
+	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
