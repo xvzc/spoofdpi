@@ -5,6 +5,7 @@ package netutil
 import (
 	"net/netip"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -95,6 +96,14 @@ func TestRouteTo_MatchesRouteCommand(t *testing.T) {
 			)
 			assert.Equal(t, want.iface, got.Iface.Name)
 			assert.Equal(t, want.gateway, got.Gateway)
+
+			// The probe has no route of its own, so the kernel used a
+			// default route, whose link defaultLinks must list.
+			links, err := defaultLinks(tc.fam)
+			require.NoError(t, err)
+			assert.True(t, slices.ContainsFunc(links, func(l LinkInfo) bool {
+				return l.Index == got.Iface.Index
+			}), "defaults %v lack %s", links, got.Iface.Name)
 		})
 	}
 }
