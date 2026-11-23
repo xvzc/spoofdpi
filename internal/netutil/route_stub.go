@@ -1,3 +1,5 @@
+//go:build !darwin && !freebsd
+
 package netutil
 
 import (
