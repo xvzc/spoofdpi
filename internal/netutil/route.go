@@ -9,7 +9,8 @@ import (
 )
 
 // ErrNoIPv4Route is returned, wrapped, by DiscoverRoute when the OS has no
-// IPv4 default route, for example on an IPv6-only network.
+// IPv4 default route, for example on an IPv6-only network, and by RouteTo
+// when the kernel has no route to an IPv4 destination.
 var ErrNoIPv4Route = errors.New("no IPv4 default route")
 
 // discoverGateway returns the gateway of the IPv4 default route. Tests
@@ -20,8 +21,10 @@ var discoverGateway = gw.DiscoverGateway
 type Route struct {
 	Family Family
 	Iface  net.Interface
-	// LocalIP is the address of Iface on the route. It is nil for IPv6.
+	// LocalIP is the address of Iface on the route, or nil when it is not
+	// known. DiscoverRoute sets it only for IPv4.
 	LocalIP net.IP
+	// Gateway is nil for an interface route, which has no gateway.
 	Gateway net.IP
 	// Zone is the zone of Gateway, Iface's name, when Gateway is an IPv6
 	// link-local address, and empty otherwise.
