@@ -24,7 +24,7 @@ type tunNetworkInfoFreeBSD struct {
 	PhysIfaceCIDR    string
 	TUNName          string
 	TunLocalIP       string
-	TunRemoteIP      string
+	TunPrefixLen     int
 	RouteTargetCIDRs []string
 	IPv6Enabled      bool
 	HasIPv6Egress    bool
@@ -64,13 +64,15 @@ func collectNetworkInfo(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get %dth ip in %s: %w", 1, cidr, err)
 	}
-	tunRemoteIP, err := netutil.AddrInCIDR(cidr, 2)
+	_, tunNet, err := net.ParseCIDR(cidr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get %dth ip in %s: %w", 2, cidr, err)
+		return nil, fmt.Errorf("failed to parse safe subnet %s: %w", cidr, err)
 	}
+	tunPrefixLen, _ := tunNet.Mask.Size()
 
-	_, tunCIDR, _ := net.ParseCIDR(tunLocalIP + "/30")
-	routeTargetCIDRs := []string{tunCIDR.String(), "0.0.0.0/1", "128.0.0.0/1"}
+	// The TUN's own /30 needs no route job: the address below is set with
+	// its prefix length, so the kernel adds the 10.x.y.0/30 interface route.
+	routeTargetCIDRs := []string{"0.0.0.0/1", "128.0.0.0/1"}
 
 	// Runs before the TUN routes exist, so it sees the system's own route.
 	_, hasIPv6Egress := netutil.IPv6Egress()
@@ -82,7 +84,7 @@ func collectNetworkInfo(
 		PhysIfaceCIDR:    physIfaceCIDR,
 		TUNName:          tunName,
 		TunLocalIP:       tunLocalIP,
-		TunRemoteIP:      tunRemoteIP,
+		TunPrefixLen:     tunPrefixLen,
 		RouteTargetCIDRs: routeTargetCIDRs,
 		IPv6Enabled:      sysNet.ipv6Enabled,
 		HasIPv6Egress:    hasIPv6Egress,
@@ -102,13 +104,17 @@ func (n *tunSystemNetworkFreeBSD) BuildJobs() ([]server.NetworkJob, error) {
 func buildJobs(info *tunNetworkInfoFreeBSD) []server.NetworkJob {
 	var jobs []server.NetworkJob
 
+	// wireguard-go puts the FreeBSD tun into IFF_BROADCAST mode, so a
+	// destination address would be ignored and ifconfig would fall back to
+	// the classful mask: 10.0.0.0/8 would then be routed into the TUN. Set
+	// the /30 chosen by FindSafeCIDR explicitly instead.
 	jobs = append(jobs, server.NetworkJob{
 		Description: "configure TUN interface address",
 		Apply: fmt.Sprintf(
-			"ifconfig %s %s %s up",
+			"ifconfig %s inet %s/%d up",
 			info.TUNName,
 			info.TunLocalIP,
-			info.TunRemoteIP,
+			info.TunPrefixLen,
 		),
 		Reset: fmt.Sprintf("ifconfig %s destroy", info.TUNName),
 	})

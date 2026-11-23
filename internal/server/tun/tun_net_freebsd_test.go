@@ -13,7 +13,7 @@ func TestBuildJobs_FreeBSD(t *testing.T) {
 	ipv4Jobs := []server.NetworkJob{
 		{
 			Description: "configure TUN interface address",
-			Apply:       "ifconfig tun-spoofdpi 10.200.0.1 10.200.0.2 up",
+			Apply:       "ifconfig tun-spoofdpi inet 10.200.0.1/30 up",
 			Reset:       "ifconfig tun-spoofdpi destroy",
 		},
 		{
@@ -25,11 +25,6 @@ func TestBuildJobs_FreeBSD(t *testing.T) {
 			Description: "add FIB default route",
 			Apply:       "route add default 192.168.1.1 -fib 3",
 			Reset:       "route delete default -fib 3",
-		},
-		{
-			Description: "add CIDR route 10.200.0.0/30 via TUN",
-			Apply:       "route -n add -net 10.200.0.0/30 -interface tun-spoofdpi",
-			Reset:       "route -n delete -net 10.200.0.0/30 -interface tun-spoofdpi",
 		},
 		{
 			Description: "add CIDR route 0.0.0.0/1 via TUN",
@@ -75,9 +70,8 @@ func TestBuildJobs_FreeBSD(t *testing.T) {
 				PhysIfaceCIDR: "192.168.1.0/24",
 				TUNName:       "tun-spoofdpi",
 				TunLocalIP:    "10.200.0.1",
-				TunRemoteIP:   "10.200.0.2",
+				TunPrefixLen:  30,
 				RouteTargetCIDRs: []string{
-					"10.200.0.0/30",
 					"0.0.0.0/1",
 					"128.0.0.0/1",
 				},
