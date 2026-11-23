@@ -90,6 +90,7 @@ func (p *HTTPProxy) Serve(ctx context.Context) error {
 func (p *HTTPProxy) SetupNetworkJobs(ctx context.Context) (string, error) {
 	if err := server.SetupSystemProxy(
 		ctx,
+		p.logger,
 		"PROXY "+server.PACProxyHostPort(p.listenAddr),
 		StateFile,
 	); err != nil {

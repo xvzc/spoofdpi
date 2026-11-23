@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
@@ -20,6 +21,7 @@ import (
 // closed when ctx is done.
 func SetupSystemProxy(
 	ctx context.Context,
+	logger zerolog.Logger,
 	pacDirective string,
 	stateFile string,
 ) error {
@@ -31,7 +33,7 @@ func SetupSystemProxy(
 	if err != nil {
 		return fmt.Errorf("error creating pac server: %w", err)
 	}
-	jobs, err := buildSysProxyJobs(pacURL)
+	jobs, err := buildSysProxyJobs(logger, pacURL)
 	if err != nil {
 		_ = pac.Close()
 		return err
@@ -89,10 +91,19 @@ func getNetworkServiceFromInterface(ifaceName string) (string, error) {
 	return strings.TrimSpace(match[1]), nil
 }
 
-func buildSysProxyJobs(pacURL string) ([]NetworkJob, error) {
-	iface, _, err := netutil.DiscoverInterface()
+func buildSysProxyJobs(logger zerolog.Logger, pacURL string) ([]NetworkJob, error) {
+	// A full-tunnel VPN holds the primary default; the network service to
+	// configure is still the one of the physical interface.
+	iface, skipped, err := netutil.PrimaryInterface()
 	if err != nil {
 		return nil, err
+	}
+	if skipped != nil {
+		logger.Debug().
+			Str("primary", skipped.Name).
+			Str("link", skipped.Kind.String()).
+			Str("iface", iface.Name).
+			Msg("primary default is not physical; using the physical default")
 	}
 
 	service, err := getNetworkServiceFromInterface(iface.Name)

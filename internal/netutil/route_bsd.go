@@ -5,6 +5,7 @@ package netutil
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"sync/atomic"
@@ -44,6 +45,80 @@ func routeTo(dst netip.Addr) (kernelRoute, error) {
 		return kernelRoute{}, fmt.Errorf("route lookup %s: %w", dst, err)
 	}
 	return kernelRouteFromReply(m, dst)
+}
+
+// PrimaryInterface returns the physical interface of the host's IPv4
+// default route. It starts from the primary default, as
+// `route -n get default` reports it: the kernel's exact, unscoped match
+// for 0.0.0.0/0. When that route's link is not physical, such as the utun
+// of a full-tunnel VPN, it returns the interface of the first physical
+// IPv4 default instead, which may be interface-scoped, and skipped is the
+// primary link it passed over; skipped is nil otherwise. Without a
+// physical default the primary interface is returned as is.
+func PrimaryInterface() (iface *net.Interface, skipped *LinkInfo, err error) {
+	index, err := primaryDefaultIndex()
+	if err != nil {
+		return nil, nil, fmt.Errorf("primary interface: %w", err)
+	}
+	primary, err := linkInfo(index)
+	if err != nil {
+		return nil, nil, fmt.Errorf("primary interface: %w", err)
+	}
+	var defaults []LinkInfo
+	if primary.Kind != LinkPhysical {
+		defaults, err = defaultLinks(FamilyV4)
+		if err != nil {
+			return nil, nil, fmt.Errorf("primary interface: %w", err)
+		}
+	}
+
+	chosen, fellBack := choosePrimaryLink(primary, defaults)
+	iface, err = interfaceByIndex(chosen.Index)
+	if err != nil {
+		return nil, nil, fmt.Errorf("primary interface %d: %w", chosen.Index, err)
+	}
+	if fellBack {
+		return iface, &primary, nil
+	}
+	return iface, nil, nil
+}
+
+// primaryDefaultIndex returns the interface index of the primary IPv4
+// default route.
+func primaryDefaultIndex() (int, error) {
+	addrs := []route.Addr{
+		unix.RTAX_DST:     &route.Inet4Addr{},
+		unix.RTAX_NETMASK: &route.Inet4Addr{},
+		unix.RTAX_IFP:     &route.LinkAddr{},
+	}
+	m, err := rtmGet(unix.AF_INET, unix.RTF_UP, addrs)
+	if errors.Is(err, errRTMNotFound) {
+		return 0, ErrNoIPv4Route
+	}
+	if err != nil {
+		return 0, err
+	}
+	kr, err := kernelRouteFromReply(m, netip.IPv4Unspecified())
+	if err != nil {
+		return 0, err
+	}
+	return kr.ifIndex, nil
+}
+
+// choosePrimaryLink returns primary when it is physical, and otherwise the
+// first physical link among defaults, the links of the IPv4 default
+// routes, with fellBack set. Without one it returns primary.
+func choosePrimaryLink(
+	primary LinkInfo,
+	defaults []LinkInfo,
+) (_ LinkInfo, fellBack bool) {
+	if primary.Kind == LinkPhysical {
+		return primary, false
+	}
+	if phys, ok := otherPhysical(primary, defaults); ok {
+		return phys, true
+	}
+	return primary, false
 }
 
 // rtmGet sends one RTM_GET request with flags and addrs over a routing

@@ -271,6 +271,65 @@ func TestKernelRouteFromReply_Errors(t *testing.T) {
 	assert.Contains(t, err.Error(), "no output interface")
 }
 
+func TestChoosePrimaryLink(t *testing.T) {
+	en0 := LinkInfo{Index: 4, Name: "en0", Kind: LinkPhysical}
+	en1 := LinkInfo{Index: 5, Name: "en1", Kind: LinkPhysical}
+	utun := LinkInfo{Index: 20, Name: "utun4", Kind: LinkVPN}
+	ppp := LinkInfo{Index: 9, Name: "ppp0", Kind: LinkPPP}
+	unknown := LinkInfo{Index: 30, Name: "x0", Kind: LinkUnknown}
+
+	tcs := []struct {
+		name         string
+		primary      LinkInfo
+		defaults     []LinkInfo
+		want         LinkInfo
+		wantFellBack bool
+	}{
+		{
+			name:     "physical primary",
+			primary:  en0,
+			defaults: []LinkInfo{utun, en1},
+			want:     en0,
+		},
+		{
+			name:         "vpn primary falls back to the scoped physical default",
+			primary:      utun,
+			defaults:     []LinkInfo{utun, en0, en1},
+			want:         en0,
+			wantFellBack: true,
+		},
+		{
+			name:         "ppp primary next to a physical default",
+			primary:      ppp,
+			defaults:     []LinkInfo{ppp, en1},
+			want:         en1,
+			wantFellBack: true,
+		},
+		{
+			name:         "unknown primary next to a physical default",
+			primary:      unknown,
+			defaults:     []LinkInfo{en0},
+			want:         en0,
+			wantFellBack: true,
+		},
+		{
+			name:     "vpn primary without a physical default",
+			primary:  utun,
+			defaults: []LinkInfo{utun},
+			want:     utun,
+		},
+		{name: "ppp uplink alone", primary: ppp, defaults: []LinkInfo{ppp}, want: ppp},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			got, fellBack := choosePrimaryLink(tc.primary, tc.defaults)
+			assert.Equal(t, tc.want, got)
+			assert.Equal(t, tc.wantFellBack, fellBack)
+		})
+	}
+}
+
 func TestRouteAddr(t *testing.T) {
 	assert.Equal(t, inet4("192.0.2.1"), routeAddr(netip.MustParseAddr("192.0.2.1")))
 	assert.Equal(t, inet6("2001:db8::1"), routeAddr(netip.MustParseAddr("2001:db8::1")))

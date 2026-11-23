@@ -96,6 +96,7 @@ func (p *SOCKS5Proxy) Serve(ctx context.Context) error {
 func (p *SOCKS5Proxy) SetupNetworkJobs(ctx context.Context) (string, error) {
 	if err := server.SetupSystemProxy(
 		ctx,
+		p.logger,
 		"SOCKS5 "+server.PACProxyHostPort(p.listenAddr),
 		StateFile,
 	); err != nil {

@@ -107,3 +107,25 @@ func TestRouteTo_MatchesRouteCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestPrimaryInterface_MatchesRouteCommand(t *testing.T) {
+	want, ok := routeGet(t, "default")
+	got, skipped, err := PrimaryInterface()
+	if !ok {
+		require.ErrorIs(t, err, ErrNoIPv4Route)
+		t.Skip("route reports no default route")
+	}
+	require.NoError(t, err)
+	if skipped != nil {
+		// A VPN holds the primary default; route reports its interface.
+		t.Logf(
+			"route: iface=%s; PrimaryInterface: %s, skipped %s",
+			want.iface, got.Name, describeLink(*skipped),
+		)
+		assert.Equal(t, want.iface, skipped.Name)
+		assert.NotEqual(t, want.iface, got.Name)
+		return
+	}
+	t.Logf("route: iface=%s; PrimaryInterface: %s", want.iface, got.Name)
+	assert.Equal(t, want.iface, got.Name)
+}
