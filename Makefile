@@ -1,6 +1,8 @@
 .PHONY: build test test-unit test-network test-root test-e2e test-all lint fmt fmt-check pre-commit
 
-E2E_BIN := $(CURDIR)/out/e2e/spoofdpi
+# The e2e binary, relative to the repository root. The recipes make it
+# absolute with the shell, so the Makefile works with GNU and BSD make.
+E2E_BIN = out/e2e/spoofdpi
 
 build:
 	go build ./cmd/...
@@ -26,11 +28,11 @@ test-root:
 # without root, then run proxy and TUN mode as root. Pass test flags such as
 # -url with E2E_ARGS.
 test-e2e:
-	mkdir -p $(dir $(E2E_BIN))
+	mkdir -p out/e2e
 	go build -o $(E2E_BIN) ./cmd/spoofdpi
-	go test -tags e2e -count=1 -v -run NonRoot ./test/e2e/ -args -bin=$(E2E_BIN) $(E2E_ARGS)
+	go test -tags e2e -count=1 -v -run NonRoot ./test/e2e/ -args -bin="$$(pwd)/$(E2E_BIN)" $(E2E_ARGS)
 	sudo -v
-	go test -exec sudo -tags e2e -count=1 -v -run RequireRoot ./test/e2e/ -args -bin=$(E2E_BIN) $(E2E_ARGS)
+	go test -exec sudo -tags e2e -count=1 -v -run RequireRoot ./test/e2e/ -args -bin="$$(pwd)/$(E2E_BIN)" $(E2E_ARGS)
 
 # Everything a change to fake packets, capture, routes, or TUN setup needs.
 test-all: test test-root test-e2e

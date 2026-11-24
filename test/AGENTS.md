@@ -18,9 +18,9 @@ root-privileged tests: <ok or FAIL line per package that ran tests>
   skips: <--- SKIP lines with their reason>
 nonroot: <--- PASS/FAIL line>
 e2e: <ok or FAIL line>
-  <--- PASS/FAIL line per check, with its logged evidence>
+  <--- PASS/FAIL line per check, with the evidence it logs>
 artifacts: <paths>
-left running: <pgrep output, or none>
+left running: <pgrep -lx spoofdpi output, or none>
 ```
 
 Do not summarize a failure away: add the evidence from the artifacts. A `SKIP` is

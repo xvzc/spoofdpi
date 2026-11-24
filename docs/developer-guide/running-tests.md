@@ -63,7 +63,7 @@ $ sudo -v
 $ go test -exec sudo -tags network -count=1 -v -run RequireRoot ./internal/...
 ```
 
-Running `sudo -v` first caches your credentials, so the test binaries don't each ask for the password. Keep `-run RequireRoot`: without it, every test in `./internal/...` runs as root.
+Running `sudo -v` first caches your credentials, so the test binaries don't each ask for the password. Without a terminal, such as over a non-interactive SSH session, sudo may not cache them; then set `SUDO_ASKPASS` to a program that prints the password and use `-exec "sudo -A"` instead of `-exec sudo`. Keep `-run RequireRoot`: without it, every test in `./internal/...` runs as root.
 
 ## End-to-End Tests
 
@@ -128,4 +128,4 @@ Some failures come from the network, not from spoofdpi:
 - Do not change routes, rules, FIBs, or interfaces by hand, and do not edit a test to make a check pass. If a check fails, stop and keep the evidence; rerun once only for the network-caused failures above, and keep both results.
 - Never drop `-run RequireRoot` from a command that uses `-exec sudo`.
 - When a TUN run does not reset, keep the state file path and `reset.diff`, and report them before anyone touches the routes.
-- Leave nothing running: check with `pgrep -fl spoofdpi` at the end.
+- Leave nothing running: check with `pgrep -lx spoofdpi` at the end.

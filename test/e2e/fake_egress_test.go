@@ -65,6 +65,11 @@ func TestFakeEgress_NonRoot(t *testing.T) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
 	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, "fake packets need root") {
+			t.Logf("error: %s", strings.TrimSpace(line))
+		}
+	}
 }
 
 func listenAddr() string { return fmt.Sprintf("127.0.0.1:%d", *portFlag) }
@@ -206,9 +211,11 @@ func runFakeEgress(t *testing.T, tun bool) {
 		if !graceful {
 			t.Fatal("no exit within 15s after SIGINT; killed")
 		}
-		if code := spoofdpi.exitCode(); code != 0 {
+		code := spoofdpi.exitCode()
+		if code != 0 {
 			t.Fatalf("exit=%d", code)
 		}
+		t.Logf("exit=%d after SIGINT", code)
 	})
 
 	// The state must be back as before.
@@ -225,6 +232,7 @@ func runFakeEgress(t *testing.T, tun bool) {
 			t.Fatalf("diff: %v: %s", err, out)
 		}
 		if len(out) == 0 {
+			t.Logf("%s and %s match", beforePath, afterPath)
 			return
 		}
 		diffPath := filepath.Join(dir, "reset.diff")
@@ -241,12 +249,14 @@ func runFakeEgress(t *testing.T, tun bool) {
 		if _, err := os.Stat(stateFile); err == nil {
 			t.Fatalf("%s still exists", stateFile)
 		}
+		t.Logf("%s removed", stateFile)
 	})
 
 	t.Run("tun-removed", func(t *testing.T) {
 		if ifaceExists(tunName) {
 			t.Fatalf("%s still exists", tunName)
 		}
+		t.Logf("%s removed", tunName)
 	})
 
 	// The test never changes routes itself.
