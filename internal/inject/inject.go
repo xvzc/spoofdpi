@@ -17,7 +17,9 @@ type Packet struct {
 	Src, Dst netip.Addr
 	// Proto is the transport protocol: 6 (TCP) or 17 (UDP).
 	Proto uint8
-	// HopLimit is the IPv4 TTL or the IPv6 hop limit.
+	// HopLimit is the IPv4 TTL or the IPv6 hop limit. It must not be 0,
+	// and a Packet with 0 is refused: an IPv6 raw socket would replace 0
+	// with the default hop limit, and the packet would reach Dst.
 	HopLimit uint8
 	// L4 is the transport header and payload, with its checksum already
 	// computed over Src and Dst.
@@ -39,9 +41,9 @@ type Options struct {
 	Control func(network, address string, c syscall.RawConn) error
 }
 
-// ErrNeedsRoot is returned, wrapped, when a raw socket cannot be opened
-// for lack of privileges.
-var ErrNeedsRoot = errors.New("fake packets need root (raw IP socket)")
+// ErrNeedsRoot is returned, wrapped, when a socket that fake packets are
+// sent through cannot be opened for lack of privileges.
+var ErrNeedsRoot = errors.New("fake packets need root")
 
 // Kind is the class of a send failure.
 type Kind uint8
