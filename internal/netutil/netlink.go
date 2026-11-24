@@ -405,3 +405,53 @@ func defaultRouteOifs(reply []netlinkMessage, fam Family) ([]int, error) {
 	}
 	return oifs, nil
 }
+
+// rtmFFibMatch is RTM_F_FIB_MATCH (Linux 4.13+): a lookup with it reports
+// the routing table entry that matched, with its prefix length in
+// rtm_dst_len, instead of the route resolved for the destination. Older
+// kernels ignore it and report a dst_len of the full address length.
+const rtmFFibMatch = 0x2000
+
+// encodeRouteFIBMatch returns an RTM_GETROUTE request for the routing
+// table entry that the kernel matches for dst (RTM_F_FIB_MATCH), resolved
+// the way a socket connected to dst would be (no dump).
+func encodeRouteFIBMatch(seq uint32, dst netip.Addr) []byte {
+	addr := dst.AsSlice()
+	attrs := appendAttr(nil, rtaDst, addr)
+
+	b := appendNetlinkHeader(nil, rtmsgLen+len(attrs), rtmGetRoute, nlmFRequest, seq)
+	b = append(b,
+		linuxFamily(familyOf(dst)), // rtm_family
+		uint8(len(addr)*8),         // rtm_dst_len
+		0, 0, 0, 0, 0, 0,           // src_len, tos, table, protocol, scope, type
+	)
+	b = binary.NativeEndian.AppendUint32(b, rtmFFibMatch)
+	return append(b, attrs...)
+}
+
+// prefixFromNetlink reads the prefix of the route that matched dst from
+// reply, the answer to encodeRouteFIBMatch. A route of another type than
+// unicast, such as blackhole, unreachable or local, counts as no route.
+func prefixFromNetlink(reply []netlinkMessage, dst netip.Addr) (netip.Prefix, error) {
+	if len(reply) != 1 || reply[0].typ != rtmNewRoute {
+		return netip.Prefix{}, fmt.Errorf("route lookup %s: no route in the reply", dst)
+	}
+	r, err := parseNetlinkRoute(reply[0].data)
+	if err != nil {
+		return netip.Prefix{}, fmt.Errorf("route lookup %s: %w", dst, err)
+	}
+	if r.family != linuxFamily(familyOf(dst)) {
+		return netip.Prefix{}, fmt.Errorf(
+			"route lookup %s: reply of address family %d", dst, r.family,
+		)
+	}
+	if r.typ != rtnUnicast {
+		return netip.Prefix{}, errNoRoute(dst)
+	}
+	if int(r.dstLen) > dst.BitLen() {
+		return netip.Prefix{}, fmt.Errorf(
+			"route lookup %s: prefix length %d is out of range", dst, r.dstLen,
+		)
+	}
+	return netip.PrefixFrom(dst, int(r.dstLen)).Masked(), nil
+}

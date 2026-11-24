@@ -23,6 +23,7 @@ func TestNetlinkConstants_MatchOS(t *testing.T) {
 	assert.Equal(t, unix.RTM_GETROUTE, rtmGetRoute)
 	assert.Equal(t, unix.SizeofRtMsg, rtmsgLen)
 	assert.Equal(t, unix.RTM_F_LOOKUP_TABLE, rtmFLookupTable)
+	assert.Equal(t, unix.RTM_F_FIB_MATCH, rtmFFibMatch)
 
 	assert.Equal(t, unix.RTA_DST, rtaDst)
 	assert.Equal(t, unix.RTA_OIF, rtaOif)

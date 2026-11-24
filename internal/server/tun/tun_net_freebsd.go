@@ -71,7 +71,7 @@ func collectNetworkInfo(
 	tunPrefixLen, _ := tunNet.Mask.Size()
 
 	// The TUN's own /30 needs no route job: the address below is set with
-	// its prefix length, so the kernel adds the 10.x.y.0/30 interface route.
+	// its prefix length, so the kernel adds the /30 interface route.
 	routeTargetCIDRs := []string{"0.0.0.0/1", "128.0.0.0/1"}
 
 	// Runs before the TUN routes exist, so it sees the system's own route.
@@ -106,8 +106,9 @@ func buildJobs(info *tunNetworkInfoFreeBSD) []server.NetworkJob {
 
 	// wireguard-go puts the FreeBSD tun into IFF_BROADCAST mode, so a
 	// destination address would be ignored and ifconfig would fall back to
-	// the classful mask: 10.0.0.0/8 would then be routed into the TUN. Set
-	// the /30 chosen by FindSafeCIDR explicitly instead.
+	// the classful mask, such as 10.0.0.0/8 for a 10.x.y.z address, which
+	// would then be routed into the TUN. Set the /30 chosen by FindSafeCIDR
+	// explicitly instead.
 	jobs = append(jobs, server.NetworkJob{
 		Description: "configure TUN interface address",
 		Apply: fmt.Sprintf(

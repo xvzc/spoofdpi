@@ -374,3 +374,171 @@ func TestKernelRouteFromNetlink_Errors(t *testing.T) {
 		})
 	}
 }
+
+func TestEncodeRouteFIBMatch(t *testing.T) {
+	t.Run("ipv4", func(t *testing.T) {
+		b := encodeRouteFIBMatch(7, netip.MustParseAddr("10.0.0.1"))
+		msgs, err := parseNetlinkMessages(b)
+		require.NoError(t, err)
+		require.Len(t, msgs, 1)
+		m := msgs[0]
+		assert.Equal(t, uint16(rtmGetRoute), m.typ)
+		assert.Equal(t, uint16(nlmFRequest), m.flags, "a lookup, not a dump")
+		assert.Equal(t, uint32(7), m.seq)
+		assert.Equal(t, len(b), int(binary.NativeEndian.Uint32(b[0:4])))
+
+		require.Len(t, m.data, rtmsgLen+8)
+		assert.Equal(t, []byte{linuxAFInet, 32, 0, 0, 0, 0, 0, 0}, m.data[:8])
+		assert.Equal(t, uint32(rtmFFibMatch), binary.NativeEndian.Uint32(m.data[8:12]))
+		assert.Equal(t, nlAttr(rtaDst, nlAddr("10.0.0.1")), m.data[rtmsgLen:])
+	})
+
+	t.Run("ipv6", func(t *testing.T) {
+		b := encodeRouteFIBMatch(8, netip.MustParseAddr("2001:db8::1"))
+		msgs, err := parseNetlinkMessages(b)
+		require.NoError(t, err)
+		require.Len(t, msgs, 1)
+		data := msgs[0].data
+		assert.Equal(t, []byte{linuxAFInet6, 128}, data[:2])
+		assert.Equal(t, uint32(rtmFFibMatch), binary.NativeEndian.Uint32(data[8:12]))
+		assert.Equal(t, nlAttr(rtaDst, nlAddr("2001:db8::1")), data[rtmsgLen:])
+	})
+}
+
+// TestPrefixFromNetlink decodes RTM_NEWROUTE replies laid out the way the
+// kernel answers an RTM_F_FIB_MATCH lookup: the matched entry, with its
+// own rtm_dst_len and RTA_DST, and no RTA_DST for a default route.
+func TestPrefixFromNetlink(t *testing.T) {
+	reply := func(payload []byte) []netlinkMessage {
+		return []netlinkMessage{{typ: rtmNewRoute, data: payload}}
+	}
+
+	tcs := []struct {
+		name    string
+		dst     string
+		payload []byte
+		want    string
+	}{
+		{
+			name: "default route",
+			dst:  "10.0.0.1",
+			payload: nlRoute(linuxAFInet, 0, 254, rtnUnicast,
+				nlAttr(rtaTable, nlU32(254)),
+				nlAttr(rtaGateway, nlAddr("10.0.2.2")),
+				nlAttr(rtaOif, nlU32(2)),
+			),
+			want: "0.0.0.0/0",
+		},
+		{
+			name: "vpn route to 10.0.0.0/8",
+			dst:  "10.1.2.1",
+			payload: nlRoute(linuxAFInet, 8, 254, rtnUnicast,
+				nlAttr(rtaTable, nlU32(254)),
+				nlAttr(rtaDst, nlAddr("10.0.0.0")),
+				nlAttr(rtaOif, nlU32(7)),
+			),
+			want: "10.0.0.0/8",
+		},
+		{
+			name: "full-tunnel /1 half",
+			dst:  "192.0.2.1",
+			payload: nlRoute(linuxAFInet, 1, 254, rtnUnicast,
+				nlAttr(rtaDst, nlAddr("128.0.0.0")),
+				nlAttr(rtaOif, nlU32(7)),
+			),
+			want: "128.0.0.0/1",
+		},
+		{
+			name: "multipath route has no RTA_OIF",
+			dst:  "172.16.0.1",
+			payload: nlRoute(linuxAFInet, 12, 254, rtnUnicast,
+				nlAttr(rtaDst, nlAddr("172.16.0.0")),
+				nlAttr(rtaMultipath, []byte{8, 0, 0, 0, 2, 0, 0, 0}),
+			),
+			want: "172.16.0.0/12",
+		},
+		{
+			name: "kernel without RTM_F_FIB_MATCH reports the full length",
+			dst:  "192.0.2.1",
+			payload: nlRoute(linuxAFInet, 32, 254, rtnUnicast,
+				nlAttr(rtaDst, nlAddr("192.0.2.1")),
+				nlAttr(rtaOif, nlU32(2)),
+			),
+			want: "192.0.2.1/32",
+		},
+		{
+			name: "ipv6 route",
+			dst:  "2001:db8::1",
+			payload: nlRoute(linuxAFInet6, 32, 254, rtnUnicast,
+				nlAttr(rtaDst, nlAddr("2001:db8::")),
+				nlAttr(rtaOif, nlU32(2)),
+			),
+			want: "2001:db8::/32",
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := prefixFromNetlink(reply(tc.payload), netip.MustParseAddr(tc.dst))
+			require.NoError(t, err)
+			assert.Equal(t, netip.MustParsePrefix(tc.want), got)
+		})
+	}
+}
+
+func TestPrefixFromNetlink_Errors(t *testing.T) {
+	dst4 := netip.MustParseAddr("10.0.0.1")
+	reply := func(payload []byte) []netlinkMessage {
+		return []netlinkMessage{{typ: rtmNewRoute, data: payload}}
+	}
+
+	// Types 2 and 3 are RTN_LOCAL and RTN_BROADCAST.
+	for _, typ := range []uint8{2, 3, rtnBlackhole, rtnUnreachable, rtnProhibit, rtnThrow} {
+		_, err := prefixFromNetlink(reply(nlRoute(linuxAFInet, 8, 254, typ)), dst4)
+		assert.ErrorIs(t, err, ErrNoIPv4Route, "type %d", typ)
+	}
+	_, err := prefixFromNetlink(
+		reply(nlRoute(linuxAFInet6, 64, 254, rtnUnreachable)),
+		netip.MustParseAddr("2001:db8::1"),
+	)
+	assert.ErrorIs(t, err, ErrNoIPv6Route)
+
+	tcs := []struct {
+		name    string
+		reply   []netlinkMessage
+		wantMsg string
+	}{
+		{
+			name:    "other family",
+			reply:   reply(nlRoute(linuxAFInet6, 0, 254, rtnUnicast)),
+			wantMsg: "address family",
+		},
+		{
+			name:    "prefix length out of range",
+			reply:   reply(nlRoute(linuxAFInet, 33, 254, rtnUnicast)),
+			wantMsg: "prefix length 33 is out of range",
+		},
+		{
+			name:    "short route message",
+			reply:   reply([]byte{linuxAFInet}),
+			wantMsg: "short route message",
+		},
+		{
+			name:    "no message",
+			wantMsg: "no route in the reply",
+		},
+		{
+			name:    "not a route message",
+			reply:   []netlinkMessage{{typ: nlmsgDone}},
+			wantMsg: "no route in the reply",
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := prefixFromNetlink(tc.reply, dst4)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantMsg)
+		})
+	}
+}
