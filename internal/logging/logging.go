@@ -11,8 +11,6 @@ import (
 )
 
 const (
-	// scopeFieldName defines the key for the "scope" field in structured logs.
-	scopeFieldName      = "scope"
 	localScopeFieldName = "local_scope"
 	traceIDFieldName    = "trace_id"
 )
@@ -28,7 +26,7 @@ func SetGlobalLogger(ctx context.Context, l zerolog.Level, w io.Writer) {
 		Out:        w,
 		TimeFormat: time.RFC3339,
 		// FormatPrepare intercepts fields just before printing
-		// to apply custom formatting, like adding brackets [SCOPE] or parens (trace_id).
+		// to apply custom formatting, like the semicolon after the local scope.
 		FormatPrepare: func(m map[string]any) error {
 			if v, ok := m[traceIDFieldName].(string); ok && v != "" {
 				m[traceIDFieldName] = v
@@ -36,13 +34,6 @@ func SetGlobalLogger(ctx context.Context, l zerolog.Level, w io.Writer) {
 				// If trace_id is not present or is empty, ensure the value is an empty string
 				// to prevent zerolog from printing a nil-related error.
 				m[traceIDFieldName] = ""
-			}
-
-			if v, ok := m[scopeFieldName].(string); ok && v != "" {
-				m[scopeFieldName] = fmt.Sprintf("[%s]", v)
-			} else {
-				// Do the same for scope for consistency.
-				m[scopeFieldName] = "[app]"
 			}
 
 			if v, ok := m[localScopeFieldName].(string); ok && v != "" {
@@ -62,17 +53,15 @@ func SetGlobalLogger(ctx context.Context, l zerolog.Level, w io.Writer) {
 			return nil
 		},
 		// Exclude the raw field names since we have already formatted them
-		// in FormatPrepare. This prevents duplicate output (e.g., [SCOPE] scope="SCOPE").
+		// in FormatPrepare. This prevents duplicate output (e.g., local_scope="SCOPE").
 		FieldsExclude: []string{
 			traceIDFieldName,
-			scopeFieldName,
 			localScopeFieldName,
 		},
 		PartsOrder: []string{
 			zerolog.LevelFieldName,
 			zerolog.TimestampFieldName,
 			traceIDFieldName, // Custom fields are placed before the message.
-			scopeFieldName,
 			localScopeFieldName,
 			zerolog.MessageFieldName,
 		},
@@ -82,12 +71,6 @@ func SetGlobalLogger(ctx context.Context, l zerolog.Level, w io.Writer) {
 	logger := zerolog.New(consoleWriter).Hook(ctxHook{})
 
 	log.Logger = logger.With().Timestamp().Ctx(ctx).Logger()
-}
-
-// WithScope is a helper for components (like HttpHandler or DnsResolver)
-// to create a sub-logger with their component name.
-func WithScope(logger zerolog.Logger, scope string) zerolog.Logger {
-	return logger.With().Str(scopeFieldName, scope).Logger()
 }
 
 func WithLocalScope(

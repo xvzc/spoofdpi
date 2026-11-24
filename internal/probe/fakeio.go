@@ -87,6 +87,7 @@ func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error)
 	}
 	hops := packet.NewHopStore()
 	stack, err := packet.OpenTCPStack(
+		"",
 		zerolog.Nop(),
 		iface,
 		packet.Senders{V4: sender},

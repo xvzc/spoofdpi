@@ -84,8 +84,10 @@ func main() {
 }
 
 func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err error) {
+	// The run ID is the trace ID of every log that belongs to no connection.
+	// Connections start from their own root context, so they keep their own.
 	appctx, cancel := signal.NotifyContext(
-		mainctx,
+		logging.ContextWithTraceID(mainctx, logging.NewTraceID()),
 		syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP,
 	)
 	defer cancel()
@@ -273,7 +275,7 @@ func setupNetworkStack(
 		return
 	}
 
-	pktLogger := logging.WithScope(logger, "pkt")
+	runID, _ := logging.TraceIDFromContext(ctx)
 	hops = packet.NewHopStore()
 
 	logger.Info().Msg("network info")
@@ -294,7 +296,8 @@ func setupNetworkStack(
 
 	if cfg.NeedsTCPStack() {
 		stack, hErr := packet.OpenTCPStack(
-			pktLogger,
+			runID,
+			logger,
 			&route.Iface,
 			senders,
 			hops,
@@ -309,7 +312,8 @@ func setupNetworkStack(
 
 	if cfg.NeedsUDPStack() {
 		stack, hErr := packet.OpenUDPStack(
-			pktLogger,
+			runID,
+			logger,
 			&route.Iface,
 			senders,
 			hops,
@@ -494,7 +498,7 @@ func createServer(
 
 	// --- DNS resolver ---
 	resolver := dns.NewClient(
-		logging.WithScope(logger, "dns"),
+		logger,
 		&cfg.DNS,
 	)
 
@@ -542,7 +546,7 @@ func createServer(
 		fakeGate = packet.NewRouteGate(
 			staticGate,
 			dstFakeCheck(
-				logging.WithScope(logger, "dsn"),
+				logger,
 				startup.V4,
 				netutil.RouteTo,
 				netutil.ClassifyPath,
@@ -560,14 +564,14 @@ func createServer(
 	}
 
 	tlsDesyncer := desync.NewTLSDesyncer(
-		logging.WithScope(logger, "dsn"),
+		logger,
 		tcpWriter,
 		tcpHops,
 		seqs,
 		tcpCaps,
 	)
 	udpDesyncer := desync.NewUDPDesyncer(
-		logging.WithScope(logger, "dsn"),
+		logger,
 		udpWriter,
 		udpHops,
 		udpCaps,
@@ -576,16 +580,16 @@ func createServer(
 	switch cfg.App.Mode {
 	case config.AppModeHTTP:
 		return http.NewHTTPProxy(
-			logging.WithScope(logger, "srv"),
+			logger,
 			http.NewHTTPHandler(
-				logging.WithScope(logger, "hnd"),
+				logger,
 				resolver,
 				ruleSet,
 				cfg.App.ListenAddr,
 				&cfg.RuntimeConfig,
 			),
 			http.NewHTTPSHandler(
-				logging.WithScope(logger, "hnd"),
+				logger,
 				tlsDesyncer,
 				resolver,
 				ruleSet,
@@ -597,18 +601,18 @@ func createServer(
 
 	case config.AppModeSOCKS5:
 		return socks5.NewSOCKS5Proxy(
-			logging.WithScope(logger, "srv"),
+			logger,
 			socks5.NewConnectHandler(
-				logging.WithScope(logger, "hnd"),
+				logger,
 				tlsDesyncer,
 				resolver,
 				ruleSet,
 				cfg.App.ListenAddr,
 				&cfg.RuntimeConfig,
 			),
-			socks5.NewBindHandler(logging.WithScope(logger, "hnd")),
+			socks5.NewBindHandler(logger),
 			socks5.NewUdpAssociateHandler(
-				logging.WithScope(logger, "hnd"),
+				logger,
 				udpDesyncer,
 				resolver,
 				ruleSet,
@@ -620,7 +624,7 @@ func createServer(
 	case config.AppModeTUN:
 		logTUNNotes(logger, cfg, osRouteFinder.hasIPv6Egress(), startup.IPv6Off)
 		sysNet, err := tun.NewTUNSystemNetwork(
-			logging.WithScope(logger, "sys"),
+			logger,
 			defaultRoute,
 			cfg.App.FreebsdFIB,
 			cfg.IPv6Enabled(),
@@ -629,15 +633,15 @@ func createServer(
 			return nil, fmt.Errorf("failed to create sysnet: %w", err)
 		}
 		return tun.NewTUNServer(
-			logging.WithScope(logger, "srv"),
+			logger,
 			tun.NewTCPHandler(
-				logging.WithScope(logger, "hnd"),
+				logger,
 				tlsDesyncer,
 				ruleSet,
 				&cfg.RuntimeConfig,
 			),
 			tun.NewUDPHandler(
-				logging.WithScope(logger, "hnd"),
+				logger,
 				udpDesyncer,
 				ruleSet,
 				&cfg.RuntimeConfig,

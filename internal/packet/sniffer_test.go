@@ -1,10 +1,15 @@
 package packet
 
 import (
+	"bytes"
 	"errors"
 	"io"
+	"net"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -13,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/cache"
 	"github.com/xvzc/spoofdpi/internal/capture"
+	"github.com/xvzc/spoofdpi/internal/logging"
 )
 
 // captureHandle is a capture handle that reads nothing, accepts any
@@ -82,14 +88,20 @@ func TestSniffer_StartCapturing(t *testing.T) {
 		{
 			"tcp",
 			func(h capture.Handle) error {
-				return NewTCPSniffer(zerolog.Nop(), h, newTestHopStore(), nil).StartCapturing()
+				return NewTCPSniffer(
+					"",
+					zerolog.Nop(),
+					h,
+					newTestHopStore(),
+					nil,
+				).StartCapturing()
 			},
 			mustFilter(t, capture.SynAckFilter),
 		},
 		{
 			"udp",
 			func(h capture.Handle) error {
-				return NewUDPSniffer(zerolog.Nop(), h, newTestHopStore()).StartCapturing()
+				return NewUDPSniffer("", zerolog.Nop(), h, newTestHopStore()).StartCapturing()
 			},
 			mustFilter(t, capture.UDPFilter),
 		},
@@ -309,4 +321,101 @@ func TestHopPolicyHops(t *testing.T) {
 		p.Hops(HopEstimate{Hops: 16, Source: HopSourceLearnedOther}),
 	)
 	assert.Equal(t, uint8(8), p.Hops(HopEstimate{}))
+}
+
+// replayHandle is a capture handle that reads each of its packets once and
+// then reports the end of the capture.
+type replayHandle struct {
+	filterHandle
+	packets [][]byte
+}
+
+func (h *replayHandle) ReadPacketData() ([]byte, gopacket.CaptureInfo, error) {
+	if len(h.packets) == 0 {
+		return nil, gopacket.CaptureInfo{}, io.EOF
+	}
+	data := h.packets[0]
+	h.packets = h.packets[1:]
+	return data, gopacket.CaptureInfo{CaptureLength: len(data), Length: len(data)}, nil
+}
+
+// lockedBuffer is a log destination that the capture goroutine and the test
+// can use at the same time.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// traceIDLogger returns a logger that records the trace ID of each event's
+// context, as the application's logger does, in logs.
+func traceIDLogger(logs io.Writer) zerolog.Logger {
+	return zerolog.New(logs).Level(zerolog.TraceLevel).Hook(
+		zerolog.HookFunc(func(e *zerolog.Event, _ zerolog.Level, _ string) {
+			id, _ := logging.TraceIDFromContext(e.GetCtx())
+			e.Str("trace_id", id)
+		}),
+	)
+}
+
+func TestSniffer_CaptureLogsCarryRunID(t *testing.T) {
+	const runID = "0123456789abcdef"
+	server := net.ParseIP("203.0.113.1")
+	client := net.ParseIP("192.168.1.11")
+	hops := newTestHopStore()
+
+	tcs := []struct {
+		name  string
+		proto Proto
+		// logs is how many of the two packets log.
+		logs  int
+		start func(runID string, logger zerolog.Logger, h capture.Handle) error
+		pkt   gopacket.Packet
+	}{
+		{
+			"tcp", ProtoTCP, 2,
+			func(runID string, logger zerolog.Logger, h capture.Handle) error {
+				return NewTCPSniffer(runID, logger, h, hops, nil).StartCapturing()
+			},
+			synAck(
+				t,
+				&net.TCPAddr{IP: server, Port: 443},
+				&net.TCPAddr{IP: client, Port: 54321},
+				52, 7000, 1001,
+			),
+		},
+		{
+			"udp", ProtoUDP, 1,
+			func(runID string, logger zerolog.Logger, h capture.Handle) error {
+				return NewUDPSniffer(runID, logger, h, hops).StartCapturing()
+			},
+			udpPacket(t, server, client, 52),
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			hops.Register(tc.proto, []net.IP{server})
+			var logs lockedBuffer
+			// Two packets: neither gets an ID of its own.
+			h := &replayHandle{packets: [][]byte{tc.pkt.Data(), tc.pkt.Data()}}
+
+			require.NoError(t, tc.start(runID, traceIDLogger(&logs), h))
+
+			assert.Eventually(t, func() bool {
+				return strings.Count(logs.String(), `"trace_id"`) == tc.logs
+			}, time.Second, time.Millisecond)
+			assert.Equal(t, tc.logs, strings.Count(logs.String(), `"trace_id":"`+runID+`"`))
+		})
+	}
 }

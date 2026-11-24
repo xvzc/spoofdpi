@@ -206,7 +206,7 @@ func TestOptionsCases(t *testing.T) {
 func TestScanLog(t *testing.T) {
 	in := strings.Join([]string{
 		"\x1b[32mINF\x1b[0m spoofdpi; version=dev",
-		"INF 2026-01-01T00:00:00Z abc [app] \x1b[1mloaded config file;\x1b[0m " +
+		"INF 2026-01-01T00:00:00Z abc \x1b[1mloaded config file;\x1b[0m " +
 			"\x1b[36mdir=\x1b[0m/home/u/.config/spoofdpi/spoofdpi.toml",
 		"WRN something odd",
 		"INF server started on 127.0.0.1:18080",
@@ -236,23 +236,23 @@ func TestScanLog(t *testing.T) {
 }
 
 func TestConfigFromLine(t *testing.T) {
-	path, ok := configFromLine("WRN 2026 abc [app] config file not found;")
+	path, ok := configFromLine("WRN 2026 abc config file not found;")
 	assert.True(t, ok)
 	assert.Empty(t, path)
 
 	path, ok = configFromLine(
-		"INF 2026 abc [app] loaded config file; dir=/etc/spoofdpi.toml",
+		"INF 2026 abc loaded config file; dir=/etc/spoofdpi.toml",
 	)
 	assert.True(t, ok)
 	assert.Equal(t, "/etc/spoofdpi.toml", path)
 
 	path, ok = configFromLine(
-		`INF 2026 abc [app] loaded config file; dir="/home/u/my dir/설정.toml"`,
+		`INF 2026 abc loaded config file; dir="/home/u/my dir/설정.toml"`,
 	)
 	assert.True(t, ok)
 	assert.Equal(t, "/home/u/my dir/설정.toml", path, "quoted values are unquoted")
 
-	_, ok = configFromLine("INF 2026 abc [app] server started on 127.0.0.1:1")
+	_, ok = configFromLine("INF 2026 abc server started on 127.0.0.1:1")
 	assert.False(t, ok)
 }
 

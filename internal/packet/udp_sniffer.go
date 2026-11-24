@@ -14,6 +14,8 @@ var _ Sniffer = (*UDPSniffer)(nil)
 
 type UDPSniffer struct {
 	logger zerolog.Logger
+	// runID is the trace ID of the logs of the capture goroutine.
+	runID string
 
 	hops *HopStore
 
@@ -21,11 +23,13 @@ type UDPSniffer struct {
 }
 
 func NewUDPSniffer(
+	runID string,
 	logger zerolog.Logger,
 	handle capture.Handle,
 	hops *HopStore,
 ) *UDPSniffer {
 	return &UDPSniffer{
+		runID:  runID,
 		logger: logger,
 		handle: handle,
 		hops:   hops,
@@ -52,12 +56,12 @@ func (us *UDPSniffer) StartCapturing() error {
 	packetSource := gopacket.NewPacketSource(us.handle, us.handle.LinkType())
 	packets := packetSource.Packets()
 
+	// Every captured packet logs under the run's trace ID: a packet belongs
+	// to no connection of its own.
+	ctx := logging.ContextWithTraceID(context.Background(), us.runID)
 	go func() {
 		for packet := range packets {
-			us.processPacket(
-				logging.ContextWithTraceID(context.Background(), logging.NewTraceID()),
-				packet,
-			)
+			us.processPacket(ctx, packet)
 		}
 	}()
 

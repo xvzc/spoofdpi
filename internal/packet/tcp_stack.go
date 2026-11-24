@@ -28,7 +28,7 @@ type TCPStack struct {
 
 // OpenTCPStack opens a capture handle on iface for a SYN/ACK sniffer that
 // records hop counts in hops and sequence numbers in Seqs, starts the
-// sniffer, and makes a writer that sends packets through senders. It
+// sniffer, which logs under the trace ID runID, and makes a writer that sends packets through senders. It
 // fails, closing the handle, if the sniffer cannot start. The handle stays
 // open for the life of the process: the sniffer reads it until then.
 //
@@ -37,6 +37,7 @@ type TCPStack struct {
 // learned there, and fake packets use the default hop count and random
 // sequence numbers.
 func OpenTCPStack(
+	runID string,
 	logger zerolog.Logger,
 	iface *net.Interface,
 	senders Senders,
@@ -47,7 +48,7 @@ func OpenTCPStack(
 		return nil, err
 	}
 	seqs := NewSeqTracker(seqEntryTTL)
-	sniffer := NewTCPSniffer(logger, handle, hops, seqs)
+	sniffer := NewTCPSniffer(runID, logger, handle, hops, seqs)
 	writer := NewTCPWriter(logger, senders)
 	if err := sniffer.StartCapturing(); err != nil {
 		handle.Close()

@@ -43,7 +43,7 @@ func TestOpenTCPStack(t *testing.T) {
 		var logs bytes.Buffer
 
 		stack, err := OpenTCPStack(
-			zerolog.New(&logs), iface, Senders{}, NewHopStore(),
+			"", zerolog.New(&logs), iface, Senders{}, NewHopStore(),
 		)
 
 		require.NoError(t, err)
@@ -61,7 +61,7 @@ func TestOpenTCPStack(t *testing.T) {
 		var logs bytes.Buffer
 
 		stack, err := OpenTCPStack(
-			zerolog.New(&logs), iface, Senders{}, NewHopStore(),
+			"", zerolog.New(&logs), iface, Senders{}, NewHopStore(),
 		)
 
 		require.NoError(t, err)
@@ -83,7 +83,7 @@ func TestOpenTCPStack(t *testing.T) {
 		h := &linkHandle{&filterHandle{setErr: rejected}, layers.LinkTypeEthernet}
 		useCaptureHandle(t, h, nil)
 
-		stack, err := OpenTCPStack(zerolog.Nop(), iface, Senders{}, NewHopStore())
+		stack, err := OpenTCPStack("", zerolog.Nop(), iface, Senders{}, NewHopStore())
 
 		require.ErrorIs(t, err, rejected)
 		assert.Nil(t, stack)
@@ -93,7 +93,7 @@ func TestOpenTCPStack(t *testing.T) {
 	t.Run("an open error is fatal", func(t *testing.T) {
 		useCaptureHandle(t, nil, rejected)
 
-		stack, err := OpenTCPStack(zerolog.Nop(), iface, Senders{}, NewHopStore())
+		stack, err := OpenTCPStack("", zerolog.Nop(), iface, Senders{}, NewHopStore())
 
 		require.ErrorIs(t, err, rejected)
 		assert.Nil(t, stack)
@@ -110,7 +110,7 @@ func TestOpenUDPStack(t *testing.T) {
 		var logs bytes.Buffer
 
 		stack, err := OpenUDPStack(
-			zerolog.New(&logs), iface, Senders{}, NewHopStore(),
+			"", zerolog.New(&logs), iface, Senders{}, NewHopStore(),
 		)
 
 		require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestOpenUDPStack(t *testing.T) {
 		var logs bytes.Buffer
 
 		stack, err := OpenUDPStack(
-			zerolog.New(&logs), iface, Senders{}, NewHopStore(),
+			"", zerolog.New(&logs), iface, Senders{}, NewHopStore(),
 		)
 
 		require.NoError(t, err)
@@ -148,7 +148,7 @@ func TestOpenUDPStack(t *testing.T) {
 		h := &linkHandle{&filterHandle{setErr: rejected}, layers.LinkTypeEthernet}
 		useCaptureHandle(t, h, nil)
 
-		stack, err := OpenUDPStack(zerolog.Nop(), iface, Senders{}, NewHopStore())
+		stack, err := OpenUDPStack("", zerolog.Nop(), iface, Senders{}, NewHopStore())
 
 		require.ErrorIs(t, err, rejected)
 		assert.Nil(t, stack)
@@ -158,7 +158,7 @@ func TestOpenUDPStack(t *testing.T) {
 	t.Run("an open error is fatal", func(t *testing.T) {
 		useCaptureHandle(t, nil, rejected)
 
-		stack, err := OpenUDPStack(zerolog.Nop(), iface, Senders{}, NewHopStore())
+		stack, err := OpenUDPStack("", zerolog.Nop(), iface, Senders{}, NewHopStore())
 
 		require.ErrorIs(t, err, rejected)
 		assert.Nil(t, stack)

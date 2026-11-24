@@ -15,6 +15,8 @@ var _ Sniffer = (*TCPSniffer)(nil)
 
 type TCPSniffer struct {
 	logger zerolog.Logger
+	// runID is the trace ID of the logs of the capture goroutine.
+	runID string
 
 	hops *HopStore
 	seqs *SeqTracker
@@ -23,12 +25,14 @@ type TCPSniffer struct {
 }
 
 func NewTCPSniffer(
+	runID string,
 	logger zerolog.Logger,
 	handle capture.Handle,
 	hops *HopStore,
 	seqs *SeqTracker,
 ) *TCPSniffer {
 	return &TCPSniffer{
+		runID:  runID,
 		logger: logger,
 		handle: handle,
 		hops:   hops,
@@ -56,12 +60,12 @@ func (ts *TCPSniffer) StartCapturing() error {
 	packetSource := gopacket.NewPacketSource(ts.handle, ts.handle.LinkType())
 	packets := packetSource.Packets()
 
+	// Every captured packet logs under the run's trace ID: a packet belongs
+	// to no connection of its own.
+	ctx := logging.ContextWithTraceID(context.Background(), ts.runID)
 	go func() {
 		for packet := range packets {
-			ts.processPacket(
-				logging.ContextWithTraceID(context.Background(), logging.NewTraceID()),
-				packet,
-			)
+			ts.processPacket(ctx, packet)
 		}
 	}()
 
