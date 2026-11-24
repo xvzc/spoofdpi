@@ -81,8 +81,8 @@ func (us *UDPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	}
 	if !prev.Learned || nhops != prev.Hops {
 		logger.Trace().
-			Str("from", joinAddrPort(u.Src, u.SrcPort)).
-			Str("to", joinAddrPort(u.Dst, u.DstPort)).
+			Str("src", joinAddrPort(u.Src, u.SrcPort)).
+			Str("dst", joinAddrPort(u.Dst, u.DstPort)).
 			Uint8("nhops", nhops).
 			Uint8("ttlLeft", u.TTLLeft).
 			Msgf("ttl(udp) update")

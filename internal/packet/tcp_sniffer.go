@@ -85,8 +85,8 @@ func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	prev, registered := ts.hops.Learn(ProtoTCP, sa.Src, nhops)
 	if !registered {
 		logger.Trace().
-			Str("from", joinAddrPort(sa.Src, sa.SrcPort)).
-			Str("to", joinAddrPort(sa.Dst, sa.DstPort)).
+			Str("src", joinAddrPort(sa.Src, sa.SrcPort)).
+			Str("dst", joinAddrPort(sa.Dst, sa.DstPort)).
 			Uint8("nhops", nhops).
 			Uint8("ttlLeft", sa.TTLLeft).
 			Msgf("ttl(tcp) ignored, destination not registered")
@@ -105,8 +105,8 @@ func (ts *TCPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	// The ports tie the line to a connection: to is the local address of
 	// the socket spoofdpi dialed, which its "new remote conn" log shows.
 	event := logger.Trace().
-		Str("from", joinAddrPort(sa.Src, sa.SrcPort)).
-		Str("to", joinAddrPort(sa.Dst, sa.DstPort)).
+		Str("src", joinAddrPort(sa.Src, sa.SrcPort)).
+		Str("dst", joinAddrPort(sa.Dst, sa.DstPort)).
 		Uint8("nhops", nhops).
 		Uint8("ttlLeft", sa.TTLLeft)
 	if !prev.Learned || nhops != prev.Hops {

@@ -122,7 +122,7 @@ Each check is a subtest, such as `TestFakeEgress_TUN_RequireRoot/fakes-on-tun`, 
 Some failures come from the network, not from spoofdpi:
 
 - `reset-diff` fails when a VPN, DHCP, or another tool changes routes during the run. Read `reset.diff`, and rerun once if the change is unrelated.
-- `fetch/<host>` can fail when a fake reaches the server, for example when the learned hop count is off by one. Check the TTLs in the log, and rerun once. To find the connection that taught a hop count, search `spoofdpi.log` for the SYN/ACK's `to=<ip>:<port>` in a `ttl(tcp)` line, then for `local=<ip>:<port>` in a `new remote conn` line.
+- `fetch/<host>` can fail when a fake reaches the server, for example when the learned hop count is off by one. Check the TTLs in the log, and rerun once. To find the connection that taught a hop count, search `spoofdpi.log` for the SYN/ACK's `dst=<ip>:<port>` in a `ttl(tcp)` line, then for `local=<ip>:<port>` in a `new remote conn` line.
 
 ## Rules for Root-Privileged and End-to-End Runs
 

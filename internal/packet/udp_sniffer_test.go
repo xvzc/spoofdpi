@@ -156,7 +156,7 @@ func TestUDPSniffer_LogsConnectionAddresses(t *testing.T) {
 	entries := decodeLogs(t, &log)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "ttl(udp) update", entries[0]["message"])
-	assert.Equal(t, "203.0.113.1:443", entries[0]["from"])
-	assert.Equal(t, "192.168.1.11:50000", entries[0]["to"])
+	assert.Equal(t, "203.0.113.1:443", entries[0]["src"])
+	assert.Equal(t, "192.168.1.11:50000", entries[0]["dst"])
 	assert.EqualValues(t, 12, entries[0]["nhops"])
 }

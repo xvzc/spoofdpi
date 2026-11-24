@@ -237,13 +237,13 @@ func TestTCPSniffer_LogsConnectionAddresses(t *testing.T) {
 
 	require.Len(t, entries, 2)
 	assert.Equal(t, "ttl(tcp) update", entries[0]["message"])
-	assert.Equal(t, "203.0.113.1:443", entries[0]["from"])
-	assert.Equal(t, "192.168.1.11:54321", entries[0]["to"])
+	assert.Equal(t, "203.0.113.1:443", entries[0]["src"])
+	assert.Equal(t, "192.168.1.11:54321", entries[0]["dst"])
 	assert.EqualValues(t, 12, entries[0]["nhops"])
 	assert.EqualValues(t, 52, entries[0]["ttlLeft"])
 
 	assert.Equal(t, "ttl(tcp) unchanged", entries[1]["message"])
-	assert.Equal(t, "192.168.1.11:54321", entries[1]["to"])
+	assert.Equal(t, "192.168.1.11:54321", entries[1]["dst"])
 }
 
 func TestTCPSniffer_LogsIgnoredSynAck(t *testing.T) {
@@ -256,6 +256,6 @@ func TestTCPSniffer_LogsIgnoredSynAck(t *testing.T) {
 
 	require.Len(t, entries, 1)
 	assert.Equal(t, "ttl(tcp) ignored, destination not registered", entries[0]["message"])
-	assert.Equal(t, "203.0.113.1:443", entries[0]["from"])
-	assert.Equal(t, "192.168.1.11:54321", entries[0]["to"])
+	assert.Equal(t, "203.0.113.1:443", entries[0]["src"])
+	assert.Equal(t, "192.168.1.11:54321", entries[0]["dst"])
 }
