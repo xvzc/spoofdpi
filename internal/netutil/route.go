@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-
-	gw "github.com/jackpal/gateway"
 )
 
 // ErrNoIPv4Route is returned, wrapped, by DiscoverRoute when the OS has no
@@ -13,9 +11,14 @@ import (
 // when the kernel has no route to an IPv4 destination.
 var ErrNoIPv4Route = errors.New("no IPv4 default route")
 
-// discoverGateway returns the gateway of the IPv4 default route. Tests
-// replace it to fake the routing table.
-var discoverGateway = gw.DiscoverGateway
+// ErrNoGateway is returned, wrapped, by DiscoverRoute when the route to the
+// internet has no gateway, such as a point-to-point or VPN link.
+var ErrNoGateway = errors.New("route has no gateway")
+
+// addrsOf lists the addresses of iface. Tests replace it.
+var addrsOf = func(iface *net.Interface) ([]net.Addr, error) {
+	return iface.Addrs()
+}
 
 // Route represents the default network route of one address family.
 type Route struct {
@@ -47,67 +50,74 @@ func (r *Route) GatewayString() string {
 	return r.Gateway.String() + "%" + r.Zone
 }
 
-// DiscoverInterface discovers the interface of the default route and its
-// local IP from the OS. It does not require a gateway.
+// DiscoverInterface discovers the interface the kernel routes the internet
+// through and its local IPv4 address. It does not require a gateway.
 func DiscoverInterface() (*net.Interface, net.IP, error) {
-	localIP, err := gw.DiscoverInterface()
+	path, err := RouteTo(probeDst(FamilyV4))
 	if err != nil {
 		return nil, nil, fmt.Errorf("discover interface: %w", err)
 	}
 
-	iface, err := findIfaceByIP(localIP)
+	localIP, err := localIPFor(path)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return iface, localIP, nil
+	return &path.Iface, localIP, nil
 }
 
 // DiscoverRoute discovers the default network route.
-// If gateway is nil, the gateway IP and interface are resolved from the OS
-// routing table. Otherwise the given gateway is used as is, and the
-// interface is the one whose subnet contains it, so the two always match.
+// If gateway is nil, the gateway IP and interface are resolved from the
+// kernel's route to the internet, and ErrNoGateway is returned, wrapped,
+// when that route has no gateway. Otherwise the given gateway is used as
+// is, and the interface is the one whose subnet contains it, so the two
+// always match.
 func DiscoverRoute(gateway net.IP) (*Route, error) {
 	if gateway != nil {
 		return routeForGateway(gateway)
 	}
 
-	gwIP, err := discoverGateway()
+	path, err := RouteTo(probeDst(FamilyV4))
 	if err != nil {
-		return nil, fmt.Errorf("%w: discover gateway: %w", ErrNoIPv4Route, err)
+		return nil, fmt.Errorf("discover route: %w", err)
+	}
+	if !path.Gateway.IsValid() {
+		return nil, fmt.Errorf(
+			"route to %s goes through %s without a gateway: %w",
+			path.Dst,
+			path.Iface.Name,
+			ErrNoGateway,
+		)
 	}
 
-	iface, localIP, err := DiscoverInterface()
+	localIP, err := localIPFor(path)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Route{
-		Family:  FamilyV4,
-		Iface:   *iface,
-		LocalIP: localIP,
-		Gateway: gwIP,
-	}, nil
+	route := path.Route()
+	route.LocalIP = localIP
+	return route, nil
 }
 
-func findIfaceByIP(localIP net.IP) (*net.Interface, error) {
-	ifaces, err := net.Interfaces()
+// localIPFor returns the IPv4 address of the output interface of path: the
+// route's own source address when the kernel reported one, and otherwise
+// the first IPv4 address of the interface.
+func localIPFor(p *Path) (net.IP, error) {
+	if p.Src.Is4() {
+		return net.IP(p.Src.AsSlice()), nil
+	}
+
+	addrs, err := addrsOf(&p.Iface)
 	if err != nil {
-		return nil, fmt.Errorf("net.Interfaces: %w", err)
+		return nil, fmt.Errorf("interface %s addresses: %w", p.Iface.Name, err)
 	}
-	for i := range ifaces {
-		iface := &ifaces[i]
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.Equal(localIP) {
-				return iface, nil
-			}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil {
+			return ipnet.IP.To4(), nil
 		}
 	}
-	return nil, fmt.Errorf("no interface found for %s", localIP)
+	return nil, fmt.Errorf("interface %s has no IPv4 address", p.Iface.Name)
 }
 
 type ifaceAddrs struct {

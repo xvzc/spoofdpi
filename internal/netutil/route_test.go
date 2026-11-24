@@ -1,8 +1,8 @@
 package netutil
 
 import (
-	"errors"
 	"net"
+	"net/netip"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -167,15 +167,152 @@ func TestFindIfaceByGateway_IPv6(t *testing.T) {
 	}
 }
 
-func TestDiscoverRoute_NoIPv4Route(t *testing.T) {
-	orig := discoverGateway
-	t.Cleanup(func() { discoverGateway = orig })
-	noGateway := errors.New("no gateway found")
-	discoverGateway = func() (net.IP, error) { return nil, noGateway }
+// fakeDiscovery makes RouteTo return kr, or err when it is not nil, and the
+// interface lookup return iface.
+func fakeDiscovery(
+	t *testing.T,
+	kr kernelRoute,
+	err error,
+	iface net.Interface,
+	addrs []net.Addr,
+) {
+	t.Helper()
+	origRoute, origIface, origAddrs := osRouteTo, interfaceByIndex, addrsOf
+	t.Cleanup(func() {
+		osRouteTo, interfaceByIndex, addrsOf = origRoute, origIface, origAddrs
+	})
+	osRouteTo = func(netip.Addr) (kernelRoute, error) { return kr, err }
+	interfaceByIndex = func(int) (*net.Interface, error) { return &iface, nil }
+	addrsOf = func(*net.Interface) ([]net.Addr, error) { return addrs, nil }
+}
+
+func TestDiscoverRoute_Nil(t *testing.T) {
+	en0 := net.Interface{Index: 1, Name: "en0", Flags: net.FlagUp}
+	lanAddrs := []net.Addr{ipNet("fe80::1/64"), ipNet("192.168.1.11/24")}
+
+	tcs := []struct {
+		name    string
+		kr      kernelRoute
+		err     error
+		addrs   []net.Addr
+		wantErr error
+		wantMsg string
+		assert  func(t *testing.T, r *Route)
+	}{
+		{
+			name: "gateway route uses the route's source address",
+			kr: kernelRoute{
+				ifIndex: 1,
+				gateway: netip.MustParseAddr("192.168.1.1"),
+				src:     netip.MustParseAddr("192.168.1.12"),
+			},
+			addrs: lanAddrs,
+			assert: func(t *testing.T, r *Route) {
+				assert.Equal(t, FamilyV4, r.Family)
+				assert.Equal(t, "en0", r.Iface.Name)
+				assert.Equal(t, "192.168.1.1", r.Gateway.String())
+				assert.Equal(t, "192.168.1.12", r.LocalIP.String())
+			},
+		},
+		{
+			name: "missing source falls back to the interface address",
+			kr: kernelRoute{
+				ifIndex: 1,
+				gateway: netip.MustParseAddr("192.168.1.1"),
+			},
+			addrs: lanAddrs,
+			assert: func(t *testing.T, r *Route) {
+				assert.Equal(t, "192.168.1.11", r.LocalIP.String())
+			},
+		},
+		{
+			name:    "interface route has no gateway",
+			kr:      kernelRoute{ifIndex: 1},
+			addrs:   lanAddrs,
+			wantErr: ErrNoGateway,
+			wantMsg: "route to 192.0.2.1 goes through en0 without a gateway",
+		},
+		{
+			name:    "no route",
+			err:     errNoRoute(probeDstV4),
+			wantErr: ErrNoIPv4Route,
+		},
+		{
+			name: "interface without an IPv4 address",
+			kr: kernelRoute{
+				ifIndex: 1,
+				gateway: netip.MustParseAddr("192.168.1.1"),
+			},
+			addrs:   []net.Addr{ipNet("fe80::1/64")},
+			wantMsg: "interface en0 has no IPv4 address",
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeDiscovery(t, tc.kr, tc.err, en0, tc.addrs)
+
+			route, err := DiscoverRoute(nil)
+			if tc.wantErr != nil || tc.wantMsg != "" {
+				require.Error(t, err)
+				if tc.wantErr != nil {
+					assert.ErrorIs(t, err, tc.wantErr)
+				}
+				assert.ErrorContains(t, err, tc.wantMsg)
+				return
+			}
+
+			require.NoError(t, err)
+			tc.assert(t, route)
+		})
+	}
+}
+
+func TestDiscoverRoute_InterfaceRouteIsNotNoIPv4Route(t *testing.T) {
+	fakeDiscovery(
+		t,
+		kernelRoute{ifIndex: 1},
+		nil,
+		net.Interface{Index: 1, Name: "utun4"},
+		[]net.Addr{ipNet("10.8.0.2/32")},
+	)
 
 	_, err := DiscoverRoute(nil)
-	require.ErrorIs(t, err, ErrNoIPv4Route)
-	require.ErrorIs(t, err, noGateway)
+	require.ErrorIs(t, err, ErrNoGateway)
+	assert.NotErrorIs(t, err, ErrNoIPv4Route)
+}
+
+func TestDiscoverInterface(t *testing.T) {
+	utun := net.Interface{Index: 7, Name: "utun4", Flags: net.FlagUp}
+
+	t.Run("interface route needs no gateway", func(t *testing.T) {
+		fakeDiscovery(
+			t,
+			kernelRoute{ifIndex: 7},
+			nil,
+			utun,
+			[]net.Addr{ipNet("10.8.0.2/32")},
+		)
+
+		iface, localIP, err := DiscoverInterface()
+		require.NoError(t, err)
+		assert.Equal(t, "utun4", iface.Name)
+		assert.Equal(t, "10.8.0.2", localIP.String())
+	})
+
+	t.Run("no route", func(t *testing.T) {
+		fakeDiscovery(t, kernelRoute{}, errNoRoute(probeDstV4), utun, nil)
+
+		_, _, err := DiscoverInterface()
+		require.ErrorIs(t, err, ErrNoIPv4Route)
+	})
+
+	t.Run("no IPv4 address", func(t *testing.T) {
+		fakeDiscovery(t, kernelRoute{ifIndex: 7}, nil, utun, nil)
+
+		_, _, err := DiscoverInterface()
+		assert.ErrorContains(t, err, "interface utun4 has no IPv4 address")
+	})
 }
 
 func TestRoute_GatewayString(t *testing.T) {
