@@ -4,6 +4,10 @@
 # absolute with the shell, so the Makefile works with GNU and BSD make.
 E2E_BIN = out/e2e/spoofdpi
 
+# The command that runs root steps. Without a terminal, use
+# SUDO="sudo -A" with SUDO_ASKPASS set.
+SUDO ?= sudo
+
 build:
 	go build ./cmd/...
 
@@ -21,8 +25,8 @@ test-network:
 # Tests named ...RequireRoot. Go builds them as the current user and runs
 # only the test binaries through sudo.
 test-root:
-	sudo -v
-	go test $(ARGS) -exec sudo -tags network -count=1 -v -run RequireRoot ./internal/...
+	$(SUDO) -v
+	go test $(ARGS) -exec "$(SUDO)" -tags network -count=1 -v -run RequireRoot ./internal/...
 
 # End-to-end tests: build spoofdpi, check that it refuses to send fakes
 # without root, then run proxy and TUN mode as root. Pass test flags such as
@@ -31,8 +35,8 @@ test-e2e:
 	mkdir -p out/e2e
 	go build -o $(E2E_BIN) ./cmd/spoofdpi
 	go test -tags e2e -count=1 -v -run NonRoot ./test/e2e/ -args -bin="$$(pwd)/$(E2E_BIN)" $(E2E_ARGS)
-	sudo -v
-	go test -exec sudo -tags e2e -count=1 -v -run RequireRoot ./test/e2e/ -args -bin="$$(pwd)/$(E2E_BIN)" $(E2E_ARGS)
+	$(SUDO) -v
+	go test -exec "$(SUDO)" -tags e2e -count=1 -v -run RequireRoot ./test/e2e/ -args -bin="$$(pwd)/$(E2E_BIN)" $(E2E_ARGS)
 
 # Everything a change to fake packets, capture, routes, or TUN setup needs.
 test-all: test test-root test-e2e

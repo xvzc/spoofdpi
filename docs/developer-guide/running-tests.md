@@ -63,7 +63,7 @@ $ sudo -v
 $ go test -exec sudo -tags network -count=1 -v -run RequireRoot ./internal/...
 ```
 
-Running `sudo -v` first caches your credentials, so the test binaries don't each ask for the password. Without a terminal, such as over a non-interactive SSH session, sudo may not cache them; then set `SUDO_ASKPASS` to a program that prints the password and use `-exec "sudo -A"` instead of `-exec sudo`. Keep `-run RequireRoot`: without it, every test in `./internal/...` runs as root.
+Running `sudo -v` first caches your credentials, so the test binaries don't each ask for the password. Without a terminal, such as over a non-interactive SSH session, sudo may not cache them; then set `SUDO_ASKPASS` to a program that prints the password and use `-exec "sudo -A"` instead of `-exec sudo`, or pass `SUDO="sudo -A"` to the make targets, such as `make test-root SUDO="sudo -A"`. Keep `-run RequireRoot`: without it, every test in `./internal/...` runs as root.
 
 ## End-to-End Tests
 
