@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 
@@ -22,9 +23,26 @@ var testGate = packet.NewStaticGate(
 	nil,
 	&packet.FakesOffError{
 		Family: netutil.FamilyV6,
+		Kind:   packet.FakesOffIPv6Unsupported,
 		Reason: "IPv6 fakes are not supported yet",
 	},
 )
+
+// vpnRouteGate denies fakes to every IPv4 server as routed through a VPN,
+// with a reason that names the server, and defers to testGate otherwise.
+type vpnRouteGate struct{}
+
+func (vpnRouteGate) CanFake(dst net.IP) error {
+	if dst.To4() == nil {
+		return testGate.CanFake(dst)
+	}
+	return &packet.FakesOffError{
+		Family:    netutil.FamilyV4,
+		Kind:      packet.FakesOffDstViaVPN,
+		Interface: "utun4",
+		Reason:    fmt.Sprintf("the route to %s goes through a VPN (utun4)", dst),
+	}
+}
 
 // writeRecordingConn is a stubConn that records each write.
 type writeRecordingConn struct {
@@ -190,8 +208,112 @@ func TestDesync_CannotFakeLogsReasons(t *testing.T) {
 	require.Len(t, entries, 3)
 	assert.Equal(t, "warn", entries[0]["level"])
 	assert.Equal(t, "2001:db8::1", entries[0]["dst"])
+	assert.Equal(t, "ipv6", entries[0]["family"])
+	assert.NotContains(t, entries[0], "interface")
 	assert.Equal(t, "IPv6 fakes are not supported yet", entries[0]["reason"])
 	assert.Equal(t, "warn", entries[1]["level"])
 	assert.Equal(t, "no route", entries[1]["reason"])
+	assert.NotContains(t, entries[1], "family")
 	assert.Equal(t, "debug", entries[2]["level"])
+}
+
+// Skipped fakes warn once per family, kind and interface, so two VPNs that
+// each carry some servers each get a warning.
+func TestDesync_CannotFakeWarnsOncePerInterface(t *testing.T) {
+	resetCannotFakeWarning(t)
+
+	var log bytes.Buffer
+	logger := zerolog.New(&log).Level(zerolog.DebugLevel)
+	viaVPN := func(iface string) packet.FakeCapability {
+		return packet.NewStaticGate(&packet.FakesOffError{
+			Family:    netutil.FamilyV4,
+			Kind:      packet.FakesOffDstViaVPN,
+			Interface: iface,
+			Reason:    "the route goes through a VPN (" + iface + ")",
+		}, nil)
+	}
+	udpA := NewUDPDesyncer(logger, &udpWriter{}, stubHops{}, viaVPN("utun4"))
+	udpB := NewUDPDesyncer(logger, &udpWriter{}, stubHops{}, viaVPN("wg0"))
+
+	assert.Zero(t, desyncUDP(t, udpA, "203.0.113.1"))
+	assert.Zero(t, desyncUDP(t, udpB, "203.0.113.2"))
+	assert.Zero(t, desyncUDP(t, udpA, "203.0.113.3"))
+	assert.Zero(t, desyncUDP(t, udpB, "203.0.113.4"))
+
+	assert.Equal(t, []string{"warn", "warn", "debug", "debug"}, cannotFakeLevels(t, &log))
+}
+
+// Skipped fakes to many servers warn once per kind of cause, though each
+// reason names its server, and the warned causes do not grow with the
+// servers.
+func TestDesync_CannotFakeWarnsOncePerKind(t *testing.T) {
+	resetCannotFakeWarning(t)
+
+	var log bytes.Buffer
+	logger := zerolog.New(&log).Level(zerolog.DebugLevel)
+	tlsD := NewTLSDesyncer(logger, &recordingWriter{}, stubHops{}, nil, vpnRouteGate{})
+	udpD := NewUDPDesyncer(logger, &udpWriter{}, stubHops{}, vpnRouteGate{})
+
+	const servers = 200
+	for i := range servers {
+		dst := fmt.Sprintf("203.0.%d.%d", i/250, i%250+1)
+		assert.Zero(t, desyncTLS(t, tlsD, dst))
+		assert.Zero(t, desyncUDP(t, udpD, dst))
+		assert.Zero(t, desyncUDP(t, udpD, fmt.Sprintf("2001:db8::%x", i+1)))
+	}
+
+	warns := map[string]int{}
+	var debugs int
+	lines := bufio.NewScanner(&log)
+	for lines.Scan() {
+		var e map[string]any
+		require.NoError(t, json.Unmarshal(lines.Bytes(), &e))
+		if e["message"] != "skipping fake packets" {
+			continue
+		}
+		switch e["level"] {
+		case "warn":
+			warns[e["family"].(string)]++
+		case "debug":
+			debugs++
+		}
+	}
+	require.NoError(t, lines.Err())
+	assert.Equal(t, map[string]int{"ipv4": 1, "ipv6": 1}, warns)
+	assert.Equal(t, 3*servers-2, debugs)
+
+	var keys []any
+	cannotFakeWarned.Range(func(k, _ any) bool {
+		keys = append(keys, k)
+		return true
+	})
+	assert.ElementsMatch(
+		t,
+		[]any{"ipv4/dst-via-vpn/utun4", "ipv6/ipv6-unsupported/"},
+		keys,
+	)
+}
+
+// A skipped fake to a server routed through a VPN logs the server, the
+// family, the interface and the full reason.
+func TestDesync_CannotFakeLogsInterface(t *testing.T) {
+	resetCannotFakeWarning(t)
+
+	var log bytes.Buffer
+	logger := zerolog.New(&log).Level(zerolog.DebugLevel)
+	udpD := NewUDPDesyncer(logger, &udpWriter{}, stubHops{}, vpnRouteGate{})
+
+	assert.Zero(t, desyncUDP(t, udpD, "203.0.113.9"))
+
+	var e map[string]any
+	require.NoError(t, json.Unmarshal(log.Bytes(), &e))
+	assert.Equal(t, map[string]any{
+		"level":       "warn",
+		"local_scope": "udp_desync",
+		"dst":         "203.0.113.9",
+		"family":      "ipv4",
+		"interface":   "utun4",
+		"reason":      "the route to 203.0.113.9 goes through a VPN (utun4)",
+		"message":     "skipping fake packets",
+	}, e)
 }

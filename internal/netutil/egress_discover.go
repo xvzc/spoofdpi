@@ -52,6 +52,11 @@ func ClassifyPath(p *Path) (*Egress, error) {
 	return &Egress{Route: *p.Route(), Link: link, Class: class, Reason: reason}, nil
 }
 
+// ErrBadGateway matches, by errors.Is, the errors of DiscoverEgress that
+// come from the gateway it was given, as opposed to the system's route
+// lookup.
+var ErrBadGateway = errors.New("unusable gateway")
+
 // DiscoverEgress discovers and classifies the egress of fam.
 //
 // Without a gateway, the egress is the kernel's route to the internet.
@@ -59,7 +64,8 @@ func ClassifyPath(p *Path) (*Egress, error) {
 // one through that gateway, while the link, class and reason are those of
 // the kernel's route to the internet: a full-tunnel VPN carries the
 // traffic whatever gateway is given. When the kernel has no route of fam,
-// the link is the gateway's interface.
+// the link is the gateway's interface. An error of the gateway matches
+// ErrBadGateway.
 func DiscoverEgress(fam Family, gateway net.IP, zone string) (*Egress, error) {
 	if gateway == nil {
 		path, err := RouteTo(probeDst(fam))
@@ -77,7 +83,7 @@ func DiscoverEgress(fam Family, gateway net.IP, zone string) (*Egress, error) {
 		route, err = DiscoverRoute(gateway)
 	}
 	if err != nil {
-		return nil, err
+		return nil, &badGatewayError{err: err}
 	}
 
 	path, err := RouteTo(probeDst(fam))
@@ -95,6 +101,16 @@ func DiscoverEgress(fam Family, gateway net.IP, zone string) (*Egress, error) {
 	egress.Route = *route
 	return egress, nil
 }
+
+// badGatewayError is an error of the gateway given to DiscoverEgress. It
+// keeps the text of err and matches ErrBadGateway.
+type badGatewayError struct{ err error }
+
+func (e *badGatewayError) Error() string { return e.err.Error() }
+
+func (e *badGatewayError) Unwrap() error { return e.err }
+
+func (e *badGatewayError) Is(target error) bool { return target == ErrBadGateway }
 
 // noRouteError returns the sentinel for a missing route of fam.
 func noRouteError(fam Family) error {

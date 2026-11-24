@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -30,6 +31,18 @@ var osRouteFinder = routeFinder{
 	},
 }
 
+// ipv6OffCause is why discoverEgresses turned IPv6 off in the config.
+type ipv6OffCause uint8
+
+const (
+	// ipv6StayedOn: discoverEgresses did not turn IPv6 off.
+	ipv6StayedOn ipv6OffCause = iota
+	// ipv6OffNoRoute: no usable IPv6 route was found.
+	ipv6OffNoRoute
+	// ipv6OffVPN: a full-tunnel VPN carries IPv6 in TUN mode.
+	ipv6OffVPN
+)
+
 // startupNet is what discoverEgresses found at startup.
 type startupNet struct {
 	// V4 is the IPv4 egress, or nil when the config needs none.
@@ -40,9 +53,9 @@ type startupNet struct {
 	// and are nil when they are on.
 	FakesV4 error
 	FakesV6 error
-	// IPv6Disabled reports that discoverEgresses turned IPv6 off in the
-	// config for this run.
-	IPv6Disabled bool
+	// IPv6Off is why discoverEgresses turned IPv6 off in the config for
+	// this run, or ipv6StayedOn.
+	IPv6Off ipv6OffCause
 }
 
 // discoverEgresses discovers and classifies the egress of each address
@@ -66,7 +79,7 @@ func discoverEgresses(
 	if err != nil {
 		return startupNet{}, err
 	}
-	v6, ipv6Disabled, err := discoverEgressV6(logger, cfg, f)
+	v6, ipv6Off, err := discoverEgressV6(logger, cfg, f)
 	if err != nil {
 		return startupNet{}, err
 	}
@@ -76,9 +89,10 @@ func discoverEgresses(
 		FakesV4: fakesV4,
 		FakesV6: &packet.FakesOffError{
 			Family: netutil.FamilyV6,
+			Kind:   packet.FakesOffIPv6Unsupported,
 			Reason: "IPv6 fakes are not supported yet",
 		},
-		IPv6Disabled: ipv6Disabled,
+		IPv6Off: ipv6Off,
 	}, nil
 }
 
@@ -103,17 +117,17 @@ func discoverEgressV4(
 	if errors.Is(err, netutil.ErrNoIPv4Route) {
 		return nil, nil, noIPv4RouteError(err, f.hasIPv6Egress())
 	}
-	if err != nil {
-		if gateway != nil {
-			return nil, nil, fmt.Errorf(
-				"failed to find default route: %w; check --gateway, "+
-					"or remove it to use the system's default route",
-				err,
-			)
-		}
+	if errors.Is(err, netutil.ErrBadGateway) {
 		return nil, nil, fmt.Errorf(
-			"failed to find default route: %w; set --gateway, "+
-				"or disable fake packets and use HTTP/SOCKS5 mode",
+			"failed to find default route: %w; check --gateway, "+
+				"or remove it to use the system's default route",
+			err,
+		)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf(
+			"failed to find default route: %w; "+
+				"disable fake packets and use HTTP or SOCKS5 mode to run without it",
 			err,
 		)
 	}
@@ -135,8 +149,13 @@ func discoverEgressV4(
 		}
 		logger.Warn().Msg(warn)
 		return egress, &packet.FakesOffError{
-			Family: netutil.FamilyV4,
-			Reason: fmt.Sprintf("a full-tunnel VPN (%s) carries the traffic", egress.Reason),
+			Family:    netutil.FamilyV4,
+			Kind:      packet.FakesOffVPNAtStartup,
+			Interface: egress.Route.Iface.Name,
+			Reason: fmt.Sprintf(
+				"a full-tunnel VPN (%s) carries the traffic",
+				egress.Reason,
+			),
 		}, nil
 	case netutil.EgressUnknown:
 		warnUnknownEgress(logger, egress)
@@ -160,12 +179,12 @@ func tunVPNError(egress *netutil.Egress, gateway net.IP) error {
 }
 
 // discoverEgressV6 discovers the IPv6 egress when IPv6 is enabled, and
-// reports whether it turned IPv6 off in cfg instead.
+// reports why it turned IPv6 off in cfg instead, if it did.
 func discoverEgressV6(
 	logger zerolog.Logger,
 	cfg *config.Config,
 	f routeFinder,
-) (*netutil.Egress, bool, error) {
+) (*netutil.Egress, ipv6OffCause, error) {
 	gateways := cfg.App.Gateway
 	if !cfg.IPv6Enabled() {
 		if gateways.V6 != nil {
@@ -175,13 +194,13 @@ func discoverEgressV6(
 				v6,
 			)
 		}
-		return nil, false, nil
+		return nil, ipv6StayedOn, nil
 	}
 
 	egress, err := f.egress(netutil.FamilyV6, gateways.V6, gateways.V6Zone)
 	switch {
 	case err != nil && gateways.V6 != nil:
-		return nil, false, fmt.Errorf(
+		return nil, ipv6StayedOn, fmt.Errorf(
 			"failed to use IPv6 gateway: %w; check the IPv6 address of --gateway, "+
 				"or remove it to use the system's IPv6 default route",
 			err,
@@ -192,21 +211,26 @@ func discoverEgressV6(
 			Msg("IPv6 is enabled but no usable IPv6 route was found; " +
 				"running with IPv6 disabled")
 		cfg.DisableIPv6()
-		return nil, true, nil
+		return nil, ipv6OffNoRoute, nil
 	}
 
 	tun := cfg.App.Mode == config.AppModeTUN
 	switch {
 	case egress.Class == netutil.EgressVPN && tun:
-		logger.Warn().Msgf(
+		warn := fmt.Sprintf(
 			"a full-tunnel VPN (%s) carries IPv6; running with IPv6 disabled",
 			egress.Reason,
 		)
+		if gateways.V6 != nil {
+			v6 := config.Gateways{V6: gateways.V6, V6Zone: gateways.V6Zone}
+			warn += fmt.Sprintf(" (gateway %s is ignored)", v6)
+		}
+		logger.Warn().Msg(warn)
 		cfg.DisableIPv6()
-		return nil, true, nil
+		return nil, ipv6OffVPN, nil
 	case egress.Class == netutil.EgressVPN:
 		logger.Info().Msgf("IPv6 goes through a full-tunnel VPN (%s)", egress.Reason)
-		return egress, false, nil
+		return egress, ipv6StayedOn, nil
 	}
 
 	logEgress(logger, netutil.FamilyV6, egress)
@@ -214,7 +238,62 @@ func discoverEgressV6(
 	if egress.Class == netutil.EgressUnknown && tun {
 		warnUnknownEgress(logger, egress)
 	}
-	return egress, false, nil
+	return egress, ipv6StayedOn, nil
+}
+
+// dstFakeCheck returns the lookup of a packet.RouteGate in the proxy
+// modes: fake packets to a destination are off when the kernel routes it
+// through a VPN, as a split-tunnel VPN does for some destinations, since
+// the VPN's far end, not the censor, would see them. start is the IPv4
+// egress found at startup, or nil; a destination routed through the
+// interface of start, or through the link of its kernel route (which an
+// explicit gateway on another interface leaves different), is not
+// classified again. routeTo and classify find and classify the
+// route to a destination, as netutil.RouteTo and netutil.ClassifyPath do.
+//
+// A route that cannot be found or classified allows fake packets, with a
+// debug log.
+func dstFakeCheck(
+	logger zerolog.Logger,
+	start *netutil.Egress,
+	routeTo func(netip.Addr) (*netutil.Path, error),
+	classify func(*netutil.Path) (*netutil.Egress, error),
+) func(netip.Addr) error {
+	return func(dst netip.Addr) error {
+		path, err := routeTo(dst)
+		if err != nil {
+			logger.Debug().
+				Str("dst", dst.String()).
+				Err(err).
+				Msg("route lookup failed; allowing fake packets")
+			return nil
+		}
+		if start != nil &&
+			(path.Iface.Index == start.Route.Iface.Index ||
+				path.Iface.Index == start.Link.Index) {
+			return nil
+		}
+		egress, err := classify(path)
+		if err != nil {
+			logger.Debug().
+				Str("dst", dst.String()).
+				Str("interface", path.Iface.Name).
+				Err(err).
+				Msg("route classification failed; allowing fake packets")
+			return nil
+		}
+		if egress.Class != netutil.EgressVPN {
+			return nil
+		}
+		return &packet.FakesOffError{
+			Family:    path.Family,
+			Kind:      packet.FakesOffDstViaVPN,
+			Interface: path.Iface.Name,
+			Reason: fmt.Sprintf(
+				"the route to %s goes through a VPN (%s)", dst, path.Iface.Name,
+			),
+		}
+	}
 }
 
 // logEgress logs the egress of fam.
@@ -247,8 +326,9 @@ func logEgress(logger zerolog.Logger, fam netutil.Family, egress *netutil.Egress
 // proceeds as if it were not.
 func warnUnknownEgress(logger zerolog.Logger, egress *netutil.Egress) {
 	logger.Warn().Msgf(
-		"%s; proceeding as if it were not; if it is a full-tunnel VPN, "+
-			"fake packets and TUN mode do not work through it",
+		"%s; proceeding as if it were not; fake packets and TUN mode do not "+
+			"work through a full-tunnel VPN, so if it is one, disconnect it, "+
+			"or disable fake packets and use HTTP or SOCKS5 mode",
 		egress.Reason,
 	)
 }

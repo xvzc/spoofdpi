@@ -88,6 +88,8 @@ Fake packets, from this option and [`fake-stutter`](#fake-stutter), are sent to 
 
 Fake packets go out through a raw IP socket on every OS and need no gateway: a default route through a point-to-point interface, such as PPP, works. While a full-tunnel VPN carries the traffic, fake packets are off for the whole run, as the censor would not see them: spoofdpi logs a warning at startup, and the Client Hello is still split. In TUN mode, spoofdpi does not start then (see [Full-Tunnel VPNs](app.md#full-tunnel-vpns)).
 
+In the HTTP and SOCKS5 modes, spoofdpi also checks the route to each server: a server that a VPN carries, such as through a split tunnel, gets no fake packets, and spoofdpi logs a warning the first time. Each server's result is kept for 5 seconds.
+
 By default, fake packets carry the connection's real TCP sequence and acknowledgment numbers, learned from the server's SYN/ACK, so they overlap the real Client Hello. See [`fake-seq-offset`](#fake-seq-offset), [`fake-ack-offset`](#fake-ack-offset) and [`syn-ack-timeout`](#syn-ack-timeout) to change this.
 
 !!! note

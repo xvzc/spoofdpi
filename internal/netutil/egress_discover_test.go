@@ -264,6 +264,7 @@ func TestDiscoverEgress_Gateway(t *testing.T) {
 
 		_, err := DiscoverEgress(FamilyV6, gateway, "en0")
 		assert.ErrorContains(t, err, "netlink down")
+		assert.NotErrorIs(t, err, ErrBadGateway)
 	})
 
 	t.Run("loopback kernel route is an error", func(t *testing.T) {
@@ -287,8 +288,10 @@ func TestDiscoverEgress_Gateway(t *testing.T) {
 		_, err := DiscoverEgress(FamilyV6, gateway, "nosuch")
 		assert.EqualError(t, err,
 			`gateway fe80::1: zone "nosuch": no such network interface`)
+		assert.ErrorIs(t, err, ErrBadGateway)
 
 		_, err = DiscoverEgress(FamilyV4, net.ParseIP("2001:db8::1"), "")
 		assert.ErrorContains(t, err, "is not an IPv4 address")
+		assert.ErrorIs(t, err, ErrBadGateway)
 	})
 }

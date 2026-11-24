@@ -16,8 +16,11 @@ func TestLogTUNNotes(t *testing.T) {
 	const (
 		bypassWarn = "IPv6 traffic bypasses spoofdpi in TUN mode"
 		enableHint = "enable --ipv6 or disable IPv6 on the system"
-		fallback   = "IPv6 was disabled because no usable IPv6 route was found " +
-			"or a full-tunnel VPN carries IPv6; IPv6 traffic bypasses spoofdpi in TUN mode"
+		noRouteOff = "IPv6 was disabled because no usable IPv6 route was found; " +
+			"IPv6 traffic bypasses spoofdpi in TUN mode; " +
+			"disable IPv6 on the system to keep it from leaking"
+		vpnOff = "IPv6 was disabled because a full-tunnel VPN carries IPv6; " +
+			"IPv6 traffic goes through the VPN and bypasses spoofdpi"
 		ignoredInfo = "the rules' ipv6 and the dns settings are ignored in TUN mode"
 	)
 
@@ -34,30 +37,44 @@ func TestLogTUNNotes(t *testing.T) {
 		name          string
 		cfg           *config.Config
 		hasIPv6Egress bool
-		ipv6Disabled  bool
+		ipv6Off       ipv6OffCause
 		want          []string
 		notWant       []string
 	}{
 		{
-			name:          "ipv6 disabled at startup with IPv6 egress",
+			name:          "ipv6 disabled for no route, with IPv6 egress",
 			cfg:           tunConfig(nil),
 			hasIPv6Egress: true,
-			ipv6Disabled:  true,
-			want:          []string{fallback},
-			notWant:       []string{enableHint},
+			ipv6Off:       ipv6OffNoRoute,
+			want:          []string{noRouteOff},
+			notWant:       []string{enableHint, vpnOff},
 		},
 		{
-			name:         "ipv6 disabled at startup without IPv6 egress",
-			cfg:          tunConfig(nil),
-			ipv6Disabled: true,
-			notWant:      []string{fallback, bypassWarn},
+			name:    "ipv6 disabled for no route, without IPv6 egress",
+			cfg:     tunConfig(nil),
+			ipv6Off: ipv6OffNoRoute,
+			notWant: []string{noRouteOff, bypassWarn},
+		},
+		{
+			name:          "ipv6 disabled for a VPN",
+			cfg:           tunConfig(nil),
+			hasIPv6Egress: true,
+			ipv6Off:       ipv6OffVPN,
+			want:          []string{vpnOff},
+			notWant:       []string{enableHint, noRouteOff},
+		},
+		{
+			name:    "ipv6 disabled for a VPN, whatever the IPv6 egress lookup says",
+			cfg:     tunConfig(nil),
+			ipv6Off: ipv6OffVPN,
+			want:    []string{vpnOff},
 		},
 		{
 			name:          "ipv6 off with IPv6 egress",
 			cfg:           tunConfig(nil),
 			hasIPv6Egress: true,
 			want:          []string{bypassWarn, enableHint},
-			notWant:       []string{ignoredInfo, fallback},
+			notWant:       []string{ignoredInfo, noRouteOff, vpnOff},
 		},
 		{
 			name:          "ipv6 off without IPv6 egress",
@@ -94,7 +111,7 @@ func TestLogTUNNotes(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			logTUNNotes(zerolog.New(&buf), tc.cfg, tc.hasIPv6Egress, tc.ipv6Disabled)
+			logTUNNotes(zerolog.New(&buf), tc.cfg, tc.hasIPv6Egress, tc.ipv6Off)
 			for _, s := range tc.want {
 				assert.Contains(t, buf.String(), s)
 			}

@@ -393,7 +393,7 @@ func noIPv4RouteError(err error, hasIPv6 bool) error {
 	return fmt.Errorf(
 		"fake packets and TUN mode need an IPv4 default route; none found "+
 			"(IPv6 route: %s). IPv6-only networks are not supported yet; disable "+
-			"fake packets, use HTTP/SOCKS5 mode, or set --gateway: %w",
+			"fake packets, use HTTP or SOCKS5 mode, or set --gateway: %w",
 		ipv6Route,
 		err,
 	)
@@ -401,21 +401,28 @@ func noIPv4RouteError(err error, hasIPv6 bool) error {
 
 // logTUNNotes logs how TUN mode treats the IPv6 and DNS settings of cfg.
 // hasIPv6Egress tells whether the host has an IPv6 route to the internet,
-// and ipv6Disabled whether IPv6 was turned off at startup because no usable
-// IPv6 route was found or a full-tunnel VPN carries IPv6.
+// and ipv6Off why IPv6 was turned off at startup, if it was. IPv6 traffic
+// bypasses spoofdpi in TUN mode whenever IPv6 is off and the host has an
+// IPv6 route; a VPN that carries IPv6 is such a route by itself.
 func logTUNNotes(
 	logger zerolog.Logger,
 	cfg *config.Config,
 	hasIPv6Egress bool,
-	ipv6Disabled bool,
+	ipv6Off ipv6OffCause,
 ) {
 	switch {
-	case cfg.IPv6Enabled() || !hasIPv6Egress:
-	case ipv6Disabled:
+	case cfg.IPv6Enabled():
+	case ipv6Off == ipv6OffVPN:
 		logger.Warn().Msg(
-			"IPv6 was disabled because no usable IPv6 route was found " +
-				"or a full-tunnel VPN carries IPv6; " +
-				"IPv6 traffic bypasses spoofdpi in TUN mode",
+			"IPv6 was disabled because a full-tunnel VPN carries IPv6; " +
+				"IPv6 traffic goes through the VPN and bypasses spoofdpi",
+		)
+	case !hasIPv6Egress:
+	case ipv6Off == ipv6OffNoRoute:
+		logger.Warn().Msg(
+			"IPv6 was disabled because no usable IPv6 route was found; " +
+				"IPv6 traffic bypasses spoofdpi in TUN mode; " +
+				"disable IPv6 on the system to keep it from leaking",
 		)
 	default:
 		logger.Warn().Msg(
@@ -527,7 +534,22 @@ func createServer(
 		udpWriter packet.Writer
 		udpCaps   packet.FakeCapability
 	)
-	fakeGate := packet.NewStaticGate(startup.FakesV4, startup.FakesV6)
+	staticGate := packet.NewStaticGate(startup.FakesV4, startup.FakesV6)
+	var fakeGate packet.FakeCapability = staticGate
+	// The proxy modes check each server's route too. TUN mode routes the
+	// whole traffic itself, and a full-tunnel VPN stops it at startup.
+	if (tcpStack != nil || udpStack != nil) && cfg.App.Mode != config.AppModeTUN {
+		fakeGate = packet.NewRouteGate(
+			staticGate,
+			dstFakeCheck(
+				logging.WithScope(logger, "dsn"),
+				startup.V4,
+				netutil.RouteTo,
+				netutil.ClassifyPath,
+			),
+			packet.RouteGateOptions{},
+		)
+	}
 	if tcpStack != nil {
 		tcpHops, tcpWriter, seqs = hops, tcpStack.Writer, tcpStack.Seqs
 		tcpCaps = fakeGate
@@ -596,7 +618,7 @@ func createServer(
 		), nil
 
 	case config.AppModeTUN:
-		logTUNNotes(logger, cfg, osRouteFinder.hasIPv6Egress(), startup.IPv6Disabled)
+		logTUNNotes(logger, cfg, osRouteFinder.hasIPv6Egress(), startup.IPv6Off)
 		sysNet, err := tun.NewTUNSystemNetwork(
 			logging.WithScope(logger, "sys"),
 			defaultRoute,

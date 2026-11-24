@@ -46,6 +46,8 @@ Fake packets are sent to IPv4 servers only for now. For an IPv6 server they are 
 
 Fake packets go out through a raw IP socket on every OS and need no gateway: a default route through a point-to-point interface, such as PPP, works. While a full-tunnel VPN carries the traffic, fake packets are off for the whole run, as the censor would not see them: spoofdpi logs a warning at startup, and the datagrams are still sent. In TUN mode, spoofdpi does not start then (see [Full-Tunnel VPNs](app.md#full-tunnel-vpns)).
 
+In the HTTP and SOCKS5 modes, spoofdpi also checks the route to each server: a server that a VPN carries, such as through a split tunnel, gets no fake packets, and spoofdpi logs a warning the first time. Each server's result is kept for 5 seconds.
+
 Fake packets share the flow of the real datagrams and rely on their TTL to expire before the server. If the hop count is overestimated, a fake can reach the server, and the server's reply to it is passed on to the application like any other.
 
 !!! note

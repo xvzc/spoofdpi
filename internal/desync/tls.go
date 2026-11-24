@@ -186,8 +186,8 @@ func warnLocalLink(logger zerolog.Logger, ip net.IP) {
 		Msg("server is on the local link, skipping fake packets")
 }
 
-// cannotFakeWarned holds the reasons desyncers have already warned about
-// when skipping fake packets.
+// cannotFakeWarned holds the keys of the causes desyncers have already
+// warned about when skipping fake packets. See cannotFakeKey.
 var cannotFakeWarned sync.Map
 
 // checkFake returns why fake packets cannot be sent to dst, or nil when
@@ -200,23 +200,38 @@ func checkFake(caps packet.FakeCapability, dst net.IP) error {
 }
 
 // logCannotFake logs that the fake packets to the server at ip are skipped
-// for the reason in err. Desyncers warn the first time per distinct reason
-// in the process, and log at debug level after that.
+// for the reason in err. Desyncers warn the first time per cause in the
+// process, and log at debug level after that.
 func logCannotFake(logger zerolog.Logger, ip net.IP, err error) {
+	event := logger.Debug()
+	if _, seen := cannotFakeWarned.LoadOrStore(cannotFakeKey(err), struct{}{}); !seen {
+		event = logger.Warn()
+	}
+	event = event.Str("dst", ip.String())
+
 	reason := err.Error()
 	var off *packet.FakesOffError
 	if errors.As(err, &off) {
 		reason = off.Reason
+		event = event.Str("family", off.Family.String())
+		if off.Interface != "" {
+			event = event.Str("interface", off.Interface)
+		}
 	}
+	event.Str("reason", reason).Msg("skipping fake packets")
+}
 
-	event := logger.Debug()
-	if _, seen := cannotFakeWarned.LoadOrStore(reason, struct{}{}); !seen {
-		event = logger.Warn()
+// cannotFakeKey returns the key of the cause of err for warning once per
+// cause. The reason of a FakesOffError may name the destination, so its
+// key is its family, kind and interface instead: two VPNs each get a
+// warning, and the keys stay few as interfaces are. Other errors are fixed
+// texts.
+func cannotFakeKey(err error) string {
+	var off *packet.FakesOffError
+	if errors.As(err, &off) {
+		return off.Family.String() + "/" + off.Kind + "/" + off.Interface
 	}
-	event.
-		Str("dst", ip.String()).
-		Str("reason", reason).
-		Msg("skipping fake packets")
+	return err.Error()
 }
 
 // hopPolicy returns the policy that turns a hop count estimate into the
