@@ -244,11 +244,13 @@ $ spoofdpi --clean
 
 ## `gateway`
 
-`type: <ip>`
+`type: <ip> or array of <ip>`
 
 ### Description
 
-Specifies the IPv4 address of the default gateway instead of discovering it automatically. `(default: auto-detect)`
+Specifies the default gateway instead of discovering it automatically. `(default: auto-detect)`
+
+The value is an IPv4 address, an IPv6 address, or one of each; two addresses of the same family are rejected. A link-local IPv6 address may name its interface with a zone, as in `fe80::1%en0`; no other address may have a zone. An empty value means automatic discovery: an empty array (`gateway = []`), an empty string, an empty flag value (`--gateway ""`), or only empty entries. The IPv6 address is accepted but not used yet.
 
 The gateway is only used for fake packets ([`tls.fake-preflight`](tls.md#fake-preflight), [`tls.fake-stutter`](tls.md#fake-stutter) or [`udp.fake-preflight`](udp.md#fake-preflight) above 0) and for TUN mode. When this option is set, spoofdpi skips automatic discovery and uses the network interface whose subnet contains the gateway. This helps when automatic discovery fails or picks the wrong route, for example on machines with multiple interfaces or a VPN.
 
@@ -259,21 +261,28 @@ What that interface is used for depends on the system:
     - In the HTTP and SOCKS5 modes, fake packets follow the system's routing table, like any other packet, so the option does not change where they go.
     - In TUN mode, fake packets leave through the selected interface, like TUN mode's own connections: on macOS they are bound to it, and on FreeBSD they use the FIB ([`freebsd-fib`](#freebsd-fib)) whose default route goes via the gateway.
 
-Only IPv4 addresses are supported; an IPv6 address is rejected with the error "IPv6 gateways are not supported yet". If no interface is on the same subnet as the gateway, spoofdpi fails to start. If neither fake packets nor TUN mode is enabled, this option is ignored with a warning.
+If no interface is on the same subnet as the gateway, spoofdpi fails to start. If neither fake packets nor TUN mode is enabled, this option is ignored with a warning.
 
 When this option is not set, fake packets and TUN mode need an IPv4 default route. If the system has none, for example on an IPv6-only network, spoofdpi fails to start with an error that says so and whether the system has an IPv6 route. IPv6-only networks are not supported yet.
 
 ### Usage
 
 **Command-Line Flag**
+
+Repeat the flag, or separate the addresses with commas. The flag replaces the whole `gateway` of the TOML config.
+
 ```console
 $ spoofdpi --gateway 192.168.1.1
+$ spoofdpi --gateway 192.168.1.1 --gateway fe80::1%en0
+$ spoofdpi --gateway 192.168.1.1,fe80::1%en0
 ```
 
 **TOML Config**
 ```toml
 [app]
 gateway = "192.168.1.1"
+# or, with an IPv6 gateway too
+gateway = ["192.168.1.1", "fe80::1%en0"]
 ```
 
 ---

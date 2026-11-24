@@ -438,7 +438,7 @@ func createServer(
 	var defaultRoute *netutil.Route
 	if cfg.NeedsRoute() {
 		var err error
-		defaultRoute, err = netutil.DiscoverRoute(cfg.App.Gateway)
+		defaultRoute, err = netutil.DiscoverRoute(cfg.App.Gateway.V4)
 		if errors.Is(err, netutil.ErrNoIPv4Route) {
 			_, hasIPv6 := netutil.IPv6Egress()
 			return nil, noIPv4RouteError(err, hasIPv6)
@@ -446,9 +446,9 @@ func createServer(
 		if err != nil {
 			return nil, fmt.Errorf("failed to find default route: %w", err)
 		}
-	} else if cfg.App.Gateway != nil {
+	} else if cfg.App.Gateway.V4 != nil {
 		logger.Warn().
-			Str("gateway", cfg.App.Gateway.String()).
+			Str("gateway", cfg.App.Gateway.V4.String()).
 			Msg("gateway is ignored; only fake packets and tun mode use it")
 	}
 

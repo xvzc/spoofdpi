@@ -31,7 +31,7 @@ type AppOptions struct {
 	AutoConfigureNetwork bool          `toml:"auto-configure-network"`
 	Mode                 AppModeType   `toml:"mode"`
 	ListenAddr           net.TCPAddr   `toml:"listen-addr"`
-	Gateway              net.IP        `toml:"gateway"`     // nil: discover from the routing table
+	Gateway              Gateways      `toml:"gateway"`     // zero: discover from the routing table
 	FreebsdFIB           int           `toml:"freebsd-fib"` // FreeBSD only: FIB ID for routing (2-15)
 	// IPv6 is the global ipv6 option. Rules inherit it unless they set
 	// their own; RuntimeConfig.IPv6 holds the value a connection uses.
@@ -62,8 +62,8 @@ func (o *AppOptions) UnmarshalTOML(data any) (err error) {
 	if p := findFrom(m, "listen-addr", parseStringFn(checkHostPort), &err); isOk(p, err) {
 		o.ListenAddr = MustParseTCPAddr(*p)
 	}
-	if p := findFrom(m, "gateway", parseStringFn(checkGateway), &err); isOk(p, err) {
-		o.Gateway = MustParseIPv4(*p)
+	if p := findFrom(m, "gateway", parseGatewaysFn(), &err); isOk(p, err) {
+		o.Gateway = *p
 	}
 	if p := findFrom(
 		m,
@@ -81,6 +81,41 @@ func (o *AppOptions) UnmarshalTOML(data any) (err error) {
 	}
 
 	return err
+}
+
+// TODO(l3): since fake packets are sent at L3, gateway only overrides the
+// interface of packet capture and of TUN mode's route out of the TUN.
+// Reconsider whether it is still needed, or deprecate it.
+//
+// Gateways is the gateway option: at most one gateway per address family.
+// A nil address is discovered from the routing table.
+type Gateways struct {
+	V4 net.IP
+	V6 net.IP
+	// V6Zone is the zone of V6, which only a link-local V6 may have.
+	V6Zone string
+}
+
+// IsZero reports whether no gateway is set.
+func (g Gateways) IsZero() bool {
+	return g.V4 == nil && g.V6 == nil
+}
+
+// String returns the gateways that are set, separated by ", ", such as
+// "192.168.1.1, fe80::1%en0".
+func (g Gateways) String() string {
+	var parts []string
+	if g.V4 != nil {
+		parts = append(parts, g.V4.String())
+	}
+	if g.V6 != nil {
+		v6 := g.V6.String()
+		if g.V6Zone != "" {
+			v6 += "%" + g.V6Zone
+		}
+		parts = append(parts, v6)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ┌──────────────┐

@@ -32,7 +32,7 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 			AutoConfigureNetwork: false,
 			Mode:                 AppModeHTTP,
 			ListenAddr:           net.TCPAddr{},
-			Gateway:              nil,
+			Gateway:              Gateways{},
 			FreebsdFIB:           1,
 			IPv6:                 false,
 		},
@@ -401,17 +401,27 @@ func CreateCommand(
 					},
 				},
 
-				&cli.StringFlag{
+				&cli.StringSliceFlag{
 					Name: "gateway",
 					Usage: `
-				IPv4 address of the default gateway, skipping automatic discovery.
-				Only used with fake packets or tun mode (default: auto-detect)`,
-					OnlyOnce:  true,
-					Validator: checkGateway,
-					Action: func(ctx context.Context, cmd *cli.Command, v string) error {
-						gateway := MustParseIPv4(v)
+				Default gateway, skipping automatic discovery: an IPv4 address,
+				an IPv6 address (a link-local one may take a %<interface> zone),
+				or one of each. Repeat the flag or separate the addresses with
+				commas; an empty value means auto-detect. Replaces the gateway
+				of the config file. The IPv4 gateway is only used with fake
+				packets or tun mode; the IPv6 one is not used yet
+				(default: auto-detect)`,
+					Validator: func(v []string) error {
+						_, err := parseGateways(v)
+						return err
+					},
+					Action: func(ctx context.Context, cmd *cli.Command, v []string) error {
+						gateways, err := parseGateways(v)
+						if err != nil {
+							return err
+						}
 						cliOverrides = append(cliOverrides, func(cfg *Config) {
-							cfg.App.Gateway = gateway
+							cfg.App.Gateway = gateways
 						})
 						return nil
 					},

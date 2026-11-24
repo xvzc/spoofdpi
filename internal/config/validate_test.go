@@ -62,46 +62,6 @@ func TestCheckHostPort(t *testing.T) {
 	}
 }
 
-func TestCheckGateway(t *testing.T) {
-	tcs := []struct {
-		name    string
-		input   string
-		wantErr bool
-	}{
-		{"valid private ipv4", "192.168.1.1", false},
-		{"valid public ipv4", "203.0.113.1", false},
-		{"valid link-local ipv4", "169.254.1.1", false},
-		{"ipv6", "fe80::1", true},
-		{"hostname", "router.local", true},
-		{"empty", "", true},
-		{"with port", "192.168.1.1:53", true},
-		{"unspecified", "0.0.0.0", true},
-		{"loopback", "127.0.0.1", true},
-		{"multicast", "224.0.0.1", true},
-		{"broadcast", "255.255.255.255", true},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			err := checkGateway(tc.input)
-			if tc.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestCheckGateway_IPv6(t *testing.T) {
-	for _, v := range []string{"fe80::1", "fe80::1%en0", "2001:db8::1"} {
-		assert.ErrorContains(t, checkGateway(v), "IPv6 gateways are not supported yet", v)
-	}
-
-	// An IPv4-mapped address is an IPv4 address.
-	assert.NoError(t, checkGateway("::ffff:192.168.1.1"))
-}
-
 func TestCheckCIDR(t *testing.T) {
 	tcs := []struct {
 		name    string
