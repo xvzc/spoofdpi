@@ -1,10 +1,10 @@
 # Documentation
 
-This project utilizes the [Material for MkDocs](https://github.com/squidfunk/mkdocs-material) theme as a static site generator for project documentation.
+The project documentation is built with [MkDocs](https://www.mkdocs.org) and the [Material for MkDocs](https://github.com/squidfunk/mkdocs-material) theme.
 
 ## Setup
 
-Install the necessary dependencies. We explicitly install the Material theme which should include MkDocs as a dependency.
+Install the theme. `mkdocs-material` installs MkDocs as a dependency.
 
 ```console
 $ pip install mkdocs-material
@@ -21,3 +21,13 @@ $ mkdocs serve
 ```
 
 This command will start a development server (usually accessible at `http://127.0.0.1:8000`), which automatically reloads upon source file changes.
+
+## When to Update the Docs
+
+Update the docs when a change adds, removes, or renames a config option, or changes user-observable runtime behavior. Pure refactors and internal changes don't need a doc update.
+
+Where each topic goes:
+
+- `docs/user-guide/`: config options and runtime behavior.
+- `docs/getting-started/`: install, quick start, and introduction.
+- `docs/developer-guide/`: build, test, lint, and commit workflow.

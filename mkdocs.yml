@@ -67,7 +67,6 @@ nav:
     - 'Live Test': user-guide/livetest.md
     - 'Probe': user-guide/probe.md
   - 'Developer Guide':
-    - 'Agent Setup': developer-guide/agent-setup.md
     - 'Build and Run': developer-guide/build-and-run.md
     - 'Running Tests': developer-guide/running-tests.md
     - 'Writing Test Code': developer-guide/writing-tests.md

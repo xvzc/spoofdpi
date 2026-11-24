@@ -1,4 +1,4 @@
-.PHONY: build test test-unit test-network test-root test-e2e test-all lint fmt fmt-check pre-commit claude
+.PHONY: build test test-unit test-network test-root test-e2e test-all lint fmt fmt-check pre-commit
 
 E2E_BIN := $(CURDIR)/out/e2e/spoofdpi
 
@@ -49,7 +49,3 @@ pre-commit:
 	$(MAKE) fmt-check
 	$(MAKE) lint
 
-claude:
-	mkdir -p .claude
-	ln -sf ../.agents/rules .claude/rules
-	ln -sf ../.agents/AGENTS.md .claude/CLAUDE.md
