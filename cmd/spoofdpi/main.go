@@ -278,13 +278,11 @@ func setupNetworkStack(
 	logger.Info().Msg("network info")
 	logger.Info().
 		Str("name", route.Iface.Name).
-		Str("mac", route.Iface.HardwareAddr.String()).
 		Msg(" interface")
 
 	sender, sErr := packet.OpenIPv4Sender(
 		ctx,
 		logger,
-		route,
 		fakeSenderOptions(cfg, route),
 	)
 	if sErr != nil {

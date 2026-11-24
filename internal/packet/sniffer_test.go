@@ -15,6 +15,28 @@ import (
 	"github.com/xvzc/spoofdpi/internal/capture"
 )
 
+// captureHandle is a capture handle that reads nothing, accepts any
+// filter, and records whether it was closed. Tests embed it and override
+// what they observe.
+type captureHandle struct {
+	closed bool
+}
+
+func (h *captureHandle) ReadPacketData() ([]byte, gopacket.CaptureInfo, error) {
+	return nil, gopacket.CaptureInfo{}, nil
+}
+
+func (h *captureHandle) SetBPFRawInstructionFilter(
+	[]capture.BPFInstruction,
+) error {
+	return nil
+}
+
+func (h *captureHandle) ClearBPF() error { return nil }
+
+func (h *captureHandle) LinkType() layers.LinkType { return layers.LinkTypeEthernet }
+func (h *captureHandle) Close()                    { h.closed = true }
+
 // filterHandle is a capture handle that has no packets to read, and that
 // records the filter installed on it or rejects it with setErr.
 type filterHandle struct {

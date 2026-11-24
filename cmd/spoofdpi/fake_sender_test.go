@@ -43,12 +43,12 @@ func TestFakeSenderError(t *testing.T) {
 		"tls.fake-stutter and udp.fake-preflight to 0, globally and in every "+
 		"[[rules]] entry that sets them")
 
-	other := errors.New("on eth0: resolve gateway MAC: timed out")
+	other := errors.New("on eth0: network is unreachable")
 	err = fakeSenderError(other)
 	assert.ErrorIs(t, err, other)
 	assert.Equal(
 		t,
-		"fake packet sender: on eth0: resolve gateway MAC: timed out",
+		"fake packet sender: on eth0: network is unreachable",
 		err.Error(),
 	)
 }

@@ -886,7 +886,7 @@ func TestRun_FakesUnavailable(t *testing.T) {
 	}{
 		{
 			name:   "no route",
-			err:    errors.New("resolve gateway MAC: timed out"),
+			err:    errors.New("network is unreachable"),
 			reason: "fake packets unavailable",
 		},
 		{

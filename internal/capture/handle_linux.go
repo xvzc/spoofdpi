@@ -15,7 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// LinuxHandle uses standard syscalls (via x/sys/unix) to capture/inject packets.
+// LinuxHandle uses standard syscalls (via x/sys/unix) to capture packets.
 // This ensures compatibility across all Linux architectures (including 386/MIPS).
 type LinuxHandle struct {
 	fd      int
@@ -59,17 +59,6 @@ func NewHandle(iface *net.Interface) (Handle, error) {
 	}
 
 	return h, nil
-}
-
-// NewWriteHandle opens a raw socket that only writes frames to iface. Its
-// protocol is 0, so the kernel delivers it no packets: it costs nothing
-// while unread. ReadPacketData on it never returns.
-func NewWriteHandle(iface *net.Interface) (Handle, error) {
-	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, 0)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open raw socket: %w", err)
-	}
-	return &LinuxHandle{fd: fd, ifIndex: iface.Index}, nil
 }
 
 // NewHandleWithReadTimeout is like NewHandle, but ReadPacketData returns an
@@ -133,14 +122,6 @@ func (h *LinuxHandle) ReadPacketData() ([]byte, gopacket.CaptureInfo, error) {
 	}
 
 	return data, ci, nil
-}
-
-// WritePacketData injects packet using unix.Sendto
-func (h *LinuxHandle) WritePacketData(data []byte) error {
-	addr := &unix.SockaddrLinklayer{
-		Ifindex: h.ifIndex,
-	}
-	return unix.Sendto(h.fd, data, 0, addr)
 }
 
 func (h *LinuxHandle) LinkType() layers.LinkType {

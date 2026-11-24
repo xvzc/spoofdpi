@@ -12,9 +12,6 @@ type Handle interface {
 	// ReadPacketData reads the next packet from the wire.
 	ReadPacketData() (data []byte, ci gopacket.CaptureInfo, err error)
 
-	// WritePacketData sends a raw packet.
-	WritePacketData(data []byte) error
-
 	SetBPFRawInstructionFilter(filters []BPFInstruction) error
 
 	ClearBPF() error

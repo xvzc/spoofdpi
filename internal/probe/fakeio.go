@@ -78,7 +78,7 @@ func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error)
 	if err != nil {
 		return nil, err
 	}
-	sender, err := packet.OpenIPv4Sender(ctx, zerolog.Nop(), route, inject.Options{})
+	sender, err := packet.OpenIPv4Sender(ctx, zerolog.Nop(), inject.Options{})
 	if errors.Is(err, inject.ErrNeedsRoot) {
 		return nil, fmt.Errorf("%w: %w", errFakeCapture, err)
 	}
