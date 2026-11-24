@@ -6,22 +6,20 @@ import (
 	"bytes"
 	"errors"
 	"net"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xvzc/spoofdpi/internal/testutil"
 	"golang.org/x/sys/unix"
 )
 
-// TestNewWriteHandle_live writes a frame to the loopback interface with a
+// TestNewWriteHandle_RequireRoot writes a frame to the loopback interface with a
 // write handle, sees it on a capture handle, and checks that the write
 // handle itself received nothing. It needs root.
-func TestNewWriteHandle_live(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("needs root")
-	}
+func TestNewWriteHandle_RequireRoot(t *testing.T) {
+	testutil.RequireRoot(t)
 	lo, err := net.InterfaceByName("lo")
 	if err != nil {
 		t.Skipf("no lo: %v", err)

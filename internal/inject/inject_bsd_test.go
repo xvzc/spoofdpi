@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/testutil"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 )
@@ -109,10 +110,8 @@ func TestOpen_NeedsRoot(t *testing.T) {
 	}
 }
 
-func TestOpen_ControlError(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("needs root: raw sockets")
-	}
+func TestOpen_ControlError_RequireRoot(t *testing.T) {
+	testutil.RequireRoot(t)
 	boom := errors.New("boom")
 	control := func(string, string, syscall.RawConn) error { return boom }
 	for _, fam := range []netutil.Family{netutil.FamilyV4, netutil.FamilyV6} {

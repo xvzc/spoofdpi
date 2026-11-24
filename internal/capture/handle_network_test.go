@@ -4,19 +4,17 @@ package capture
 
 import (
 	"net"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/xvzc/spoofdpi/internal/testutil"
 )
 
-// TestNewHandleWithReadTimeout_live opens a real capture handle on the
+// TestNewHandleWithReadTimeout_RequireRoot opens a real capture handle on the
 // loopback interface, so it needs root.
-func TestNewHandleWithReadTimeout_live(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("needs root")
-	}
+func TestNewHandleWithReadTimeout_RequireRoot(t *testing.T) {
+	testutil.RequireRoot(t)
 
 	ifaces, err := net.Interfaces()
 	require.NoError(t, err)

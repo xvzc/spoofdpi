@@ -5,7 +5,6 @@ package tun
 import (
 	"fmt"
 	"net/netip"
-	"os"
 	"syscall"
 	"testing"
 	"time"
@@ -17,12 +16,13 @@ import (
 	"github.com/xvzc/spoofdpi/internal/capture"
 	"github.com/xvzc/spoofdpi/internal/inject"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/testutil"
 )
 
 // testNet1 is a TEST-NET-1 address (RFC 5737) that no host answers.
 var testNet1 = netip.MustParseAddr("192.0.2.1")
 
-// TestEgressControlLive_RawSocket pins the raw IPv4 socket of fake packets
+// TestEgressControlLive_RawSocket_RequireRoot pins the raw IPv4 socket of fake packets
 // with EgressControl, as TUN mode does, and checks that the pin holds:
 //   - the socket's IP_BOUND_IF, read back, is the pinned interface;
 //   - pinned to the interface of the default route, a TTL 1 packet to
@@ -34,10 +34,8 @@ var testNet1 = netip.MustParseAddr("192.0.2.1")
 // It does not pin to lo0 to see a send fail: darwin ignores IP_BOUND_IF
 // set to the loopback interface, and the packet leaves by the default
 // route.
-func TestEgressControlLive_RawSocket(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("needs root: raw sockets and packet capture")
-	}
+func TestEgressControlLive_RawSocket_RequireRoot(t *testing.T) {
+	testutil.RequireRoot(t)
 	route, err := netutil.DiscoverRoute(nil)
 	if err != nil {
 		t.Skipf("no IPv4 default route: %v", err)

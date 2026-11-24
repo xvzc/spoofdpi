@@ -69,7 +69,8 @@ nav:
   - 'Developer Guide':
     - 'Agent Setup': developer-guide/agent-setup.md
     - 'Build and Run': developer-guide/build-and-run.md
-    - 'Testing': developer-guide/testing.md
+    - 'Running Tests': developer-guide/running-tests.md
+    - 'Writing Test Code': developer-guide/writing-tests.md
     - 'Code Quality': developer-guide/code-quality.md
     - 'Commit Messages': developer-guide/commit-messages.md
     - 'Documentation': developer-guide/documentation.md

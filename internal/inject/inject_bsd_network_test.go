@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/netip"
-	"os"
 	"testing"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/capture"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/testutil"
 )
 
 // liveFakeSeq and liveFakeAck are the sequence numbers of the live tests'
@@ -30,16 +30,16 @@ const (
 // liveCaptureWait bounds the wait for a sent fake to show up in a capture.
 const liveCaptureWait = 3 * time.Second
 
-// TestSenderLive_LocalConnection sends one fake TCP segment, with hop
+// TestSenderLive_LocalConnection_RequireRoot sends one fake TCP segment, with hop
 // limit 1, a PSH|ACK, an MD5 signature option and out-of-window sequence
 // numbers, into a real loopback connection, captures it on the loopback
 // interface, and checks that the connection still carries data after it.
 //
 // The IPv4 header checksum is not checked here: lo0 offloads it (TXCSUM),
-// so the kernel may leave it unset. TestSenderLive_RoutedInterface checks
+// so the kernel may leave it unset. TestSenderLive_RoutedInterface_RequireRoot checks
 // it on the interface of a route out of the host.
-func TestSenderLive_LocalConnection(t *testing.T) {
-	requireRoot(t)
+func TestSenderLive_LocalConnection_RequireRoot(t *testing.T) {
+	testutil.RequireRoot(t)
 
 	tcs := []struct {
 		fam     netutil.Family
@@ -87,14 +87,14 @@ func TestSenderLive_LocalConnection(t *testing.T) {
 	}
 }
 
-// TestSenderLive_RoutedInterface sends one IPv4 fake TCP segment with
+// TestSenderLive_RoutedInterface_RequireRoot sends one IPv4 fake TCP segment with
 // TTL 1 to TEST-NET-1, where the first router drops it, and captures it
 // on the interface the kernel routes it out of. That is a physical
 // interface on most hosts, which, unlike lo0, may fill the IPv4 header
 // checksum in software: a checksum of 0 means it is offloaded, and is
 // not checked.
-func TestSenderLive_RoutedInterface(t *testing.T) {
-	requireRoot(t)
+func TestSenderLive_RoutedInterface_RequireRoot(t *testing.T) {
+	testutil.RequireRoot(t)
 	dstAddr := netip.MustParseAddr("192.0.2.1")
 	path, err := netutil.RouteTo(dstAddr)
 	if err != nil {
@@ -124,13 +124,6 @@ func TestSenderLive_RoutedInterface(t *testing.T) {
 		return
 	}
 	assert.True(t, onesComplementValid(ip4.Contents), "valid IPv4 header checksum")
-}
-
-func requireRoot(t *testing.T) {
-	t.Helper()
-	if os.Geteuid() != 0 {
-		t.Skip("needs root: raw sockets and packet capture")
-	}
 }
 
 // loopbackInterface returns the loopback interface.
