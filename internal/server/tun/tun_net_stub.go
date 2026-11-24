@@ -4,6 +4,7 @@ package tun
 
 import (
 	"net"
+	"syscall"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/netutil"
@@ -49,5 +50,13 @@ func (n *tunSystemNetworkStub) BindDialer(
 	network string,
 	targetIP net.IP,
 ) error {
+	return nil
+}
+
+// EgressControl returns nil: TUN mode is not supported here.
+func EgressControl(
+	*netutil.Route,
+	int,
+) func(network, address string, c syscall.RawConn) error {
 	return nil
 }

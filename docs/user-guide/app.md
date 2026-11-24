@@ -250,6 +250,13 @@ Specifies the IPv4 address of the default gateway instead of discovering it auto
 
 The gateway is only used for fake packets ([`tls.fake-preflight`](tls.md#fake-preflight), [`tls.fake-stutter`](tls.md#fake-stutter) or [`udp.fake-preflight`](udp.md#fake-preflight) above 0) and for TUN mode. When this option is set, spoofdpi skips automatic discovery and uses the network interface whose subnet contains the gateway. This helps when automatic discovery fails or picks the wrong route, for example on machines with multiple interfaces or a VPN.
 
+What that interface is used for depends on the system:
+
+- On Linux, fake packets are sent on that interface, to the gateway's MAC address. Packet capture and TUN mode's route out of the TUN use it too.
+- On macOS and FreeBSD, the option selects the interface that packet capture runs on and TUN mode's route out of the TUN. Where fake packets go depends on the mode:
+    - In the HTTP and SOCKS5 modes, fake packets follow the system's routing table, like any other packet, so the option does not change where they go.
+    - In TUN mode, fake packets leave through the selected interface, like TUN mode's own connections: on macOS they are bound to it, and on FreeBSD they use the FIB ([`freebsd-fib`](#freebsd-fib)) whose default route goes via the gateway.
+
 Only IPv4 addresses are supported; an IPv6 address is rejected with the error "IPv6 gateways are not supported yet". If no interface is on the same subnet as the gateway, spoofdpi fails to start. If neither fake packets nor TUN mode is enabled, this option is ignored with a warning.
 
 When this option is not set, fake packets and TUN mode need an IPv4 default route. If the system has none, for example on an IPv6-only network, spoofdpi fails to start with an error that says so and whether the system has an IPv6 route. IPv6-only networks are not supported yet.

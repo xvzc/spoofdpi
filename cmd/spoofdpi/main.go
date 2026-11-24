@@ -16,6 +16,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/dns"
+	"github.com/xvzc/spoofdpi/internal/inject"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
@@ -271,19 +272,6 @@ func setupNetworkStack(
 		return
 	}
 
-	resolveCtx, resolveCancel := context.WithTimeout(ctx, 10*time.Second)
-	gatewayMAC, rErr := packet.ResolveGatewayMAC(
-		resolveCtx,
-		&route.Iface,
-		route.LocalIP,
-		route.Gateway,
-	)
-	resolveCancel()
-	if rErr != nil {
-		err = rErr
-		return
-	}
-
 	pktLogger := logging.WithScope(logger, "pkt")
 	hops = packet.NewHopStore()
 
@@ -292,13 +280,15 @@ func setupNetworkStack(
 		Str("name", route.Iface.Name).
 		Str("mac", route.Iface.HardwareAddr.String()).
 		Msg(" interface")
-	logger.Info().
-		Str("mac", gatewayMAC.String()).
-		Msg(" gateway")
 
-	sender, sErr := packet.OpenL2Sender(&route.Iface, gatewayMAC)
+	sender, sErr := packet.OpenIPv4Sender(
+		ctx,
+		logger,
+		route,
+		fakeSenderOptions(cfg, route),
+	)
 	if sErr != nil {
-		err = fmt.Errorf("fake packet sender on %s: %w", route.Iface.Name, sErr)
+		err = fakeSenderError(sErr)
 		return
 	}
 	senders := packet.Senders{V4: sender}
@@ -334,6 +324,32 @@ func setupNetworkStack(
 	}
 
 	return
+}
+
+// fakeSenderOptions returns the options of the raw sockets that fake
+// packets leave through. In TUN mode they are pinned to the physical
+// interface like the dialed connections, so that the TUN's routes cannot
+// carry the fakes into the TUN. The proxy modes leave the route to the
+// kernel.
+func fakeSenderOptions(cfg *config.Config, route *netutil.Route) inject.Options {
+	if cfg.App.Mode != config.AppModeTUN {
+		return inject.Options{}
+	}
+	return inject.Options{Control: tun.EgressControl(route, cfg.App.FreebsdFIB)}
+}
+
+// fakeSenderError explains err, a failure to open the sender of fake
+// packets, with what the user can do about missing privileges.
+func fakeSenderError(err error) error {
+	if errors.Is(err, inject.ErrNeedsRoot) {
+		return fmt.Errorf(
+			"fake packet sender: %w; run as root, or set tls.fake-preflight, "+
+				"tls.fake-stutter and udp.fake-preflight to 0, globally and in "+
+				"every [[rules]] entry that sets them",
+			err,
+		)
+	}
+	return fmt.Errorf("fake packet sender: %w", err)
 }
 
 // noIPv4RouteError explains err, a failed IPv4 default route discovery,

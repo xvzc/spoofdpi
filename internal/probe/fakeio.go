@@ -6,20 +6,16 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/desync"
+	"github.com/xvzc/spoofdpi/internal/inject"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
-// gatewayResolveTimeout bounds the ARP lookup of the gateway's MAC address
-// that fake packets are sent to, as in spoofdpi.
-const gatewayResolveTimeout = 10 * time.Second
-
-// errFakeCapture marks the failure to open a capture handle of the fake
-// stack: the sniffer's, or the one fake packets are sent through.
+// errFakeCapture marks the failure to open the capture handle of the fake
+// stack, or for lack of root the socket its fake packets are sent through.
 var errFakeCapture = errors.New("open capture")
 
 // fakeLog is what the fake packets of one attempt were.
@@ -82,20 +78,12 @@ func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error)
 	if err != nil {
 		return nil, err
 	}
-	resolveCtx, cancel := context.WithTimeout(ctx, gatewayResolveTimeout)
-	defer cancel()
-	gatewayMAC, err := packet.ResolveGatewayMAC(
-		resolveCtx,
-		&route.Iface,
-		route.LocalIP,
-		route.Gateway,
-	)
+	sender, err := packet.OpenIPv4Sender(ctx, zerolog.Nop(), route, inject.Options{})
+	if errors.Is(err, inject.ErrNeedsRoot) {
+		return nil, fmt.Errorf("%w: %w", errFakeCapture, err)
+	}
 	if err != nil {
 		return nil, err
-	}
-	sender, err := packet.OpenL2Sender(&route.Iface, gatewayMAC)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errFakeCapture, err)
 	}
 	hops := packet.NewHopStore()
 	stack, err := packet.OpenTCPStack(

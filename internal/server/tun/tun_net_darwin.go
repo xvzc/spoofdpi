@@ -181,6 +181,40 @@ func (n *tunSystemNetworkDarwin) FIBID() int {
 	return 1
 }
 
+// EgressControl returns the socket control that pins a socket's IPv4
+// traffic to the physical interface of route with IP_BOUND_IF, as TUN mode
+// needs: its routes would otherwise carry the traffic into the TUN. fibID
+// is not used on darwin. It returns nil when route has no interface.
+// BindDialer pins the dialed connections with it, and TUN mode pins the
+// raw sockets of fake packets with it too, so the two cannot diverge.
+func EgressControl(
+	route *netutil.Route,
+	fibID int,
+) func(network, address string, c syscall.RawConn) error {
+	if route == nil || route.Iface.Name == "" {
+		return nil
+	}
+	index := route.Iface.Index
+	return func(_, _ string, c syscall.RawConn) error {
+		var sockErr error
+		err := c.Control(func(fd uintptr) {
+			sockErr = syscall.SetsockoptInt(
+				int(fd),
+				syscall.IPPROTO_IP,
+				syscall.IP_BOUND_IF,
+				index,
+			)
+		})
+		if err != nil {
+			return fmt.Errorf("failed to control socket: %w", err)
+		}
+		if sockErr != nil {
+			return fmt.Errorf("failed to set IP_BOUND_IF: %w", sockErr)
+		}
+		return nil
+	}
+}
+
 func (n *tunSystemNetworkDarwin) BindDialer(
 	dialer *net.Dialer,
 	network string,
@@ -226,24 +260,7 @@ func (n *tunSystemNetworkDarwin) BindDialer(
 		dialer.LocalAddr = &net.IPAddr{IP: sourceIP}
 	}
 
-	dialer.Control = func(network, address string, c syscall.RawConn) error {
-		var sockErr error
-		err := c.Control(func(fd uintptr) {
-			sockErr = syscall.SetsockoptInt(
-				int(fd),
-				syscall.IPPROTO_IP,
-				syscall.IP_BOUND_IF,
-				iface.Index,
-			)
-		})
-		if err != nil {
-			return fmt.Errorf("failed to control socket: %w", err)
-		}
-		if sockErr != nil {
-			return fmt.Errorf("failed to set IP_BOUND_IF: %w", sockErr)
-		}
-		return nil
-	}
+	dialer.Control = EgressControl(n.defaultRoute, 0)
 
 	return nil
 }

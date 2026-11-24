@@ -250,6 +250,40 @@ func (n *tunSystemNetworkLinux) FIBID() int {
 	return 1
 }
 
+// EgressControl returns the socket control that binds a socket to the
+// physical interface of route with SO_BINDTODEVICE, as TUN mode needs: its
+// routes would otherwise carry the traffic into the TUN. fibID is not used
+// on Linux. It returns nil when route has no interface. BindDialer pins
+// the dialed connections with it. Fake packets on Linux are written on
+// the physical interface directly and do not use it.
+func EgressControl(
+	route *netutil.Route,
+	fibID int,
+) func(network, address string, c syscall.RawConn) error {
+	if route == nil || route.Iface.Name == "" {
+		return nil
+	}
+	name := route.Iface.Name
+	return func(_, _ string, c syscall.RawConn) error {
+		var sockErr error
+		err := c.Control(func(fd uintptr) {
+			sockErr = syscall.SetsockoptString(
+				int(fd),
+				syscall.SOL_SOCKET,
+				syscall.SO_BINDTODEVICE,
+				name,
+			)
+		})
+		if err != nil {
+			return fmt.Errorf("failed to control socket: %w", err)
+		}
+		if sockErr != nil {
+			return fmt.Errorf("failed to set SO_BINDTODEVICE: %w", sockErr)
+		}
+		return nil
+	}
+}
+
 func (n *tunSystemNetworkLinux) BindDialer(
 	dialer *net.Dialer,
 	network string,
@@ -295,24 +329,7 @@ func (n *tunSystemNetworkLinux) BindDialer(
 		dialer.LocalAddr = &net.IPAddr{IP: sourceIP}
 	}
 
-	dialer.Control = func(network, address string, c syscall.RawConn) error {
-		var sockErr error
-		err := c.Control(func(fd uintptr) {
-			sockErr = syscall.SetsockoptString(
-				int(fd),
-				syscall.SOL_SOCKET,
-				syscall.SO_BINDTODEVICE,
-				n.defaultRoute.Iface.Name,
-			)
-		})
-		if err != nil {
-			return fmt.Errorf("failed to control socket: %w", err)
-		}
-		if sockErr != nil {
-			return fmt.Errorf("failed to set SO_BINDTODEVICE: %w", sockErr)
-		}
-		return nil
-	}
+	dialer.Control = EgressControl(n.defaultRoute, 0)
 
 	return nil
 }

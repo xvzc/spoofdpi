@@ -109,8 +109,8 @@ func checkHostPort(v string) error {
 	return checkUint16(int64(portInt))
 }
 
-// checkGateway accepts an IPv4 unicast address. The gateway MAC is resolved
-// via ARP, so IPv6 gateways are not supported yet.
+// checkGateway accepts an IPv4 unicast address. On Linux the gateway MAC
+// is resolved via ARP, so IPv6 gateways are not supported yet.
 func checkGateway(v string) error {
 	if addr, err := netip.ParseAddr(v); err == nil && addr.Is6() && !addr.Is4In6() {
 		return fmt.Errorf("value '%s': IPv6 gateways are not supported yet", v)

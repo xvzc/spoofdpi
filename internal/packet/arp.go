@@ -26,7 +26,7 @@ func ResolveGatewayMAC(
 
 	handle, err := capture.NewHandle(iface)
 	if err != nil {
-		return nil, fmt.Errorf("open pcap handle on %s: %w", iface.Name, err)
+		return nil, fmt.Errorf("open pcap handle: %w", err)
 	}
 	defer handle.Close()
 

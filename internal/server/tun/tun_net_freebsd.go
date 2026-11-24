@@ -219,6 +219,40 @@ func (n *tunSystemNetworkFreeBSD) FIBID() int {
 	return n.fibID
 }
 
+// EgressControl returns the socket control that puts a socket in FIB
+// fibID with SO_SETFIB, whose default route is the physical one, as TUN
+// mode needs: the main FIB's routes would otherwise carry the traffic into
+// the TUN. route is not used on FreeBSD. It returns nil when fibID is not
+// positive. BindDialer pins the dialed connections with it, and TUN mode
+// pins the raw sockets of fake packets with it too, so the two cannot
+// diverge.
+func EgressControl(
+	route *netutil.Route,
+	fibID int,
+) func(network, address string, c syscall.RawConn) error {
+	if fibID <= 0 {
+		return nil
+	}
+	return func(_, _ string, c syscall.RawConn) error {
+		var sockErr error
+		err := c.Control(func(fd uintptr) {
+			sockErr = syscall.SetsockoptInt(
+				int(fd),
+				syscall.SOL_SOCKET,
+				syscall.SO_SETFIB,
+				fibID,
+			)
+		})
+		if err != nil {
+			return fmt.Errorf("failed to control socket: %w", err)
+		}
+		if sockErr != nil {
+			return fmt.Errorf("failed to set SO_SETFIB to %d: %w", fibID, sockErr)
+		}
+		return nil
+	}
+}
+
 func (n *tunSystemNetworkFreeBSD) BindDialer(
 	dialer *net.Dialer,
 	network string,
@@ -264,24 +298,7 @@ func (n *tunSystemNetworkFreeBSD) BindDialer(
 		dialer.LocalAddr = &net.IPAddr{IP: sourceIP}
 	}
 
-	dialer.Control = func(network, address string, c syscall.RawConn) error {
-		var sockErr error
-		err := c.Control(func(fd uintptr) {
-			sockErr = syscall.SetsockoptInt(
-				int(fd),
-				syscall.SOL_SOCKET,
-				syscall.SO_SETFIB,
-				n.fibID,
-			)
-		})
-		if err != nil {
-			return fmt.Errorf("failed to control socket: %w", err)
-		}
-		if sockErr != nil {
-			return fmt.Errorf("failed to set SO_SETFIB to %d: %w", n.fibID, sockErr)
-		}
-		return nil
-	}
+	dialer.Control = EgressControl(n.defaultRoute, n.fibID)
 
 	return nil
 }
