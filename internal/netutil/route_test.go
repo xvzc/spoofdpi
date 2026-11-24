@@ -1,6 +1,7 @@
 package netutil
 
 import (
+	"errors"
 	"net"
 	"net/netip"
 	"testing"
@@ -124,11 +125,58 @@ func TestFindIfaceByGateway(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "ipv6 gateway",
+			name: "ipv6 gateway on a global subnet",
+			candidates: []ifaceAddrs{
+				{iface: en0, addrs: []net.Addr{
+					ipNet("192.168.1.11/24"),
+					ipNet("fe80::2/64"),
+					ipNet("2001:db8::2/64"),
+				}},
+			},
+			gateway:   net.ParseIP("2001:db8::1"),
+			wantIface: "en0",
+			wantLocal: "2001:db8::2",
+		},
+		{
+			name: "ipv6 gateway on a unique local subnet",
+			candidates: []ifaceAddrs{
+				{iface: en0, addrs: []net.Addr{ipNet("2001:db8::2/64")}},
+				{iface: en1, addrs: []net.Addr{ipNet("fd00:1::2/64")}},
+			},
+			gateway:   net.ParseIP("fd00:1::1"),
+			wantIface: "en1",
+			wantLocal: "fd00:1::2",
+		},
+		{
+			name: "ipv6 link-local subnets are left out",
 			candidates: []ifaceAddrs{
 				{iface: en0, addrs: []net.Addr{ipNet("fe80::2/64")}},
 			},
 			gateway: net.ParseIP("fe80::1"),
+			wantErr: true,
+		},
+		{
+			name: "ipv6 gateway is the interface's own address",
+			candidates: []ifaceAddrs{
+				{iface: en0, addrs: []net.Addr{ipNet("2001:db8::2/64")}},
+			},
+			gateway: net.ParseIP("2001:db8::2"),
+			wantErr: true,
+		},
+		{
+			name: "ipv4 subnet does not take an ipv6 gateway",
+			candidates: []ifaceAddrs{
+				{iface: en0, addrs: []net.Addr{ipNet("0.0.0.0/0")}},
+			},
+			gateway: net.ParseIP("2001:db8::1"),
+			wantErr: true,
+		},
+		{
+			name: "ipv6 subnet does not take an ipv4 gateway",
+			candidates: []ifaceAddrs{
+				{iface: en0, addrs: []net.Addr{ipNet("::/0")}},
+			},
+			gateway: net.ParseIP("192.168.1.1"),
 			wantErr: true,
 		},
 		{
@@ -151,19 +199,6 @@ func TestFindIfaceByGateway(t *testing.T) {
 			assert.Equal(t, tc.wantIface, iface.Name)
 			assert.Equal(t, tc.wantLocal, localIP.String())
 		})
-	}
-}
-
-func TestFindIfaceByGateway_IPv6(t *testing.T) {
-	en0 := net.Interface{Index: 1, Name: "en0", Flags: net.FlagUp}
-	candidates := []ifaceAddrs{
-		{iface: en0, addrs: []net.Addr{ipNet("2001:db8::2/64")}},
-	}
-
-	for _, gateway := range []string{"fe80::1", "2001:db8::1"} {
-		_, _, err := findIfaceByGateway(candidates, net.ParseIP(gateway))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "IPv6 gateways are not supported yet")
 	}
 }
 
@@ -280,6 +315,168 @@ func TestDiscoverRoute_InterfaceRouteIsNotNoIPv4Route(t *testing.T) {
 	_, err := DiscoverRoute(nil)
 	require.ErrorIs(t, err, ErrNoGateway)
 	assert.NotErrorIs(t, err, ErrNoIPv4Route)
+}
+
+func TestDiscoverRoute_IPv6Gateway(t *testing.T) {
+	_, err := DiscoverRoute(net.ParseIP("2001:db8::1"))
+	assert.ErrorContains(t, err, "gateway 2001:db8::1 is not an IPv4 address")
+}
+
+// fakeZoneInterfaces makes the interface lookups by name and by index
+// resolve among ifaces.
+func fakeZoneInterfaces(t *testing.T, ifaces ...net.Interface) {
+	t.Helper()
+	origName, origIndex := interfaceByName, interfaceByIndex
+	t.Cleanup(func() { interfaceByName, interfaceByIndex = origName, origIndex })
+	interfaceByName = func(name string) (*net.Interface, error) {
+		for i := range ifaces {
+			if ifaces[i].Name == name {
+				return &ifaces[i], nil
+			}
+		}
+		return nil, errors.New("no such network interface")
+	}
+	interfaceByIndex = func(index int) (*net.Interface, error) {
+		for i := range ifaces {
+			if ifaces[i].Index == index {
+				return &ifaces[i], nil
+			}
+		}
+		return nil, errors.New("no such network interface")
+	}
+}
+
+func TestDiscoverRoute6(t *testing.T) {
+	en0 := net.Interface{Index: 4, Name: "en0", Flags: net.FlagUp}
+	en1 := net.Interface{Index: 5, Name: "en1", Flags: net.FlagUp}
+	en2Down := net.Interface{Index: 6, Name: "en2"}
+	lo0 := net.Interface{Index: 1, Name: "lo0", Flags: net.FlagUp | net.FlagLoopback}
+	llGw, globalGw := net.ParseIP("fe80::1"), net.ParseIP("2001:db8::1")
+
+	tcs := []struct {
+		name      string
+		kr        kernelRoute
+		routeErr  error
+		gateway   net.IP
+		zone      string
+		want      *Route
+		wantErrIs error
+		wantMsg   string
+	}{
+		{
+			name: "discovered link-local gateway gets the zone and source",
+			kr: kernelRoute{
+				ifIndex: 4,
+				gateway: netip.MustParseAddr("fe80::1"),
+				src:     netip.MustParseAddr("2001:db8::2"),
+			},
+			want: &Route{
+				Family:  FamilyV6,
+				Iface:   en0,
+				LocalIP: net.IP(netip.MustParseAddr("2001:db8::2").AsSlice()),
+				Gateway: net.IP(netip.MustParseAddr("fe80::1").AsSlice()),
+				Zone:    "en0",
+			},
+		},
+		{
+			name: "discovered global gateway has no zone",
+			kr:   kernelRoute{ifIndex: 5, gateway: netip.MustParseAddr("2001:db8::1")},
+			want: &Route{
+				Family:  FamilyV6,
+				Iface:   en1,
+				Gateway: net.IP(netip.MustParseAddr("2001:db8::1").AsSlice()),
+			},
+		},
+		{
+			name: "discovered interface route has no gateway",
+			kr:   kernelRoute{ifIndex: 4},
+			want: &Route{Family: FamilyV6, Iface: en0},
+		},
+		{
+			name:      "no route",
+			routeErr:  errNoRoute(probeDstV6),
+			wantErrIs: ErrNoIPv6Route,
+		},
+		{
+			name:    "zone by name",
+			gateway: llGw,
+			zone:    "en1",
+			want:    &Route{Family: FamilyV6, Iface: en1, Gateway: llGw, Zone: "en1"},
+		},
+		{
+			name:    "zone by index",
+			gateway: llGw,
+			zone:    "5",
+			want:    &Route{Family: FamilyV6, Iface: en1, Gateway: llGw, Zone: "en1"},
+		},
+		{
+			name:    "unknown zone",
+			gateway: llGw,
+			zone:    "en9",
+			wantMsg: `gateway fe80::1: zone "en9"`,
+		},
+		{
+			name:    "zone of an interface that is down",
+			gateway: llGw,
+			zone:    "en2",
+			wantMsg: "interface en2 is down",
+		},
+		{
+			name:    "zone of a loopback",
+			gateway: llGw,
+			zone:    "lo0",
+			wantMsg: "interface lo0 is a loopback",
+		},
+		{
+			name:    "zone on a global gateway",
+			gateway: globalGw,
+			zone:    "en0",
+			wantMsg: "a zone is allowed only on a link-local address",
+		},
+		{
+			name:    "link-local gateway without a zone takes the route's interface",
+			kr:      kernelRoute{ifIndex: 5},
+			gateway: llGw,
+			want:    &Route{Family: FamilyV6, Iface: en1, Gateway: llGw, Zone: "en1"},
+		},
+		{
+			name:      "link-local gateway without a zone or a route",
+			routeErr:  errNoRoute(probeDstV6),
+			gateway:   llGw,
+			wantErrIs: ErrNoIPv6Route,
+			wantMsg:   "link-local gateway fe80::1: ",
+		},
+		{
+			name:    "ipv4 gateway",
+			gateway: net.ParseIP("192.168.1.1"),
+			wantMsg: "gateway 192.168.1.1 is not an IPv6 address",
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeDiscovery(t, tc.kr, tc.routeErr, en0, nil)
+			fakeZoneInterfaces(t, lo0, en0, en1, en2Down)
+
+			route, err := DiscoverRoute6(tc.gateway, tc.zone)
+			if tc.want != nil {
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, route)
+				return
+			}
+
+			require.Error(t, err)
+			if tc.wantErrIs != nil {
+				assert.ErrorIs(t, err, tc.wantErrIs)
+			}
+			assert.ErrorContains(t, err, tc.wantMsg)
+		})
+	}
+}
+
+func TestDiscoverRoute6_NoSubnet(t *testing.T) {
+	_, err := DiscoverRoute6(net.ParseIP("2001:db8:ffff::1"), "")
+	assert.ErrorContains(t, err, "no interface is on the same subnet")
 }
 
 func TestDiscoverInterface(t *testing.T) {

@@ -3,6 +3,7 @@
 package netutil
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,6 +25,21 @@ func TestDiscoverRoute_MatchesRouteTo(t *testing.T) {
 	assert.Equal(t, path.Iface.Index, route.Iface.Index)
 	assert.Equal(t, path.Gateway.String(), route.Gateway.String())
 	assert.NotNil(t, route.LocalIP)
+}
+
+func TestDiscoverRoute6_MatchesRouteTo(t *testing.T) {
+	path, err := RouteTo(probeDstV6)
+	if errors.Is(err, ErrNoIPv6Route) {
+		t.Skipf("no IPv6 route: %v", err)
+	}
+	require.NoError(t, err)
+
+	route, err := DiscoverRoute6(nil, "")
+	require.NoError(t, err)
+	assert.Equal(t, FamilyV6, route.Family)
+	assert.Equal(t, path.Iface.Index, route.Iface.Index)
+	assert.Equal(t, path.Gateway.String(), route.Gateway.String())
+	assert.Equal(t, path.Zone, route.Zone)
 }
 
 func TestDiscoverInterface_MatchesRouteTo(t *testing.T) {
