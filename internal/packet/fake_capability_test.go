@@ -5,23 +5,41 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
-func TestStacks_CanFake(t *testing.T) {
-	caps := map[string]FakeCapability{"tcp": &TCPStack{}, "udp": &UDPStack{}}
+func TestFakesOffError_Error(t *testing.T) {
+	err := &FakesOffError{Family: netutil.FamilyV6, Reason: "not supported yet"}
+	assert.Equal(t, "fake packets are off for ipv6: not supported yet", err.Error())
+}
+
+func TestStaticGate_CanFake(t *testing.T) {
+	off4 := &FakesOffError{Family: netutil.FamilyV4, Reason: "v4 off"}
+	off6 := &FakesOffError{Family: netutil.FamilyV6, Reason: "v6 off"}
+
 	tcs := []struct {
-		ip   string
-		want bool
+		name   string
+		v4, v6 error
+		ip     net.IP
+		want   error
 	}{
-		{"203.0.113.1", true},
-		{"::ffff:203.0.113.1", true},
-		{"2001:db8::1", false},
-		{"fe80::1", false},
+		{"ipv4 allowed", nil, off6, net.ParseIP("203.0.113.1"), nil},
+		{"ipv4-mapped is ipv4", nil, off6, net.ParseIP("::ffff:203.0.113.1"), nil},
+		{"ipv6 off", nil, off6, net.ParseIP("2001:db8::1"), off6},
+		{"link-local ipv6 off", nil, off6, net.ParseIP("fe80::1"), off6},
+		{"ipv4 off", off4, nil, net.ParseIP("203.0.113.1"), off4},
+		{"ipv6 allowed", off4, nil, net.ParseIP("2001:db8::1"), nil},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, NewStaticGate(tc.v4, tc.v6).CanFake(tc.ip))
+		})
 	}
 
-	for name, c := range caps {
-		for _, tc := range tcs {
-			assert.Equal(t, tc.want, c.CanFake(net.ParseIP(tc.ip)), "%s %s", name, tc.ip)
-		}
-	}
+	t.Run("nil dst", func(t *testing.T) {
+		assert.Error(t, NewStaticGate(nil, nil).CanFake(nil))
+	})
+	t.Run("invalid dst", func(t *testing.T) {
+		assert.Error(t, NewStaticGate(nil, nil).CanFake(net.IP{1, 2, 3}))
+	})
 }

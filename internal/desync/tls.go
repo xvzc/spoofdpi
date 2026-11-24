@@ -3,12 +3,13 @@ package desync
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"math/bits"
 	"math/rand/v2"
 	"net"
 	"slices"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -87,8 +88,8 @@ func (d *TLSDesyncer) Desync(
 	var fakes *fakeSender
 	if httpsOpts.UsesFakes() && d.hops != nil && d.writer != nil {
 		dstIP := conn.RemoteAddr().(*net.TCPAddr).IP
-		if !canFake(d.caps, dstIP) {
-			logCannotFake(logger, dstIP)
+		if err := checkFake(d.caps, dstIP); err != nil {
+			logCannotFake(logger, dstIP, err)
 			return d.sendSegments(ctx, conn, logger, split(logger, msg, httpsOpts), nil, nil)
 		}
 
@@ -185,29 +186,37 @@ func warnLocalLink(logger zerolog.Logger, ip net.IP) {
 		Msg("server is on the local link, skipping fake packets")
 }
 
-// cannotFakeWarned is set once a desyncer has warned that it skips fake
-// packets to a destination they cannot be sent to.
-var cannotFakeWarned atomic.Bool
+// cannotFakeWarned holds the reasons desyncers have already warned about
+// when skipping fake packets.
+var cannotFakeWarned sync.Map
 
-// canFake reports whether caps lets fake packets be sent to dst. A nil
-// caps lets them be sent anywhere.
-func canFake(caps packet.FakeCapability, dst net.IP) bool {
-	return caps == nil || caps.CanFake(dst)
+// checkFake returns why fake packets cannot be sent to dst, or nil when
+// they can. A nil caps lets them be sent anywhere.
+func checkFake(caps packet.FakeCapability, dst net.IP) error {
+	if caps == nil {
+		return nil
+	}
+	return caps.CanFake(dst)
 }
 
 // logCannotFake logs that the fake packets to the server at ip are skipped
-// because they cannot be sent there: they are sent to IPv4 servers only for
-// now. Desyncers warn once per process, and log at debug level after that.
-func logCannotFake(logger zerolog.Logger, ip net.IP) {
-	if cannotFakeWarned.CompareAndSwap(false, true) {
-		logger.Warn().
-			Str("dst", ip.String()).
-			Msg("fake packets are not sent to IPv6 servers yet, skipping them")
-		return
+// for the reason in err. Desyncers warn the first time per distinct reason
+// in the process, and log at debug level after that.
+func logCannotFake(logger zerolog.Logger, ip net.IP, err error) {
+	reason := err.Error()
+	var off *packet.FakesOffError
+	if errors.As(err, &off) {
+		reason = off.Reason
 	}
-	logger.Debug().
+
+	event := logger.Debug()
+	if _, seen := cannotFakeWarned.LoadOrStore(reason, struct{}{}); !seen {
+		event = logger.Warn()
+	}
+	event.
 		Str("dst", ip.String()).
-		Msg("fake packets cannot be sent to this server, skipping them")
+		Str("reason", reason).
+		Msg("skipping fake packets")
 }
 
 // hopPolicy returns the policy that turns a hop count estimate into the

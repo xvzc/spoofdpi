@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"testing"
 
@@ -12,7 +13,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
+)
+
+// testGate allows fakes to IPv4 servers only, as main wires it.
+var testGate = packet.NewStaticGate(
+	nil,
+	&packet.FakesOffError{
+		Family: netutil.FamilyV6,
+		Reason: "IPv6 fakes are not supported yet",
+	},
 )
 
 // writeRecordingConn is a stubConn that records each write.
@@ -30,8 +41,8 @@ func (c *writeRecordingConn) Write(b []byte) (int, error) {
 // new process.
 func resetCannotFakeWarning(t *testing.T) {
 	t.Helper()
-	cannotFakeWarned.Store(false)
-	t.Cleanup(func() { cannotFakeWarned.Store(false) })
+	cannotFakeWarned.Clear()
+	t.Cleanup(cannotFakeWarned.Clear)
 }
 
 func TestDesync_FakeCapability(t *testing.T) {
@@ -50,7 +61,7 @@ func TestDesync_FakeCapability(t *testing.T) {
 			resetCannotFakeWarning(t)
 
 			w := &recordingWriter{}
-			d := NewTLSDesyncer(zerolog.Nop(), w, stubHops{}, nil, &packet.TCPStack{})
+			d := NewTLSDesyncer(zerolog.Nop(), w, stubHops{}, nil, testGate)
 			conn := &writeRecordingConn{stubConn: stubConn{
 				local:  &net.TCPAddr{IP: net.ParseIP(tc.local), Port: 50000},
 				remote: &net.TCPAddr{IP: net.ParseIP(tc.remote), Port: 443},
@@ -92,7 +103,7 @@ func TestUDPDesync_FakeCapability(t *testing.T) {
 			resetCannotFakeWarning(t)
 
 			w := &udpWriter{}
-			d := NewUDPDesyncer(zerolog.Nop(), w, stubHops{}, &packet.UDPStack{})
+			d := NewUDPDesyncer(zerolog.Nop(), w, stubHops{}, testGate)
 			conn := udpConn{
 				local:  &net.UDPAddr{IP: net.ParseIP(tc.local), Port: 50000},
 				remote: &net.UDPAddr{IP: net.ParseIP(tc.remote), Port: 443},
@@ -123,9 +134,7 @@ func cannotFakeLevels(t *testing.T, log *bytes.Buffer) []string {
 			Message string `json:"message"`
 		}
 		require.NoError(t, json.Unmarshal(lines.Bytes(), &entry))
-		switch entry.Message {
-		case "fake packets are not sent to IPv6 servers yet, skipping them",
-			"fake packets cannot be sent to this server, skipping them":
+		if entry.Message == "skipping fake packets" {
 			levels = append(levels, entry.Level)
 		}
 	}
@@ -133,8 +142,8 @@ func cannotFakeLevels(t *testing.T, log *bytes.Buffer) []string {
 	return levels
 }
 
-// The first skipped fake in the process is a warning, whichever desyncer
-// skips it; every later one is logged at debug level.
+// The first skipped fake for a reason is a warning, whichever desyncer
+// skips it; every later one for the same reason is logged at debug level.
 func TestDesync_CannotFakeWarnsOncePerProcess(t *testing.T) {
 	resetCannotFakeWarning(t)
 
@@ -145,13 +154,44 @@ func TestDesync_CannotFakeWarnsOncePerProcess(t *testing.T) {
 		&recordingWriter{},
 		stubHops{},
 		nil,
-		&packet.TCPStack{},
+		testGate,
 	)
-	udpD := NewUDPDesyncer(logger, &udpWriter{}, stubHops{}, &packet.UDPStack{})
+	udpD := NewUDPDesyncer(logger, &udpWriter{}, stubHops{}, testGate)
 
 	assert.Zero(t, desyncTLS(t, tlsD, "2001:db8::1"))
 	assert.Zero(t, desyncUDP(t, udpD, "2001:db8::1"))
 	assert.Zero(t, desyncTLS(t, tlsD, "2001:db8::3"))
 
 	assert.Equal(t, []string{"warn", "debug", "debug"}, cannotFakeLevels(t, &log))
+}
+
+// A skipped fake logs its destination and reason, and a new reason warns
+// again.
+func TestDesync_CannotFakeLogsReasons(t *testing.T) {
+	resetCannotFakeWarning(t)
+
+	var log bytes.Buffer
+	logger := zerolog.New(&log).Level(zerolog.DebugLevel)
+	other := packet.NewStaticGate(nil, errors.New("no route"))
+	udpA := NewUDPDesyncer(logger, &udpWriter{}, stubHops{}, testGate)
+	udpB := NewUDPDesyncer(logger, &udpWriter{}, stubHops{}, other)
+
+	assert.Zero(t, desyncUDP(t, udpA, "2001:db8::1"))
+	assert.Zero(t, desyncUDP(t, udpB, "2001:db8::1"))
+	assert.Zero(t, desyncUDP(t, udpA, "2001:db8::2"))
+
+	var entries []map[string]any
+	lines := bufio.NewScanner(&log)
+	for lines.Scan() {
+		var e map[string]any
+		require.NoError(t, json.Unmarshal(lines.Bytes(), &e))
+		entries = append(entries, e)
+	}
+	require.Len(t, entries, 3)
+	assert.Equal(t, "warn", entries[0]["level"])
+	assert.Equal(t, "2001:db8::1", entries[0]["dst"])
+	assert.Equal(t, "IPv6 fakes are not supported yet", entries[0]["reason"])
+	assert.Equal(t, "warn", entries[1]["level"])
+	assert.Equal(t, "no route", entries[1]["reason"])
+	assert.Equal(t, "debug", entries[2]["level"])
 }

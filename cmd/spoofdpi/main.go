@@ -474,13 +474,20 @@ func createServer(
 		udpWriter packet.Writer
 		udpCaps   packet.FakeCapability
 	)
+	fakeGate := packet.NewStaticGate(
+		nil,
+		&packet.FakesOffError{
+			Family: netutil.FamilyV6,
+			Reason: "IPv6 fakes are not supported yet",
+		},
+	)
 	if tcpStack != nil {
 		tcpHops, tcpWriter, seqs = hops, tcpStack.Writer, tcpStack.Seqs
-		tcpCaps = tcpStack
+		tcpCaps = fakeGate
 	}
 	if udpStack != nil {
 		udpHops, udpWriter = hops, udpStack.Writer
-		udpCaps = udpStack
+		udpCaps = fakeGate
 	}
 
 	tlsDesyncer := desync.NewTLSDesyncer(

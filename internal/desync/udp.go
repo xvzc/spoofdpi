@@ -52,8 +52,8 @@ func (d *UDPDesyncer) Desync(
 	}
 
 	dstIP := rConn.RemoteAddr().(*net.UDPAddr).IP
-	if !canFake(d.caps, dstIP) {
-		logCannotFake(logger, dstIP)
+	if err := checkFake(d.caps, dstIP); err != nil {
+		logCannotFake(logger, dstIP, err)
 		return 0, nil
 	}
 	est := d.hops.Lookup(packet.ProtoUDP, dstIP)

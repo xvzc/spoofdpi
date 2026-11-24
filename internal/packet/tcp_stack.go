@@ -12,8 +12,6 @@ import (
 // kept when no connection asks for them.
 const seqEntryTTL = 5 * time.Second
 
-var _ FakeCapability = (*TCPStack)(nil)
-
 // TCPStack is what fake TCP packets are sent with: a SYN/ACK sniffer that
 // learns hop counts and sequence numbers, and a writer that sends crafted
 // packets through its senders.
@@ -46,10 +44,4 @@ func OpenTCPStack(
 		return nil, err
 	}
 	return &TCPStack{Sniffer: sniffer, Writer: writer, Seqs: seqs}, nil
-}
-
-// CanFake reports whether fake packets can be sent to dst. The stack is
-// opened with an IPv4 sender only, so it reaches IPv4 destinations only.
-func (s *TCPStack) CanFake(dst net.IP) bool {
-	return dst.To4() != nil
 }
