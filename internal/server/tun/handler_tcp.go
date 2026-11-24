@@ -21,11 +21,13 @@ type TCPHandler struct {
 	ruleSet  *rule.RuleSet
 	cfg      *config.RuntimeConfig
 	desyncer *desync.TLSDesyncer
+	alerts   *server.TLSAlertWatcher
 }
 
 func NewTCPHandler(
 	logger zerolog.Logger,
 	desyncer *desync.TLSDesyncer,
+	alerts *server.TLSAlertWatcher,
 	ruleSet *rule.RuleSet,
 	cfg *config.RuntimeConfig,
 ) *TCPHandler {
@@ -34,6 +36,7 @@ func NewTCPHandler(
 		ruleSet:  ruleSet,
 		cfg:      cfg,
 		desyncer: desyncer,
+		alerts:   alerts,
 	}
 }
 
@@ -178,9 +181,14 @@ func (h *TCPHandler) handleTLS(
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// dst.Host is the SNI here.
+	inspectReply := h.alerts.Inspector(logger, rConn, dst.Host, "")
+
 	startedAt := time.Now()
 	go netutil.TunnelConns(ctx, resCh, lConn, rConn, netutil.TunnelDirOut)
-	go netutil.TunnelConns(ctx, resCh, rConn, lConn, netutil.TunnelDirIn)
+	go netutil.TunnelConnsFirstRead(
+		ctx, resCh, rConn, lConn, netutil.TunnelDirIn, inspectReply,
+	)
 
 	return netutil.WaitForTunnelCompletion(
 		ctx,

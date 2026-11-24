@@ -56,6 +56,22 @@ func TunnelConns(
 	dst net.Conn, // Destination connection (io.Writer)
 	dir TunnelDirType,
 ) {
+	TunnelConnsFirstRead(ctx, resCh, src, dst, dir, nil)
+}
+
+// TunnelConnsFirstRead is TunnelConns that hands the bytes of the first read
+// from src to onFirst, before it writes them to dst. onFirst must not
+// change or keep them. It copies the rest with src itself, not a wrapper of
+// it, so that a TCP src and dst keep the kernel splice. With a nil onFirst
+// it is TunnelConns.
+func TunnelConnsFirstRead(
+	ctx context.Context,
+	resCh chan<- TransferResult,
+	src net.Conn,
+	dst net.Conn,
+	dir TunnelDirType,
+	onFirst func(first []byte),
+) {
 	var once sync.Once
 	closeOnce := func() {
 		once.Do(func() {
@@ -73,8 +89,14 @@ func TunnelConns(
 	bufPtr := bufferPool.Get().(*[]byte)
 	defer bufferPool.Put(bufPtr)
 
-	// Copy data from src to dst using the borrowed buffer.
-	n, err := io.CopyBuffer(dst, src, *bufPtr)
+	var n int64
+	var err error
+	if onFirst == nil {
+		// Copy data from src to dst using the borrowed buffer.
+		n, err = io.CopyBuffer(dst, src, *bufPtr)
+	} else {
+		n, err = copyAfterFirstRead(dst, src, *bufPtr, onFirst)
+	}
 
 	// Filter benign errors.
 	// os.IsTimeout is checked to handle UDP idle timeouts gracefully.
@@ -85,6 +107,40 @@ func TunnelConns(
 	}
 
 	resCh <- TransferResult{Written: n, Dir: dir, Err: nil}
+}
+
+// copyAfterFirstRead does the first read from src itself, so that onFirst
+// sees it, then copies the rest like io.CopyBuffer. The first read's bytes
+// are in the count it returns. It returns what a read or write error of
+// the first read would make io.CopyBuffer return.
+func copyAfterFirstRead(
+	dst io.Writer,
+	src io.Reader,
+	buf []byte,
+	onFirst func(first []byte),
+) (int64, error) {
+	nr, rerr := src.Read(buf)
+	var written int64
+	if nr > 0 {
+		onFirst(buf[:nr])
+		nw, werr := dst.Write(buf[:nr])
+		written = int64(nw)
+		if werr == nil && nw < nr {
+			werr = io.ErrShortWrite
+		}
+		if werr != nil {
+			return written, werr
+		}
+	}
+	if rerr != nil {
+		if rerr == io.EOF {
+			rerr = nil
+		}
+		return written, rerr
+	}
+
+	n, err := io.CopyBuffer(dst, src, buf)
+	return written + n, err
 }
 
 // WaitForTunnelCompletion aggregates results and logs the summary.

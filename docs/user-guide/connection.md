@@ -92,6 +92,8 @@ It applies to every hop count alike, whether learned or [`hop-count-default`](#h
 
 The hop count is learned by assuming that the server started from a common initial TTL (64, 128 or 255), which is not always true, and the path back from the server can differ from the path to it. A lower offset makes fake packets expire earlier, for networks where the learned hop count tends to be too high and fakes reach the server.
 
+If spoofdpi logs "the server answered the Client Hello with a TLS alert" with `decode_error`, `illegal_parameter` or `unexpected_message` while fake packets are on, the fakes may have reached the server: the server read the fake Client Hello and rejected it. Lower this offset by 1, or check the site with [`spoofdpi probe`](probe.md). Other causes give the same alert too, so treat it as a hint, not a diagnosis.
+
 !!! note
     The offset used to default to `0`, apply to learned hop counts only, and be followed by a fixed minus 1. If you set `hop-count-offset` yourself, the same value now gives a TTL 1 higher: subtract 1 from it to keep your TTL, for example `-3` becomes `-4`. It now also applies to `hop-count-default`, and is added after `hop-count-min` and `hop-count-max` apply, so with those bounds set, check the TTL of hop counts they clip.
 

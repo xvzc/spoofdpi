@@ -17,11 +17,13 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/rule"
+	"github.com/xvzc/spoofdpi/internal/server"
 )
 
 type HTTPSHandler struct {
 	logger     zerolog.Logger
 	desyncer   *desync.TLSDesyncer
+	alerts     *server.TLSAlertWatcher
 	resolver   dns.Resolver
 	ruleSet    *rule.RuleSet
 	listenAddr net.TCPAddr
@@ -31,6 +33,7 @@ type HTTPSHandler struct {
 func NewHTTPSHandler(
 	logger zerolog.Logger,
 	desyncer *desync.TLSDesyncer,
+	alerts *server.TLSAlertWatcher,
 	resolver dns.Resolver,
 	ruleSet *rule.RuleSet,
 	listenAddr net.TCPAddr,
@@ -39,6 +42,7 @@ func NewHTTPSHandler(
 	return &HTTPSHandler{
 		logger:     logger,
 		desyncer:   desyncer,
+		alerts:     alerts,
 		resolver:   resolver,
 		ruleSet:    ruleSet,
 		listenAddr: listenAddr,
@@ -68,6 +72,7 @@ type httpsConn struct {
 	matched *config.Rule
 	cfg     *config.RuntimeConfig
 	rConn   net.Conn
+	sni     string
 }
 
 func (c *httpsConn) serve(ctx context.Context) error {
@@ -193,6 +198,8 @@ func (c *httpsConn) desync(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 
+	c.sni = server.SNI(tlsMsg)
+
 	n, err := c.h.desyncer.Desync(ctx, c.rConn, tlsMsg, &c.cfg.HTTPS, &c.cfg.Conn)
 	if err != nil {
 		return false, fmt.Errorf("failed to send client hello: %w", err)
@@ -209,9 +216,13 @@ func (c *httpsConn) tunnel(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	inspectReply := c.h.alerts.Inspector(c.logger, c.rConn, c.sni, c.req.ExtractHost())
+
 	startedAt := time.Now()
 	go netutil.TunnelConns(ctx, resCh, c.conn, c.rConn, netutil.TunnelDirOut)
-	go netutil.TunnelConns(ctx, resCh, c.rConn, c.conn, netutil.TunnelDirIn)
+	go netutil.TunnelConnsFirstRead(
+		ctx, resCh, c.rConn, c.conn, netutil.TunnelDirIn, inspectReply,
+	)
 
 	handleErrs := func(errs []error) error {
 		if len(errs) == 0 {

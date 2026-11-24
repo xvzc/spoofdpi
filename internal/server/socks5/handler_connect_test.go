@@ -1,10 +1,13 @@
 package socks5
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,6 +22,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/rule"
+	"github.com/xvzc/spoofdpi/internal/server"
 )
 
 // fakeDNSServer answers every A query with answer and counts the queries.
@@ -232,6 +236,7 @@ func TestConnectHandler_Handle(t *testing.T) {
 			h := NewConnectHandler(
 				zerolog.Nop(),
 				desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+				server.NewTLSAlertWatcher(),
 				dns.NewClient(zerolog.Nop(), &base.DNS),
 				rs,
 				net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
@@ -285,6 +290,7 @@ func TestConnectHandler_Handle_DomainDNSOverride(t *testing.T) {
 	h := NewConnectHandler(
 		zerolog.Nop(),
 		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+		server.NewTLSAlertWatcher(),
 		dns.NewClient(zerolog.Nop(), &base.DNS),
 		rs,
 		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
@@ -313,6 +319,7 @@ func TestConnectHandler_Handle_NoAddress(t *testing.T) {
 	h := NewConnectHandler(
 		zerolog.Nop(),
 		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+		server.NewTLSAlertWatcher(),
 		dns.NewClient(zerolog.Nop(), &base.DNS),
 		rule.NewRuleSet(),
 		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
@@ -352,6 +359,7 @@ func TestConnectHandler_Handle_IPLiteralName(t *testing.T) {
 	h := NewConnectHandler(
 		zerolog.Nop(),
 		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+		server.NewTLSAlertWatcher(),
 		dns.NewClient(zerolog.Nop(), &base.DNS),
 		rs,
 		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
@@ -398,6 +406,7 @@ func TestConnectHandler_Handle_LinkLocalWithoutZone(t *testing.T) {
 			h := NewConnectHandler(
 				zerolog.Nop(),
 				desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+				server.NewTLSAlertWatcher(),
 				resolver,
 				rule.NewRuleSet(),
 				net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
@@ -440,6 +449,7 @@ func TestConnectHandler_Handle_LinkLocalNameWithZone(t *testing.T) {
 	h := NewConnectHandler(
 		zerolog.Nop(),
 		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+		server.NewTLSAlertWatcher(),
 		resolver,
 		rule.NewRuleSet(),
 		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
@@ -493,6 +503,7 @@ func TestConnectHandler_Handle_Unspecified(t *testing.T) {
 				h := NewConnectHandler(
 					zerolog.Nop(),
 					desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+					server.NewTLSAlertWatcher(),
 					&stubResolver{},
 					rule.NewRuleSet(),
 					l.listen,
@@ -517,6 +528,7 @@ func TestConnectHandler_Handle_LookupError(t *testing.T) {
 	h := NewConnectHandler(
 		zerolog.Nop(),
 		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+		server.NewTLSAlertWatcher(),
 		resolver,
 		rule.NewRuleSet(),
 		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
@@ -565,4 +577,119 @@ func listenLinkLocalLoopback(t *testing.T) net.Listener {
 	}
 	t.Skip("no IPv6 link-local address on a loopback interface")
 	return nil
+}
+
+func TestConnectHandler_Handle_TLSAlertReply(t *testing.T) {
+	alert := []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x32}
+
+	// The upstream reads the Client Hello and answers it with an alert.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	clientHello := []byte(config.FakeClientHello)
+	gotHello := make(chan []byte, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		hello := make([]byte, len(clientHello))
+		_, _ = io.ReadFull(conn, hello)
+		gotHello <- hello
+		_, _ = conn.Write(alert)
+	}()
+
+	var logs bytes.Buffer
+	base := &config.RuntimeConfig{}
+	base.Conn.TCPTimeout = 2 * time.Second
+	base.HTTPS.Skip = true
+	h := NewConnectHandler(
+		zerolog.New(&logs),
+		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+		server.NewTLSAlertWatcher(),
+		nil,
+		rule.NewRuleSet(),
+		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+		base,
+	)
+
+	upstream := ln.Addr().(*net.TCPAddr)
+	client, done := runConnect(t, h, &proto.SOCKS5Request{
+		Cmd:  proto.SOCKS5CmdConnect,
+		ATYP: proto.SOCKS5AddrTypeIPv4,
+		IP:   upstream.IP,
+		Port: upstream.Port,
+	})
+	require.Equal(t, byte(proto.SOCKS5RCodeSuccess), readReply(t, client))
+	_, err = client.Write(clientHello)
+	require.NoError(t, err)
+
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	assert.Equal(t, alert, reply, "the client gets the alert unchanged")
+	assert.Equal(t, clientHello, <-gotHello)
+	<-done
+
+	var warned map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var entry map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &entry))
+		if entry["alert"] != nil {
+			warned = entry
+		}
+	}
+	require.NotNil(t, warned, "the alert is logged")
+	assert.Equal(t, "warn", warned["level"])
+	assert.Equal(t, "decode_error", warned["alert"])
+	assert.Equal(t, upstream.String(), warned["dst"])
+	assert.NotEmpty(t, warned["sni"])
+	assert.Contains(t, warned["message"], "spoofdpi probe "+warned["sni"].(string))
+}
+
+func TestConnectHandler_Handle_PlainTCPReplyIsNotWatched(t *testing.T) {
+	alert := []byte{0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x32}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_, _ = io.ReadFull(conn, make([]byte, 4))
+		_, _ = conn.Write(alert)
+	}()
+
+	var logs bytes.Buffer
+	base := &config.RuntimeConfig{}
+	base.Conn.TCPTimeout = 2 * time.Second
+	h := NewConnectHandler(
+		zerolog.New(&logs),
+		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+		server.NewTLSAlertWatcher(),
+		nil,
+		rule.NewRuleSet(),
+		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+		base,
+	)
+
+	upstream := ln.Addr().(*net.TCPAddr)
+	client, done := runConnect(t, h, &proto.SOCKS5Request{
+		Cmd:  proto.SOCKS5CmdConnect,
+		ATYP: proto.SOCKS5AddrTypeIPv4,
+		IP:   upstream.IP,
+		Port: upstream.Port,
+	})
+	require.Equal(t, byte(proto.SOCKS5RCodeSuccess), readReply(t, client))
+	_, err = client.Write([]byte("ping"))
+	require.NoError(t, err)
+
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	assert.Equal(t, alert, reply)
+	<-done
+	assert.NotContains(t, logs.String(), "TLS alert")
 }

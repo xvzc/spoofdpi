@@ -23,6 +23,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/rule"
+	"github.com/xvzc/spoofdpi/internal/server"
 )
 
 func TestHTTPProxy_ServeStopsWithIdleConnection(t *testing.T) {
@@ -115,6 +116,7 @@ func newTestProxy(
 		NewHTTPSHandler(
 			logger,
 			desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+			server.NewTLSAlertWatcher(),
 			resolver,
 			rs,
 			listenAddr,

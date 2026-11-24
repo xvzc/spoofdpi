@@ -186,6 +186,7 @@ func TestConnectHandler_Handle_RuleIPv6Off(t *testing.T) {
 			h := NewConnectHandler(
 				zerolog.Nop(),
 				desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+				server.NewTLSAlertWatcher(),
 				&multiAddrResolver{addrs: tc.answer},
 				rs,
 				net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},

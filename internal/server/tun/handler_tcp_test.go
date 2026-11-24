@@ -20,6 +20,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/rule"
+	"github.com/xvzc/spoofdpi/internal/server"
 )
 
 // clientHelloSNI returns the server name in config.FakeClientHello.
@@ -119,6 +120,7 @@ func TestTCPHandler_Handle_Block(t *testing.T) {
 			h := NewTCPHandler(
 				zerolog.Nop(),
 				desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+				server.NewTLSAlertWatcher(),
 				rs,
 				&config.RuntimeConfig{},
 			)
@@ -300,6 +302,7 @@ func TestTCPHandler_Handle_AppliedConfig(t *testing.T) {
 			h := NewTCPHandler(
 				zerolog.Nop(),
 				desync.NewTLSDesyncer(zerolog.Nop(), nil, hops, nil, nil),
+				server.NewTLSAlertWatcher(),
 				rs,
 				&config.RuntimeConfig{},
 			)

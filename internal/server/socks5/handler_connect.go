@@ -22,6 +22,7 @@ import (
 type ConnectHandler struct {
 	logger     zerolog.Logger
 	desyncer   *desync.TLSDesyncer
+	alerts     *server.TLSAlertWatcher
 	resolver   dns.Resolver
 	ruleSet    *rule.RuleSet
 	listenAddr net.TCPAddr
@@ -31,6 +32,7 @@ type ConnectHandler struct {
 func NewConnectHandler(
 	logger zerolog.Logger,
 	desyncer *desync.TLSDesyncer,
+	alerts *server.TLSAlertWatcher,
 	resolver dns.Resolver,
 	ruleSet *rule.RuleSet,
 	listenAddr net.TCPAddr,
@@ -39,6 +41,7 @@ func NewConnectHandler(
 	return &ConnectHandler{
 		logger:     logger,
 		desyncer:   desyncer,
+		alerts:     alerts,
 		resolver:   resolver,
 		ruleSet:    ruleSet,
 		listenAddr: listenAddr,
@@ -67,6 +70,9 @@ type connectConn struct {
 	matched *config.Rule
 	cfg     *config.RuntimeConfig
 	rConn   net.Conn
+	// inspectReply checks the server's first reply for a TLS alert. It is
+	// nil unless a Client Hello went to the server.
+	inspectReply func(first []byte)
 }
 
 func (c *connectConn) serve(ctx context.Context) error {
@@ -208,6 +214,9 @@ func (c *connectConn) forwardFirstMessage(
 		return true, nil
 	}
 
+	c.inspectReply = c.h.alerts.Inspector(
+		c.logger, c.rConn, server.SNI(tlsMsg), c.req.FQDN,
+	)
 	c.logger.Debug().
 		Int("len", tlsMsg.Len()).
 		Msgf("client hello received <- %s", c.conn.RemoteAddr())
@@ -232,7 +241,9 @@ func (c *connectConn) tunnel(ctx context.Context, bufConn *netutil.BufferedConn)
 	defer cancel()
 
 	startedAt := time.Now()
-	go netutil.TunnelConns(ctx, resCh, c.rConn, bufConn, netutil.TunnelDirOut)
+	go netutil.TunnelConnsFirstRead(
+		ctx, resCh, c.rConn, bufConn, netutil.TunnelDirOut, c.inspectReply,
+	)
 	go netutil.TunnelConns(ctx, resCh, bufConn, c.rConn, netutil.TunnelDirIn)
 
 	return netutil.WaitForTunnelCompletion(

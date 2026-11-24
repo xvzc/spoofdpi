@@ -570,6 +570,7 @@ func createServer(
 		seqs,
 		tcpCaps,
 	)
+	tlsAlerts := server.NewTLSAlertWatcher()
 	udpDesyncer := desync.NewUDPDesyncer(
 		logger,
 		udpWriter,
@@ -591,6 +592,7 @@ func createServer(
 			http.NewHTTPSHandler(
 				logger,
 				tlsDesyncer,
+				tlsAlerts,
 				resolver,
 				ruleSet,
 				cfg.App.ListenAddr,
@@ -605,6 +607,7 @@ func createServer(
 			socks5.NewConnectHandler(
 				logger,
 				tlsDesyncer,
+				tlsAlerts,
 				resolver,
 				ruleSet,
 				cfg.App.ListenAddr,
@@ -637,6 +640,7 @@ func createServer(
 			tun.NewTCPHandler(
 				logger,
 				tlsDesyncer,
+				tlsAlerts,
 				ruleSet,
 				&cfg.RuntimeConfig,
 			),

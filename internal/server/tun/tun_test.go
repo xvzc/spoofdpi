@@ -325,7 +325,7 @@ func TestTunServer_IPv6EchoIsAnsweredByStack(t *testing.T) {
 }
 
 func TestTunServer_IPv4TCPIsAccepted(t *testing.T) {
-	tcpHandler := NewTCPHandler(zerolog.Nop(), nil, nil, &config.RuntimeConfig{})
+	tcpHandler := NewTCPHandler(zerolog.Nop(), nil, nil, nil, &config.RuntimeConfig{})
 	s := listenTunServer(t, tcpHandler, nil, nil)
 
 	syn := &layers.TCP{SrcPort: 40000, DstPort: 443, Seq: 1000, SYN: true, Window: 65535}
