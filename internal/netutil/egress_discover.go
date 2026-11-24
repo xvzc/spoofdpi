@@ -1,0 +1,123 @@
+package netutil
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"net/netip"
+)
+
+// linkInfoOf and defaultLinksOf read the OS's link kinds and default
+// routes. Tests replace them.
+var (
+	linkInfoOf     = linkInfo
+	defaultLinksOf = defaultLinks
+)
+
+// ClassifyPath classifies the egress of the kernel's route p, whose Route
+// is the Egress's Route. A link that cannot be read is LinkUnknown, and
+// default routes that cannot be read are left out of the classification
+// and noted in the reason. A route through a loopback link is an error
+// that wraps ErrNoIPv4Route or ErrNoIPv6Route: it never leaves the host.
+func ClassifyPath(p *Path) (*Egress, error) {
+	link, err := linkInfoOf(p.Iface.Index)
+	if err != nil {
+		link = LinkInfo{
+			Index:  p.Iface.Index,
+			Name:   p.Iface.Name,
+			Kind:   LinkUnknown,
+			Detail: "link unreadable: " + err.Error(),
+		}
+	}
+
+	if link.Kind == LinkLoopback {
+		return nil, fmt.Errorf(
+			"route to %s goes through loopback %s: %w",
+			p.Dst, describeLink(link), noRouteError(p.Family),
+		)
+	}
+
+	// Default routes only tell an uplink from a VPN when the link alone
+	// cannot.
+	var others []LinkInfo
+	var othersErr error
+	if link.Kind != LinkPhysical && link.Kind != LinkVPN {
+		others, othersErr = defaultLinksOf(p.Family)
+	}
+
+	class, reason := ClassifyEgress(link, others)
+	if othersErr != nil {
+		reason += " (default routes unreadable: " + othersErr.Error() + ")"
+	}
+	return &Egress{Route: *p.Route(), Link: link, Class: class, Reason: reason}, nil
+}
+
+// DiscoverEgress discovers and classifies the egress of fam.
+//
+// Without a gateway, the egress is the kernel's route to the internet.
+// With one, as DiscoverRoute or DiscoverRoute6 take it, the Route is the
+// one through that gateway, while the link, class and reason are those of
+// the kernel's route to the internet: a full-tunnel VPN carries the
+// traffic whatever gateway is given. When the kernel has no route of fam,
+// the link is the gateway's interface.
+func DiscoverEgress(fam Family, gateway net.IP, zone string) (*Egress, error) {
+	if gateway == nil {
+		path, err := RouteTo(probeDst(fam))
+		if err != nil {
+			return nil, fmt.Errorf("discover egress: %w", err)
+		}
+		return ClassifyPath(path)
+	}
+
+	var route *Route
+	var err error
+	if fam == FamilyV6 {
+		route, err = DiscoverRoute6(gateway, zone)
+	} else {
+		route, err = DiscoverRoute(gateway)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	path, err := RouteTo(probeDst(fam))
+	switch {
+	case errors.Is(err, noRouteError(fam)):
+		path = pathOfRoute(route)
+	case err != nil:
+		return nil, fmt.Errorf("discover egress: %w", err)
+	}
+
+	egress, err := ClassifyPath(path)
+	if err != nil {
+		return nil, err
+	}
+	egress.Route = *route
+	return egress, nil
+}
+
+// noRouteError returns the sentinel for a missing route of fam.
+func noRouteError(fam Family) error {
+	if fam == FamilyV6 {
+		return ErrNoIPv6Route
+	}
+	return ErrNoIPv4Route
+}
+
+// pathOfRoute returns the path to the internet through route, for a
+// classification that has no kernel route to go by.
+func pathOfRoute(route *Route) *Path {
+	p := &Path{
+		Family: route.Family,
+		Dst:    probeDst(route.Family),
+		Iface:  route.Iface,
+		Zone:   route.Zone,
+	}
+	if gw, ok := netip.AddrFromSlice(route.Gateway); ok {
+		p.Gateway = gw.Unmap().WithZone("")
+	}
+	if src, ok := netip.AddrFromSlice(route.LocalIP); ok {
+		p.Src = src.Unmap()
+	}
+	return p
+}
