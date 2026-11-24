@@ -235,7 +235,7 @@ An offset inside both ranges, that is, one from `-1` to `-M` in the `fake` check
 
 ### Fake Packets
 
-The `fake` and server checks send their fake packets with spoofdpi's own code, as spoofdpi does without `--gateway`. On macOS and FreeBSD, they go out through a raw IP socket, and the system routes them. On Linux, they go out on the interface of the default route, to the MAC address of the gateway, which probe looks up with ARP once per run, for up to 10 seconds. The fake is spoofdpi's default fake ClientHello, 517 bytes with the name `www.google.com`, sent in one packet.
+The `fake` and server checks send their fake packets with spoofdpi's own code, as spoofdpi does without `--gateway`. They go out through a raw IP socket, and the system routes them. The fake is spoofdpi's default fake ClientHello, 517 bytes with the name `www.google.com`, sent in one packet.
 
 probe learns the connection's sequence numbers from its SYN/ACK, as spoofdpi does, and checks that the fake was crafted with the sequence numbers the capture shows the real ClientHello leaving with, plus the fake's offsets. A fake that was not is no test of the fake, so probe makes the try again on a new connection, up to 3 connections in all, before it gives `unknown (seq not learned)`.
 
@@ -312,7 +312,7 @@ Host names are resolved the way `spoofdpi run` resolves them, with the `[dns]` s
 
 The learned hop counts, the `position` of a DPI that drops silently, and the `fake` and server checks need packet capture, which usually needs root, for example `sudo`. Without it, probe prints one warning, shows the learned hop counts as `-`, the position as `unknown (needs root)`, `fake` as `unknown (needs root)` and `server` as `unknown (needs root)`, and measures the rest. The actual hop counts, the QUIC check and the other DPI checks do not need root.
 
-When packet capture works but the fake packets cannot be sent, for example on Linux because the gateway does not answer ARP, as on some VPN interfaces, probe prints one warning of its own, without the advice to run as root, and shows `fake` and `server` as `unknown (fake packets unavailable)`. spoofdpi cannot send fake packets on such an interface either.
+When packet capture works but the fake packets cannot be sent, probe prints one warning of its own, without the advice to run as root, and shows `fake` and `server` as `unknown (fake packets unavailable)`. spoofdpi cannot send fake packets there either.
 
 The capture runs on the interface of the default route, as spoofdpi does without `--gateway`. A server reached through another interface, such as a split-routed VPN, gets the note `not learned`, as does a capture that stops with an error during the probe, and its silent `position` is `unknown (could not control TTL)`.
 
@@ -338,7 +338,6 @@ The DPI checks of a clear site take a few round trips. A blocked site takes much
 - The `fake` check makes up to 66 attempts: `ttl`, `bad_md5` and its two searches. With a DPI that resets, each takes a few round trips, so the check usually takes 5 to 15 seconds. With a DPI that drops silently, a search has at most 2 blocked attempts, at the change and past it, each of which waits T, so the check takes up to about 5 T more, 10 seconds with the defaults. If `ttl` is `x`, the check takes one attempt.
 - The server check makes up to 65 attempts: `bad_md5` and its two searches. An attempt the server drops takes a few round trips, or, with a TLS 1.2 server, up to the wait after its ServerHello. One that ends in `breaks (timeout)` takes T, so a search whose fakes all break that way takes 32 T, about a minute with the defaults. The check usually takes 5 to 30 seconds.
 - With root, a blocked site thus usually takes under a minute more than without, and about 2 minutes more when most attempts wait T.
-- On Linux, looking up the gateway's MAC address for the fake packets takes up to 10 seconds, once per run.
 - A target at the address of one checked before may wait up to 60 seconds for a residual block, once for the QUIC check and once for the DPI checks.
 
 Lower `--timeout` to make a run shorter.

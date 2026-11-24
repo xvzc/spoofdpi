@@ -266,8 +266,8 @@ func (n *tunSystemNetworkLinux) FIBID() int {
 // physical interface of route with SO_BINDTODEVICE, as TUN mode needs: its
 // routes would otherwise carry the traffic into the TUN. fibID is not used
 // on Linux. It returns nil when route has no interface. BindDialer pins
-// the dialed connections with it. Fake packets on Linux are written on
-// the physical interface directly and do not use it.
+// the dialed connections with it, and TUN mode pins the raw sockets of
+// fake packets with it too, so the two cannot diverge.
 func EgressControl(
 	route *netutil.Route,
 	fibID int,

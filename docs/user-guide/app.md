@@ -254,12 +254,10 @@ The value is an IPv4 address, an IPv6 address, or one of each; two addresses of 
 
 The gateway is only used for fake packets ([`tls.fake-preflight`](tls.md#fake-preflight), [`tls.fake-stutter`](tls.md#fake-stutter) or [`udp.fake-preflight`](udp.md#fake-preflight) above 0) and for TUN mode. When this option is set, spoofdpi skips automatic discovery and uses the network interface whose subnet contains the gateway. This helps when automatic discovery fails or picks the wrong route, for example on machines with multiple interfaces or a VPN.
 
-What that interface is used for depends on the system:
+The option selects the interface that packet capture runs on and TUN mode's route out of the TUN. Fake packets go out through a raw IP socket, and where they go depends on the mode:
 
-- On Linux, fake packets are sent on that interface, to the gateway's MAC address. Packet capture and TUN mode's route out of the TUN use it too.
-- On macOS and FreeBSD, the option selects the interface that packet capture runs on and TUN mode's route out of the TUN. Where fake packets go depends on the mode:
-    - In the HTTP and SOCKS5 modes, fake packets follow the system's routing table, like any other packet, so the option does not change where they go.
-    - In TUN mode, fake packets leave through the selected interface, like TUN mode's own connections: on macOS they are bound to it, and on FreeBSD they use the FIB ([`freebsd-fib`](#freebsd-fib)) whose default route goes via the gateway.
+- In the HTTP and SOCKS5 modes, fake packets follow the system's routing table, like any other packet, so the option does not change where they go.
+- In TUN mode, fake packets leave through the selected interface, like TUN mode's own connections: on Linux and macOS they are bound to it, and on FreeBSD they use the FIB ([`freebsd-fib`](#freebsd-fib)) whose default route goes via the gateway.
 
 If no interface is on the same subnet as the gateway, spoofdpi fails to start. If neither fake packets nor TUN mode is enabled, this option is ignored with a warning.
 
