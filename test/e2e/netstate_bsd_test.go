@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"testing"
 )
 
 // physicalIface returns the interface of the IPv4 default route, read with the
@@ -37,6 +38,11 @@ func interfaceNames() string {
 // next-hop ids, Expire) change without the routes changing, which would make
 // an unchanged system diff dirty. Columns are located by their header, since
 // darwin and FreeBSD order them differently.
+//
+// It also drops the rows that the kernel adds and changes on its own as
+// traffic flows: darwin's link-layer entries (flag L: the ARP and NDP
+// neighbours) and cloned host routes (flag W). spoofdpi adds neither, so a
+// leftover route of its own still shows.
 func stripRouteColumns(table string) string {
 	var out strings.Builder
 	var cols []int
@@ -47,6 +53,9 @@ func stripRouteColumns(table string) string {
 		}
 		if cols == nil || len(fields) <= slices.Max(cols) {
 			out.WriteString(line + "\n")
+			continue
+		}
+		if strings.ContainsAny(fields[cols[2]], "LW") {
 			continue
 		}
 		kept := make([]string, len(cols))
@@ -74,4 +83,26 @@ func routeColumns(fields []string) []int {
 		cols = append(cols, i)
 	}
 	return cols
+}
+
+func TestStripRouteColumns(t *testing.T) {
+	table := `Routing tables
+
+Internet:
+Destination        Gateway            Flags               Netif Expire
+default            172.20.0.1         UGScg                 en0
+0/1                utun7              UScg                utun7
+100.100.100.100    link#21            UHWIi               utun6
+172.20.0.209       3a:72:38:3d:9d:8f  UHLWIi                en0   1200
+`
+	want := `Routing tables
+
+Internet:
+Destination Gateway Flags Netif
+default 172.20.0.1 UGScg en0
+0/1 utun7 UScg utun7
+`
+	if got := stripRouteColumns(table); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
 }
