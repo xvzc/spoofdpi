@@ -111,10 +111,19 @@ func netlinkString(b []byte) string {
 
 // linuxLinkInfo returns the LinkInfo of l. A link without a kind is
 // physical, unless it is PPP or loopback.
+//
+// The tun driver serves both TUN and TAP links under the kind "tun"; a TAP
+// link is the one with an Ethernet link type. Both stay VPN links, since a
+// TAP that carries the default route is almost always an L2 VPN (OpenVPN in
+// TAP mode, ZeroTier, tinc), while a VM's TAP sits in a bridge. The detail
+// says "tap" so that a misclassification is visible in the logs.
 func linuxLinkInfo(l netlinkLink) LinkInfo {
 	detail := "kind=" + l.kind
 	if l.kind == "" {
 		detail = arphrdName(l.arphrd)
+	}
+	if l.kind == "tun" && l.arphrd == arphrdEther {
+		detail += " (tap)"
 	}
 	if l.flags&iffPointopoint != 0 {
 		detail += " p2p"

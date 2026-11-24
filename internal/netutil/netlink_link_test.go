@@ -137,6 +137,16 @@ func TestLinkInfoFromNetlink(t *testing.T) {
 			want:    LinkInfo{Index: 8, Name: "tun0", Kind: LinkVPN, Detail: "kind=tun p2p"},
 		},
 		{
+			name:    "tap is vpn",
+			payload: nlLink(arphrdEther, 19, up, "tap0", "tun"),
+			want: LinkInfo{
+				Index:  19,
+				Name:   "tap0",
+				Kind:   LinkVPN,
+				Detail: "kind=tun (tap)",
+			},
+		},
+		{
 			name:    "ppp kind",
 			payload: nlLink(arphrdPPP, 9, up|iffPointopoint, "ppp0", "ppp"),
 			want:    LinkInfo{Index: 9, Name: "ppp0", Kind: LinkPPP, Detail: "kind=ppp p2p"},
