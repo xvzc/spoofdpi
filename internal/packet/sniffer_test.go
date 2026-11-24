@@ -37,6 +37,18 @@ func (h *filterHandle) SetBPFRawInstructionFilter(f []capture.BPFInstruction) er
 	return nil
 }
 
+// mustFilter returns the program of filter for an Ethernet link.
+func mustFilter(
+	t *testing.T,
+	filter func(layers.LinkType) ([]capture.BPFInstruction, error),
+) []capture.BPFInstruction {
+	t.Helper()
+
+	prog, err := filter(layers.LinkTypeEthernet)
+	require.NoError(t, err)
+	return prog
+}
+
 func TestSniffer_StartCapturing(t *testing.T) {
 	rejected := errors.New("program rejected")
 
@@ -50,14 +62,14 @@ func TestSniffer_StartCapturing(t *testing.T) {
 			func(h capture.Handle) error {
 				return NewTCPSniffer(zerolog.Nop(), h, newTestHopStore(), nil).StartCapturing()
 			},
-			capture.SynAckFilter(layers.LinkTypeEthernet),
+			mustFilter(t, capture.SynAckFilter),
 		},
 		{
 			"udp",
 			func(h capture.Handle) error {
 				return NewUDPSniffer(zerolog.Nop(), h, newTestHopStore()).StartCapturing()
 			},
-			capture.UDPFilter(layers.LinkTypeEthernet),
+			mustFilter(t, capture.UDPFilter),
 		},
 	}
 	for _, tc := range tcs {
@@ -65,6 +77,14 @@ func TestSniffer_StartCapturing(t *testing.T) {
 			h := &filterHandle{}
 			require.NoError(t, tc.start(h))
 			assert.Equal(t, tc.filter, h.filter)
+		})
+
+		t.Run(tc.name+" fails on an unsupported link type", func(t *testing.T) {
+			h := &linkHandle{&filterHandle{}, layers.LinkTypeLinuxSLL}
+			err := tc.start(h)
+			require.ErrorIs(t, err, capture.ErrUnsupportedLinkType)
+			assert.Empty(t, h.filter)
+			assert.Zero(t, h.reads.Load(), "must not read unfiltered packets")
 		})
 
 		t.Run(tc.name+" fails when the filter is rejected", func(t *testing.T) {

@@ -2,11 +2,13 @@ package capture
 
 import (
 	"encoding/binary"
+	"fmt"
 	"net"
 	"testing"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -142,9 +144,30 @@ func arpRequest(t *testing.T) []byte {
 	})
 }
 
-// onLink wraps f in the link-layer header of lt. ok is false when f
-// cannot travel on lt (ARP has no Null/Loop/Raw encoding).
-func onLink(lt layers.LinkType, f filterFrame) (frame []byte, ok bool) {
+// ppp wraps the IP packet of f in a PPP frame, with the HDLC address and
+// control bytes if hdlc is set. ok is false when f has no PPP protocol
+// number.
+func ppp(f filterFrame, hdlc bool) (frame []byte, ok bool) {
+	var proto uint16
+	switch f.etherType {
+	case layers.EthernetTypeIPv4:
+		proto = 0x0021
+	case layers.EthernetTypeIPv6:
+		proto = 0x0057
+	default:
+		return nil, false
+	}
+	if hdlc {
+		frame = []byte{0xff, 0x03}
+	}
+	frame = binary.BigEndian.AppendUint16(frame, proto)
+	return append(frame, f.payload...), true
+}
+
+// onLink wraps f in the link-layer header of lt; hdlc selects the PPP
+// framing. ok is false when f cannot travel on lt (ARP has no
+// Null/Loop/Raw/PPP encoding).
+func onLink(lt layers.LinkType, hdlc bool, f filterFrame) (frame []byte, ok bool) {
 	switch lt {
 	case layers.LinkTypeEthernet:
 		hdr := make([]byte, 14)
@@ -152,6 +175,8 @@ func onLink(lt layers.LinkType, f filterFrame) (frame []byte, ok bool) {
 		copy(hdr[6:12], []byte{0, 1, 2, 3, 4, 5})
 		binary.BigEndian.PutUint16(hdr[12:14], uint16(f.etherType))
 		return append(hdr, f.payload...), true
+	case layers.LinkTypePPP:
+		return ppp(f, hdlc)
 	}
 
 	var family uint32
@@ -178,31 +203,42 @@ func onLink(lt layers.LinkType, f filterFrame) (frame []byte, ok bool) {
 	}
 }
 
-var filterLinkTypes = []layers.LinkType{
-	layers.LinkTypeEthernet,
-	layers.LinkTypeNull,
-	layers.LinkTypeLoop,
-	layers.LinkTypeRaw,
+// filterLink is a link type, and for PPP one of its two framings.
+type filterLink struct {
+	name string
+	lt   layers.LinkType
+	hdlc bool
+}
+
+var filterLinks = []filterLink{
+	{"Ethernet", layers.LinkTypeEthernet, false},
+	{"Null", layers.LinkTypeNull, false},
+	{"Loop", layers.LinkTypeLoop, false},
+	{"Raw", layers.LinkTypeRaw, false},
+	{"PPP with HDLC framing", layers.LinkTypePPP, true},
+	{"PPP without HDLC framing", layers.LinkTypePPP, false},
 }
 
 // testFilter checks that the program built by filter accepts exactly the
 // frames whose name is in accept, on every supported link type.
 func testFilter(
 	t *testing.T,
-	filter func(layers.LinkType) []BPFInstruction,
+	filter func(layers.LinkType) ([]BPFInstruction, error),
 	frames []filterFrame,
 	accept map[string]bool,
 ) {
 	t.Helper()
 
-	for _, lt := range filterLinkTypes {
+	for _, link := range filterLinks {
+		prog, err := filter(link.lt)
+		require.NoError(t, err)
 		for _, f := range frames {
-			frame, ok := onLink(lt, f)
+			frame, ok := onLink(link.lt, link.hdlc, f)
 			if !ok {
 				continue
 			}
-			t.Run(lt.String()+"/"+f.name, func(t *testing.T) {
-				require.Equal(t, accept[f.name], runFilter(t, filter(lt), frame))
+			t.Run(link.name+"/"+f.name, func(t *testing.T) {
+				require.Equal(t, accept[f.name], runFilter(t, prog, frame))
 			})
 		}
 	}
@@ -246,4 +282,56 @@ func TestUDPFilter(t *testing.T) {
 		"ipv4 udp":          true,
 		"ipv4 udp fragment": true,
 	})
+}
+
+func TestFilters_UnsupportedLinkType(t *testing.T) {
+	filters := map[string]func(layers.LinkType) ([]BPFInstruction, error){
+		"SynAckFilter": SynAckFilter,
+		"UDPFilter":    UDPFilter,
+		"TCPHostFilter": func(lt layers.LinkType) ([]BPFInstruction, error) {
+			return TCPHostFilter(lt, []net.IP{filterSrc4})
+		},
+	}
+	// The link types a handle reports under another number are normalized
+	// before they reach a filter, which does not know them.
+	linkTypes := []layers.LinkType{
+		layers.LinkTypeLinuxSLL, layers.LinkTypeIEEE802_11, 12, 50, 200,
+	}
+	for name, filter := range filters {
+		for _, lt := range linkTypes {
+			t.Run(fmt.Sprintf("%s/%d", name, lt), func(t *testing.T) {
+				prog, err := filter(lt)
+				require.ErrorIs(t, err, ErrUnsupportedLinkType)
+				assert.Contains(t, err.Error(), fmt.Sprintf(": %d", lt))
+				assert.Nil(t, prog)
+			})
+		}
+	}
+}
+
+// A PPP frame whose protocol is not IPv4 is rejected whatever follows it.
+func TestFilters_PPPProtocol(t *testing.T) {
+	synAck, err := SynAckFilter(layers.LinkTypePPP)
+	require.NoError(t, err)
+	udp, err := UDPFilter(layers.LinkTypePPP)
+	require.NoError(t, err)
+	tcp, err := TCPHostFilter(layers.LinkTypePPP, []net.IP{filterSrc4})
+	require.NoError(t, err)
+
+	for _, hdlc := range []bool{true, false} {
+		for _, proto := range []uint16{0xc021, 0x0057, 0x8021} {
+			var frame []byte
+			if hdlc {
+				frame = []byte{0xff, 0x03}
+			}
+			frame = binary.BigEndian.AppendUint16(frame, proto)
+			tcpFrame := append(frame[:len(frame):len(frame)], ipv4TCP(t, true, true)...)
+			udpFrame := append(frame[:len(frame):len(frame)], ipv4UDP(t)...)
+
+			name := fmt.Sprintf("hdlc=%v proto=%#04x", hdlc, proto)
+			assert.False(t, runFilter(t, synAck, tcpFrame), name)
+			assert.False(t, runFilter(t, tcp, tcpFrame), name)
+			assert.False(t, runFilter(t, udp, udpFrame), name)
+		}
+	}
 }

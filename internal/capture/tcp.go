@@ -65,17 +65,17 @@ const maxFilterHosts = 100
 // TCPHostFilter returns a BPF program that accepts unfragmented IPv4 TCP
 // packets from or to any of hosts, on the given link type. With more than
 // 100 hosts, it accepts every unfragmented IPv4 TCP packet. It supports
-// Ethernet, Null (Loopback/VPN), and Raw IP link types.
-func TCPHostFilter(linkType layers.LinkType, hosts []net.IP) []BPFInstruction {
-	var base uint32
-	switch linkType {
-	case layers.LinkTypeNull, layers.LinkTypeLoop:
-		base = 4
-	case layers.LinkTypeRaw:
-		base = 0
-	default:
-		base = 14
-	}
+// Ethernet, Null/Loop (loopback and VPN), Raw IP, and PPP, and returns
+// ErrUnsupportedLinkType for any other.
+func TCPHostFilter(linkType layers.LinkType, hosts []net.IP) ([]BPFInstruction, error) {
+	return buildForLink(linkType, func(l linkLayout) []BPFInstruction {
+		return tcpHostProgram(l, hosts)
+	})
+}
+
+// tcpHostProgram is the TCP host filter for the frames of layout l.
+func tcpHostProgram(l linkLayout, hosts []net.IP) []BPFInstruction {
+	base := l.base
 
 	checkHosts := len(hosts) <= maxFilterHosts
 	var addrs []uint32
@@ -101,15 +101,9 @@ func TCPHostFilter(linkType layers.LinkType, hosts []net.IP) []BPFInstruction {
 		jumps = append(jumps, jumpAt{at: emit(op, k), jt: jt, jf: jf})
 	}
 
-	// IPv4: the EtherType on Ethernet, the version nibble otherwise.
-	if linkType == layers.LinkTypeEthernet {
-		emit(0x28, 12) // ldh [12]
-		jump(0x15, 0x0800, next, reject)
-	} else {
-		emit(0x30, base) // ldb [base]
-		emit(0x54, 0xf0) // and #0xf0
-		jump(0x15, 0x40, next, reject)
-	}
+	// IPv4: its last instruction jumps to reject on a mismatch.
+	prog = append(prog, l.ipv4Check(0)...)
+	jumps = append(jumps, jumpAt{at: len(prog) - 1, jt: next, jf: reject})
 	emit(0x30, base+9) // ldb [protocol]
 	jump(0x15, 6, next, reject)
 	emit(0x28, base+6) // ldh [flags and fragment offset]

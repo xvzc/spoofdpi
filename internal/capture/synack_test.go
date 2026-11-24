@@ -96,6 +96,31 @@ func TestParseSynAck(t *testing.T) {
 		assert.Equal(t, uint8(8), sa.Hops)
 	})
 
+	// A PPP frame travels with or without the HDLC address and control
+	// bytes, and gopacket decodes both.
+	t.Run("ppp", func(t *testing.T) {
+		ip := ipv4TCP(t, true, true)
+		for _, hdlc := range []bool{true, false} {
+			frame, ok := onLink(
+				layers.LinkTypePPP,
+				hdlc,
+				filterFrame{etherType: layers.EthernetTypeIPv4, payload: ip},
+			)
+			require.True(t, ok)
+
+			sa, ok := ParseSynAck(
+				gopacket.NewPacket(frame, layers.LinkTypePPP, gopacket.Default),
+			)
+			require.True(t, ok, "hdlc=%v", hdlc)
+			assert.True(t, filterSrc4.Equal(sa.Src))
+			assert.True(t, filterDst4.Equal(sa.Dst))
+			assert.Equal(t, uint32(1000), sa.Seq)
+			assert.Equal(t, uint32(2000), sa.Ack)
+			assert.Equal(t, uint8(50), sa.TTLLeft)
+			assert.Equal(t, uint8(14), sa.Hops)
+		}
+	})
+
 	rejects := []struct {
 		name     string
 		src, dst *net.TCPAddr

@@ -129,25 +129,43 @@ func runFilter(t *testing.T, prog []BPFInstruction, data []byte) bool {
 	return n > 0
 }
 
+// hostFilterFrame builds an IPv4 TCP frame on link, from src to dst.
+func hostFilterFrame(
+	t *testing.T,
+	link filterLink,
+	src, dst *net.TCPAddr,
+	fragment bool,
+) []byte {
+	t.Helper()
+	ip := segmentFrame(
+		t,
+		layers.LinkTypeRaw,
+		src,
+		dst,
+		&layers.TCP{ACK: true},
+		nil,
+		fragment,
+	)
+	frame, ok := onLink(link.lt, link.hdlc, filterFrame{
+		etherType: layers.EthernetTypeIPv4,
+		payload:   ip,
+	})
+	require.True(t, ok)
+	return frame
+}
+
 func TestTCPHostFilter(t *testing.T) {
 	watched := &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 443}
 	other := &net.TCPAddr{IP: net.ParseIP("198.51.100.9"), Port: 443}
 	local := &net.TCPAddr{IP: net.ParseIP("192.168.0.2"), Port: 50000}
 	hosts := []net.IP{net.ParseIP("203.0.113.1"), watched.IP, net.ParseIP("2001:db8::1")}
 
-	for _, linkType := range []layers.LinkType{layers.LinkTypeEthernet, layers.LinkTypeNull} {
-		t.Run(linkType.String(), func(t *testing.T) {
-			prog := TCPHostFilter(linkType, hosts)
+	for _, link := range filterLinks {
+		t.Run(link.name, func(t *testing.T) {
+			prog, err := TCPHostFilter(link.lt, hosts)
+			require.NoError(t, err)
 			frame := func(src, dst *net.TCPAddr, fragment bool) []byte {
-				return segmentFrame(
-					t,
-					linkType,
-					src,
-					dst,
-					&layers.TCP{ACK: true},
-					nil,
-					fragment,
-				)
+				return hostFilterFrame(t, link, src, dst, fragment)
 			}
 			assert.True(t, runFilter(t, prog, frame(watched, local, false)), "from a host")
 			assert.True(t, runFilter(t, prog, frame(local, watched, false)), "to a host")
@@ -165,22 +183,22 @@ func TestTCPHostFilter_ManyHosts(t *testing.T) {
 	local := &net.TCPAddr{IP: net.ParseIP("192.168.0.2"), Port: 50000}
 	last := &net.TCPAddr{IP: hosts[len(hosts)-1], Port: 443}
 	other := &net.TCPAddr{IP: net.ParseIP("198.51.100.9"), Port: 443}
-	frame := func(src, dst *net.TCPAddr) []byte {
-		return segmentFrame(
-			t,
-			layers.LinkTypeEthernet,
-			src,
-			dst,
-			&layers.TCP{ACK: true},
-			nil,
-			false,
-		)
+
+	// PPP is the longest program, with one copy for each framing.
+	for _, link := range filterLinks {
+		t.Run(link.name, func(t *testing.T) {
+			frame := func(src, dst *net.TCPAddr) []byte {
+				return hostFilterFrame(t, link, src, dst, false)
+			}
+
+			prog, err := TCPHostFilter(link.lt, hosts)
+			require.NoError(t, err)
+			assert.True(t, runFilter(t, prog, frame(local, last)), "the farthest jump fits")
+			assert.False(t, runFilter(t, prog, frame(local, other)))
+
+			prog, err = TCPHostFilter(link.lt, append(hosts, net.ParseIP("10.9.9.9")))
+			require.NoError(t, err)
+			assert.True(t, runFilter(t, prog, frame(local, other)), "too many hosts: all TCP")
+		})
 	}
-
-	prog := TCPHostFilter(layers.LinkTypeEthernet, hosts)
-	assert.True(t, runFilter(t, prog, frame(local, last)), "the farthest jump fits")
-	assert.False(t, runFilter(t, prog, frame(local, other)))
-
-	prog = TCPHostFilter(layers.LinkTypeEthernet, append(hosts, net.ParseIP("10.9.9.9")))
-	assert.True(t, runFilter(t, prog, frame(local, other)), "too many hosts: all TCP")
 }

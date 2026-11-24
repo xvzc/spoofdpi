@@ -65,7 +65,7 @@ func openCapture(kind captureKind, servers []netip.Addr) (packetSource, error) {
 		for i, s := range servers {
 			hosts[i] = s.AsSlice()
 		}
-		filter = func(linkType layers.LinkType) []capture.BPFInstruction {
+		filter = func(linkType layers.LinkType) ([]capture.BPFInstruction, error) {
 			return capture.TCPHostFilter(linkType, hosts)
 		}
 	}
@@ -77,7 +77,12 @@ func openCapture(kind captureKind, servers []netip.Addr) (packetSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := h.SetBPFRawInstructionFilter(filter(h.LinkType())); err != nil {
+	prog, err := filter(h.LinkType())
+	if err != nil {
+		h.Close()
+		return nil, fmt.Errorf("capture filter: %w", err)
+	}
+	if err := h.SetBPFRawInstructionFilter(prog); err != nil {
 		h.Close()
 		return nil, fmt.Errorf("set capture filter: %w", err)
 	}

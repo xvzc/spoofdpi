@@ -86,50 +86,19 @@ func EstimateHops(ttlLeft uint8) uint8 {
 }
 
 // SynAckFilter returns a BPF program that accepts IPv4 TCP SYN/ACKs on the
-// given link type.
-// It supports Ethernet, Null (Loopback/VPN), and Raw IP link types.
-func SynAckFilter(linkType layers.LinkType) []BPFInstruction {
-	var baseOffset uint32
+// given link type. It supports Ethernet, Null/Loop (loopback and VPN), Raw
+// IP, and PPP, and returns ErrUnsupportedLinkType for any other.
+func SynAckFilter(linkType layers.LinkType) ([]BPFInstruction, error) {
+	return buildForLink(linkType, synAckProgram)
+}
 
-	switch linkType {
-	case layers.LinkTypeEthernet:
-		baseOffset = 14
-	case layers.LinkTypeNull, layers.LinkTypeLoop:
-		baseOffset = 4
-	case layers.LinkTypeRaw:
-		baseOffset = 0
-	default:
-		baseOffset = 14
-	}
+// synAckProgram is the SYN/ACK filter for the frames of layout l.
+func synAckProgram(l linkLayout) []BPFInstruction {
+	baseOffset := l.base
 
-	instructions := []BPFInstruction{}
-
-	// 1. Protocol Verification (IPv4)
-	if linkType == layers.LinkTypeEthernet {
-		// Load EtherType (2 bytes at offset 12), then check for IPv4 (0x0800).
-		// On mismatch, jump 9 forward to the reject instruction.
-		instructions = append(
-			instructions,
-			BPFInstruction{Op: 0x28, Jt: 0, Jf: 0, K: 12},
-			BPFInstruction{Op: 0x15, Jt: 0, Jf: 9, K: 0x0800},
-		)
-	} else {
-		// For Null/Loop/Raw link types the packet starts with a 4-byte family
-		// field (Null/Loop) or directly with the IP header (Raw), so there is
-		// no EtherType to check.  Instead, load the first byte of the IP
-		// header (version | IHL), mask the upper nibble with 0xf0, and verify
-		// it equals 0x40 (IP version 4).  The load must come first; without
-		// it the accumulator is 0 and the check always fails, silently
-		// dropping every packet on these link types.
-		// The false jump lands on the reject instruction, 9 forward, as it
-		// does for Ethernet.
-		instructions = append(
-			instructions,
-			BPFInstruction{Op: 0x30, Jt: 0, Jf: 0, K: baseOffset}, // ldb [baseOffset]
-			BPFInstruction{Op: 0x54, Jt: 0, Jf: 0, K: 0xf0},       // and #0xf0
-			BPFInstruction{Op: 0x15, Jt: 0, Jf: 9, K: 0x40},       // jeq #0x40
-		)
-	}
+	// 1. Protocol Verification (IPv4). The false jump lands on the reject
+	// instruction, 9 forward.
+	instructions := l.ipv4Check(9)
 
 	// 2. Check Protocol == TCP (6)
 	instructions = append(instructions,

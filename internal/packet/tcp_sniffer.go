@@ -37,13 +37,18 @@ func NewTCPSniffer(
 }
 
 // StartCapturing begins monitoring for SYN/ACK packets in a background
-// goroutine. It returns an error if the SYN/ACK filter cannot be installed.
+// goroutine. It returns an error if the SYN/ACK filter cannot be built, in
+// which case it wraps capture.ErrUnsupportedLinkType for a link type the
+// filter does not support, or installed.
 func (ts *TCPSniffer) StartCapturing() error {
 	// Detaching fails on a Linux socket that has no filter yet (ENOENT),
 	// and attaching a filter replaces any previous one, so a failed clear
 	// is harmless.
 	_ = ts.handle.ClearBPF()
-	filter := capture.SynAckFilter(ts.handle.LinkType())
+	filter, err := capture.SynAckFilter(ts.handle.LinkType())
+	if err != nil {
+		return fmt.Errorf("build SYN/ACK capture filter: %w", err)
+	}
 	if err := ts.handle.SetBPFRawInstructionFilter(filter); err != nil {
 		return fmt.Errorf("set SYN/ACK capture filter: %w", err)
 	}

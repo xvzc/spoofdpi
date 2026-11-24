@@ -1,6 +1,7 @@
 package packet
 
 import (
+	"errors"
 	"net"
 
 	"github.com/rs/zerolog"
@@ -20,13 +21,17 @@ type UDPStack struct {
 // packets through senders. It fails, closing the handle, if the sniffer
 // cannot start. The handle stays open for the life of the process: the
 // sniffer reads it until then.
+//
+// If iface has a link type the capture filter does not support, the
+// handle is closed and the stack has a nil Sniffer: no hop counts are
+// learned there, and fake packets use the default hop count.
 func OpenUDPStack(
 	logger zerolog.Logger,
 	iface *net.Interface,
 	senders Senders,
 	hops *HopStore,
 ) (*UDPStack, error) {
-	handle, err := capture.NewHandle(iface)
+	handle, err := newCaptureHandle(iface)
 	if err != nil {
 		return nil, err
 	}
@@ -34,6 +39,14 @@ func OpenUDPStack(
 	writer := NewUDPWriter(logger, senders)
 	if err := sniffer.StartCapturing(); err != nil {
 		handle.Close()
+		if errors.Is(err, capture.ErrUnsupportedLinkType) {
+			logger.Warn().
+				Str("interface", iface.Name).
+				Err(err).
+				Msg("hop counts are not learned on this interface; " +
+					"fake packets use hop-count-default")
+			return &UDPStack{Writer: writer}, nil
+		}
 		return nil, err
 	}
 	return &UDPStack{Sniffer: sniffer, Writer: writer}, nil

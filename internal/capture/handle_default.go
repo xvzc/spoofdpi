@@ -8,6 +8,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 )
 
@@ -78,6 +79,12 @@ func openHandle(iface *net.Interface, readTimeout time.Duration) (Handle, error)
 	}
 
 	return &DefaultHandle{handle}, nil
+}
+
+// LinkType returns the link type of the handle, with the numbers pcap
+// reports for Raw and PPP mapped to the ones the capture filters know.
+func (h *DefaultHandle) LinkType() layers.LinkType {
+	return normalizeLinkType(h.Handle.LinkType())
 }
 
 func (h *DefaultHandle) ClearBPF() error {

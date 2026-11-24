@@ -34,13 +34,18 @@ func NewUDPSniffer(
 }
 
 // StartCapturing begins monitoring for UDP packets in a background
-// goroutine. It returns an error if the UDP filter cannot be installed.
+// goroutine. It returns an error if the UDP filter cannot be built, in
+// which case it wraps capture.ErrUnsupportedLinkType for a link type the
+// filter does not support, or installed.
 func (us *UDPSniffer) StartCapturing() error {
 	// Detaching fails on a Linux socket that has no filter yet (ENOENT),
 	// and attaching a filter replaces any previous one, so a failed clear
 	// is harmless.
 	_ = us.handle.ClearBPF()
-	filter := capture.UDPFilter(us.handle.LinkType())
+	filter, err := capture.UDPFilter(us.handle.LinkType())
+	if err != nil {
+		return fmt.Errorf("build UDP capture filter: %w", err)
+	}
 	if err := us.handle.SetBPFRawInstructionFilter(filter); err != nil {
 		return fmt.Errorf("set UDP capture filter: %w", err)
 	}

@@ -40,6 +40,8 @@ Sending fake packets can trick DPI systems into inspecting invalid traffic, allo
 
 Fake packets are not sent to a server found to be on the local link (0 hops away), since they would reach it no matter their TTL. spoofdpi logs a warning with the server's address the first time it skips them for a server. The hop count is learned from the server's replies, so the first flow to a new server still sends them; use a [rule](rules.md) to turn them off for such servers.
 
+On an interface whose link type spoofdpi cannot capture on (it supports Ethernet, loopback, raw IP, and PPP), no hop counts are learned: spoofdpi logs a warning at startup and fake packets use the default hop count.
+
 Fake packets are sent to IPv4 servers only for now. For an IPv6 server they are skipped, and spoofdpi logs a warning the first time it skips them.
 
 Fake packets share the flow of the real datagrams and rely on their TTL to expire before the server. If the hop count is overestimated, a fake can reach the server, and the server's reply to it is passed on to the application like any other.

@@ -300,6 +300,8 @@ The wait ends as soon as the SYN/ACK is processed. If it is not processed in tim
 
 Only IPv4 servers are learned; spoofdpi does not wait for IPv6 servers.
 
+On an interface whose link type spoofdpi cannot capture on (it supports Ethernet, loopback, raw IP, and PPP), nothing is learned: spoofdpi logs a warning at startup and fake packets use the default hop count and random sequence numbers.
+
 ### Usage
 
 **Command-Line Flag**

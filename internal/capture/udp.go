@@ -59,38 +59,19 @@ func ParseUDP(p gopacket.Packet) (u UDPPacket, ok bool) {
 }
 
 // UDPFilter returns a BPF program for "ip and udp" on the given link type.
-// It supports Ethernet, Null (Loopback/VPN), and Raw IP link types.
-func UDPFilter(linkType layers.LinkType) []BPFInstruction {
-	var baseOffset uint32
+// It supports Ethernet, Null/Loop (loopback and VPN), Raw IP, and PPP, and
+// returns ErrUnsupportedLinkType for any other.
+func UDPFilter(linkType layers.LinkType) ([]BPFInstruction, error) {
+	return buildForLink(linkType, udpProgram)
+}
 
-	switch linkType {
-	case layers.LinkTypeEthernet:
-		baseOffset = 14
-	case layers.LinkTypeNull, layers.LinkTypeLoop:
-		baseOffset = 4
-	case layers.LinkTypeRaw:
-		baseOffset = 0
-	default:
-		baseOffset = 14
-	}
+// udpProgram is the UDP filter for the frames of layout l.
+func udpProgram(l linkLayout) []BPFInstruction {
+	baseOffset := l.base
 
-	instructions := []BPFInstruction{}
-
-	// 1. Protocol Verification (IPv4)
-	if linkType == layers.LinkTypeEthernet {
-		instructions = append(
-			instructions,
-			BPFInstruction{Op: 0x28, Jt: 0, Jf: 0, K: 12},
-			BPFInstruction{Op: 0x15, Jt: 0, Jf: 3, K: 0x0800},
-		)
-	} else {
-		instructions = append(
-			instructions,
-			BPFInstruction{Op: 0x30, Jt: 0, Jf: 0, K: baseOffset},
-			BPFInstruction{Op: 0x54, Jt: 0, Jf: 0, K: 0xf0},
-			BPFInstruction{Op: 0x15, Jt: 0, Jf: 3, K: 0x40},
-		)
-	}
+	// 1. Protocol Verification (IPv4). The false jump lands on the reject
+	// instruction, 3 forward.
+	instructions := l.ipv4Check(3)
 
 	// 2. Check Protocol == UDP (17)
 	instructions = append(instructions,
