@@ -94,11 +94,17 @@ func getNetworkServiceFromInterface(ifaceName string) (string, error) {
 func buildSysProxyJobs(logger zerolog.Logger, pacURL string) ([]NetworkJob, error) {
 	// A full-tunnel VPN holds the primary default; the network service to
 	// configure is still the one of the physical interface.
-	iface, skipped, err := netutil.PrimaryInterface()
+	iface, fallback, err := netutil.PrimaryInterface()
 	if err != nil {
 		return nil, err
 	}
-	if skipped != nil {
+	if fallback.DefaultsErr != nil {
+		logger.Debug().
+			Err(fallback.DefaultsErr).
+			Str("iface", iface.Name).
+			Msg("cannot read the default routes; using the primary default")
+	}
+	if skipped := fallback.Skipped; skipped != nil {
 		logger.Debug().
 			Str("primary", skipped.Name).
 			Str("link", skipped.Kind.String()).

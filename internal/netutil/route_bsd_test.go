@@ -4,6 +4,7 @@ package netutil
 
 import (
 	"encoding/binary"
+	"errors"
 	"net/netip"
 	"testing"
 
@@ -323,11 +324,29 @@ func TestChoosePrimaryLink(t *testing.T) {
 
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			got, fellBack := choosePrimaryLink(tc.primary, tc.defaults)
+			listed := false
+			defaults := func(fam Family) ([]LinkInfo, error) {
+				assert.Equal(t, FamilyV4, fam)
+				listed = true
+				return tc.defaults, nil
+			}
+			got, fellBack, err := choosePrimaryLink(tc.primary, defaults)
+			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
 			assert.Equal(t, tc.wantFellBack, fellBack)
+			assert.Equal(t, tc.primary.Kind != LinkPhysical, listed,
+				"the defaults are listed only for a primary that is not physical")
 		})
 	}
+
+	t.Run("defaults fail", func(t *testing.T) {
+		boom := errors.New("IPv4 default routes: boom")
+		failing := func(Family) ([]LinkInfo, error) { return nil, boom }
+		got, fellBack, err := choosePrimaryLink(utun, failing)
+		assert.Equal(t, utun, got)
+		assert.False(t, fellBack)
+		assert.Same(t, boom, err)
+	})
 }
 
 func TestRouteAddr(t *testing.T) {

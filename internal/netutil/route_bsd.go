@@ -47,40 +47,49 @@ func routeTo(dst netip.Addr) (kernelRoute, error) {
 	return kernelRouteFromReply(m, dst)
 }
 
+// PrimaryFallback tells what PrimaryInterface did because the primary
+// IPv4 default route's link is not physical.
+type PrimaryFallback struct {
+	// Skipped is that primary link when a physical default was chosen
+	// instead; nil otherwise.
+	Skipped *LinkInfo
+	// DefaultsErr is why the default routes could not be read, in which
+	// case the primary interface was kept; nil otherwise.
+	DefaultsErr error
+}
+
 // PrimaryInterface returns the physical interface of the host's IPv4
 // default route. It starts from the primary default, as
 // `route -n get default` reports it: the kernel's exact, unscoped match
 // for 0.0.0.0/0. When that route's link is not physical, such as the utun
 // of a full-tunnel VPN, it returns the interface of the first physical
-// IPv4 default instead, which may be interface-scoped, and skipped is the
-// primary link it passed over; skipped is nil otherwise. Without a
-// physical default the primary interface is returned as is.
-func PrimaryInterface() (iface *net.Interface, skipped *LinkInfo, err error) {
+// IPv4 default instead, which may be interface-scoped, and fallback.Skipped
+// is the primary link it passed over. Without a physical default, or when
+// the default routes cannot be read (fallback.DefaultsErr), the primary
+// interface is returned as is.
+func PrimaryInterface() (iface *net.Interface, fallback PrimaryFallback, err error) {
 	index, err := primaryDefaultIndex()
 	if err != nil {
-		return nil, nil, fmt.Errorf("primary interface: %w", err)
+		return nil, PrimaryFallback{}, fmt.Errorf("primary interface: %w", err)
 	}
 	primary, err := linkInfo(index)
 	if err != nil {
-		return nil, nil, fmt.Errorf("primary interface: %w", err)
+		return nil, PrimaryFallback{}, fmt.Errorf("primary interface: %w", err)
 	}
-	var defaults []LinkInfo
-	if primary.Kind != LinkPhysical {
-		defaults, err = defaultLinks(FamilyV4)
-		if err != nil {
-			return nil, nil, fmt.Errorf("primary interface: %w", err)
-		}
-	}
-
-	chosen, fellBack := choosePrimaryLink(primary, defaults)
+	chosen, fellBack, defaultsErr := choosePrimaryLink(primary, defaultLinks)
 	iface, err = interfaceByIndex(chosen.Index)
 	if err != nil {
-		return nil, nil, fmt.Errorf("primary interface %d: %w", chosen.Index, err)
+		return nil, PrimaryFallback{}, fmt.Errorf(
+			"primary interface %d: %w",
+			chosen.Index,
+			err,
+		)
 	}
+	fallback.DefaultsErr = defaultsErr
 	if fellBack {
-		return iface, &primary, nil
+		fallback.Skipped = &primary
 	}
-	return iface, nil, nil
+	return iface, fallback, nil
 }
 
 // primaryDefaultIndex returns the interface index of the primary IPv4
@@ -106,19 +115,24 @@ func primaryDefaultIndex() (int, error) {
 }
 
 // choosePrimaryLink returns primary when it is physical, and otherwise the
-// first physical link among defaults, the links of the IPv4 default
-// routes, with fellBack set. Without one it returns primary.
+// first physical link among the links of the IPv4 default routes, which
+// defaults lists, with fellBack set. Without one it returns primary, and
+// when defaults fails, primary and the error of defaults.
 func choosePrimaryLink(
 	primary LinkInfo,
-	defaults []LinkInfo,
-) (_ LinkInfo, fellBack bool) {
+	defaults func(Family) ([]LinkInfo, error),
+) (_ LinkInfo, fellBack bool, defaultsErr error) {
 	if primary.Kind == LinkPhysical {
-		return primary, false
+		return primary, false, nil
 	}
-	if phys, ok := otherPhysical(primary, defaults); ok {
-		return phys, true
+	links, err := defaults(FamilyV4)
+	if err != nil {
+		return primary, false, err
 	}
-	return primary, false
+	if phys, ok := otherPhysical(primary, links); ok {
+		return phys, true, nil
+	}
+	return primary, false, nil
 }
 
 // rtmGet sends one RTM_GET request with flags and addrs over a routing

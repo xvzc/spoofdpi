@@ -65,7 +65,8 @@ func bsdLinkTypeName(ifType int) string {
 
 // defaultLinks returns the links of the default routes of fam, in table
 // order and without duplicates. Scoped defaults (RTF_IFSCOPE) are
-// included: a darwin VPN demotes the physical default to one.
+// included: a darwin VPN demotes the physical default to one. A default
+// whose link cannot be read is left out.
 func defaultLinks(fam Family) ([]LinkInfo, error) {
 	af := unix.AF_INET
 	if fam == FamilyV6 {
@@ -80,16 +81,7 @@ func defaultLinks(fam Family) ([]LinkInfo, error) {
 		return nil, fmt.Errorf("%s default routes: parse: %w", fam, err)
 	}
 
-	indexes := defaultRouteIndexes(msgs, fam)
-	links := make([]LinkInfo, 0, len(indexes))
-	for _, index := range indexes {
-		link, err := linkInfo(index)
-		if err != nil {
-			return nil, err
-		}
-		links = append(links, link)
-	}
-	return links, nil
+	return resolveLinks(defaultRouteIndexes(msgs, fam), linkInfo), nil
 }
 
 // defaultRouteIndexes returns the interface indexes of the default routes

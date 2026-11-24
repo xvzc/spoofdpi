@@ -17,8 +17,9 @@ func linkInfo(index int) (LinkInfo, error) {
 }
 
 // defaultLinks returns the links of the unicast default routes of fam in
-// every routing table, in dump order and without duplicates. A dump that
-// a concurrent route change interrupts is tried once more.
+// every routing table, in dump order and without duplicates. A default
+// whose link cannot be read is left out. A dump that a concurrent route
+// change interrupts is tried once more.
 func defaultLinks(fam Family) ([]LinkInfo, error) {
 	var reply []netlinkMessage
 	var err error
@@ -37,13 +38,5 @@ func defaultLinks(fam Family) ([]LinkInfo, error) {
 		return nil, fmt.Errorf("%s default routes: %w", fam, err)
 	}
 
-	links := make([]LinkInfo, 0, len(oifs))
-	for _, oif := range oifs {
-		link, err := linkInfo(oif)
-		if err != nil {
-			return nil, err
-		}
-		links = append(links, link)
-	}
-	return links, nil
+	return resolveLinks(oifs, linkInfo), nil
 }

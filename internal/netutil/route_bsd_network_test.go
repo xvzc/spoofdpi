@@ -110,13 +110,14 @@ func TestRouteTo_MatchesRouteCommand(t *testing.T) {
 
 func TestPrimaryInterface_MatchesRouteCommand(t *testing.T) {
 	want, ok := routeGet(t, "default")
-	got, skipped, err := PrimaryInterface()
+	got, fallback, err := PrimaryInterface()
 	if !ok {
 		require.ErrorIs(t, err, ErrNoIPv4Route)
 		t.Skip("route reports no default route")
 	}
 	require.NoError(t, err)
-	if skipped != nil {
+	require.NoError(t, fallback.DefaultsErr)
+	if skipped := fallback.Skipped; skipped != nil {
 		// A VPN holds the primary default; route reports its interface.
 		t.Logf(
 			"route: iface=%s; PrimaryInterface: %s, skipped %s",
