@@ -61,6 +61,17 @@ func NewHandle(iface *net.Interface) (Handle, error) {
 	return h, nil
 }
 
+// NewWriteHandle opens a raw socket that only writes frames to iface. Its
+// protocol is 0, so the kernel delivers it no packets: it costs nothing
+// while unread. ReadPacketData on it never returns.
+func NewWriteHandle(iface *net.Interface) (Handle, error) {
+	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open raw socket: %w", err)
+	}
+	return &LinuxHandle{fd: fd, ifIndex: iface.Index}, nil
+}
+
 // NewHandleWithReadTimeout is like NewHandle, but ReadPacketData returns an
 // error for which IsReadTimeout is true when no packet arrives within d.
 // d must be positive.

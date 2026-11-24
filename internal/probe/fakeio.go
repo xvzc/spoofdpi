@@ -18,8 +18,8 @@ import (
 // that fake packets are sent to, as in spoofdpi.
 const gatewayResolveTimeout = 10 * time.Second
 
-// errFakeCapture marks the failure to open the capture handle fake packets
-// are sent with.
+// errFakeCapture marks the failure to open a capture handle of the fake
+// stack: the sniffer's, or the one fake packets are sent through.
 var errFakeCapture = errors.New("open capture")
 
 // fakeLog is what the fake packets of one attempt were.
@@ -93,14 +93,19 @@ func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error)
 	if err != nil {
 		return nil, err
 	}
+	sender, err := packet.OpenL2Sender(&route.Iface, gatewayMAC)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errFakeCapture, err)
+	}
 	hops := packet.NewHopStore()
 	stack, err := packet.OpenTCPStack(
 		zerolog.Nop(),
 		&route.Iface,
-		gatewayMAC,
+		packet.Senders{V4: sender},
 		hops,
 	)
 	if err != nil {
+		_ = sender.Close()
 		return nil, fmt.Errorf("%w: %w", errFakeCapture, err)
 	}
 	ips := make([]net.IP, len(servers))

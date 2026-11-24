@@ -10,22 +10,22 @@ import (
 var _ FakeCapability = (*UDPStack)(nil)
 
 // UDPStack is what fake UDP packets are sent with: a sniffer that learns
-// hop counts, and a writer that injects crafted packets, sharing one
-// capture handle.
+// hop counts, and a writer that sends crafted packets through its
+// senders.
 type UDPStack struct {
 	Sniffer *UDPSniffer
 	Writer  *UDPWriter
 }
 
-// OpenUDPStack opens one capture handle on iface, shared by a sniffer that
-// records hop counts in hops and a writer that injects packets to
-// gatewayMAC, and starts the sniffer. It fails, closing the handle, if the
-// sniffer cannot start. The handle stays open for the life of the process:
-// the sniffer reads it until then.
+// OpenUDPStack opens a capture handle on iface for a sniffer that records
+// hop counts in hops, starts the sniffer, and makes a writer that sends
+// packets through senders. It fails, closing the handle, if the sniffer
+// cannot start. The handle stays open for the life of the process: the
+// sniffer reads it until then.
 func OpenUDPStack(
 	logger zerolog.Logger,
 	iface *net.Interface,
-	gatewayMAC net.HardwareAddr,
+	senders Senders,
 	hops *HopStore,
 ) (*UDPStack, error) {
 	handle, err := capture.NewHandle(iface)
@@ -33,7 +33,7 @@ func OpenUDPStack(
 		return nil, err
 	}
 	sniffer := NewUDPSniffer(logger, handle, hops)
-	writer := NewUDPWriter(logger, handle, iface, gatewayMAC)
+	writer := NewUDPWriter(logger, senders)
 	if err := sniffer.StartCapturing(); err != nil {
 		handle.Close()
 		return nil, err
@@ -41,9 +41,8 @@ func OpenUDPStack(
 	return &UDPStack{Sniffer: sniffer, Writer: writer}, nil
 }
 
-// CanFake reports whether fake packets can be sent to dst. The stack sends
-// them on the interface of the IPv4 default route to the gateway MAC that
-// ARP resolved, so it reaches IPv4 destinations only.
+// CanFake reports whether fake packets can be sent to dst. The stack is
+// opened with an IPv4 sender only, so it reaches IPv4 destinations only.
 func (s *UDPStack) CanFake(dst net.IP) bool {
 	return dst.To4() != nil
 }

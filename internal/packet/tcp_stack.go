@@ -15,23 +15,23 @@ const seqEntryTTL = 5 * time.Second
 var _ FakeCapability = (*TCPStack)(nil)
 
 // TCPStack is what fake TCP packets are sent with: a SYN/ACK sniffer that
-// learns hop counts and sequence numbers, and a writer that injects
-// crafted packets, sharing one capture handle.
+// learns hop counts and sequence numbers, and a writer that sends crafted
+// packets through its senders.
 type TCPStack struct {
 	Sniffer *TCPSniffer
 	Writer  *TCPWriter
 	Seqs    *SeqTracker
 }
 
-// OpenTCPStack opens one capture handle on iface, shared by a SYN/ACK
-// sniffer that records hop counts in hops and sequence numbers in Seqs,
-// and a writer that injects packets to gatewayMAC, and starts the sniffer.
-// It fails, closing the handle, if the sniffer cannot start. The handle
-// stays open for the life of the process: the sniffer reads it until then.
+// OpenTCPStack opens a capture handle on iface for a SYN/ACK sniffer that
+// records hop counts in hops and sequence numbers in Seqs, starts the
+// sniffer, and makes a writer that sends packets through senders. It
+// fails, closing the handle, if the sniffer cannot start. The handle stays
+// open for the life of the process: the sniffer reads it until then.
 func OpenTCPStack(
 	logger zerolog.Logger,
 	iface *net.Interface,
-	gatewayMAC net.HardwareAddr,
+	senders Senders,
 	hops *HopStore,
 ) (*TCPStack, error) {
 	handle, err := capture.NewHandle(iface)
@@ -40,7 +40,7 @@ func OpenTCPStack(
 	}
 	seqs := NewSeqTracker(seqEntryTTL)
 	sniffer := NewTCPSniffer(logger, handle, hops, seqs)
-	writer := NewTCPWriter(logger, handle, iface, gatewayMAC)
+	writer := NewTCPWriter(logger, senders)
 	if err := sniffer.StartCapturing(); err != nil {
 		handle.Close()
 		return nil, err
@@ -48,9 +48,8 @@ func OpenTCPStack(
 	return &TCPStack{Sniffer: sniffer, Writer: writer, Seqs: seqs}, nil
 }
 
-// CanFake reports whether fake packets can be sent to dst. The stack sends
-// them on the interface of the IPv4 default route to the gateway MAC that
-// ARP resolved, so it reaches IPv4 destinations only.
+// CanFake reports whether fake packets can be sent to dst. The stack is
+// opened with an IPv4 sender only, so it reaches IPv4 destinations only.
 func (s *TCPStack) CanFake(dst net.IP) bool {
 	return dst.To4() != nil
 }

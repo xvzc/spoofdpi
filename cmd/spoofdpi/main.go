@@ -296,14 +296,22 @@ func setupNetworkStack(
 		Str("mac", gatewayMAC.String()).
 		Msg(" gateway")
 
+	sender, sErr := packet.OpenL2Sender(&route.Iface, gatewayMAC)
+	if sErr != nil {
+		err = fmt.Errorf("fake packet sender on %s: %w", route.Iface.Name, sErr)
+		return
+	}
+	senders := packet.Senders{V4: sender}
+
 	if cfg.NeedsTCPStack() {
 		stack, hErr := packet.OpenTCPStack(
 			pktLogger,
 			&route.Iface,
-			gatewayMAC,
+			senders,
 			hops,
 		)
 		if hErr != nil {
+			_ = sender.Close()
 			err = fmt.Errorf("tcp pcap handle on %s: %w", route.Iface.Name, hErr)
 			return
 		}
@@ -314,10 +322,11 @@ func setupNetworkStack(
 		stack, hErr := packet.OpenUDPStack(
 			pktLogger,
 			&route.Iface,
-			gatewayMAC,
+			senders,
 			hops,
 		)
 		if hErr != nil {
+			_ = sender.Close()
 			err = fmt.Errorf("udp pcap handle on %s: %w", route.Iface.Name, hErr)
 			return
 		}
