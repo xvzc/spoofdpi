@@ -77,7 +77,10 @@ func (c *httpConn) serve(ctx context.Context) error {
 	}
 	defer netutil.CloseConns(c.rConn)
 
-	c.logger.Debug().Msgf("new remote conn -> %s", c.rConn.RemoteAddr())
+	c.logger.Debug().
+		Str("local", c.rConn.LocalAddr().String()).
+		Str("remote", c.rConn.RemoteAddr().String()).
+		Msg("new remote conn")
 
 	if err := c.forward(); err != nil {
 		return err

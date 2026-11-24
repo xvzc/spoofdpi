@@ -317,6 +317,17 @@ func (c *capture) ttls() []int {
 	return ttls
 }
 
+// lowTTLs returns the TTLs of ttls that expire at the first hop, or before.
+func lowTTLs(ttls []int) []int {
+	var low []int
+	for _, ttl := range ttls {
+		if ttl <= 1 {
+			low = append(low, ttl)
+		}
+	}
+	return low
+}
+
 func (c *capture) counts() (fakes, badSums int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

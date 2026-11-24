@@ -1,6 +1,7 @@
 package packet
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"testing"
@@ -136,4 +137,26 @@ func TestUDPSniffer_DoesNotReinsertEvictedServer(t *testing.T) {
 	)
 
 	assert.False(t, entries.Has(HopKey{Proto: ProtoUDP, IP: netutil.NewIPKey(server)}))
+}
+
+func TestUDPSniffer_LogsConnectionAddresses(t *testing.T) {
+	server := net.ParseIP("203.0.113.1")
+	var log bytes.Buffer
+	us := &UDPSniffer{
+		logger: zerolog.New(&log).Level(zerolog.TraceLevel),
+		hops:   newTestHopStore(),
+	}
+	us.hops.Register(ProtoUDP, []net.IP{server})
+
+	us.processPacket(
+		context.Background(),
+		udpPacket(t, server, net.ParseIP("192.168.1.11"), 52),
+	)
+
+	entries := decodeLogs(t, &log)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "ttl(udp) update", entries[0]["message"])
+	assert.Equal(t, "203.0.113.1:443", entries[0]["from"])
+	assert.Equal(t, "192.168.1.11:50000", entries[0]["to"])
+	assert.EqualValues(t, 12, entries[0]["nhops"])
 }

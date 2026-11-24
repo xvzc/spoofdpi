@@ -417,6 +417,11 @@ func (c *udpAssociateConn) openFlow(
 		return nil, err
 	}
 
+	c.logger.Debug().
+		Str("local", rRawConn.LocalAddr().String()).
+		Str("remote", rRawConn.RemoteAddr().String()).
+		Msg("new remote conn")
+
 	// Fakes share the flow, so the ICMP replies to them reach this socket.
 	f := &udpFlow{
 		key: key,

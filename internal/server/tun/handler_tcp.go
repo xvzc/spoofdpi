@@ -88,7 +88,10 @@ func (h *TCPHandler) Handle(
 		return
 	}
 
-	logger.Debug().Msgf("new remote conn -> %s", rConn.RemoteAddr())
+	logger.Debug().
+		Str("local", rConn.LocalAddr().String()).
+		Str("remote", rConn.RemoteAddr().String()).
+		Msg("new remote conn")
 
 	resCh := make(chan netutil.TransferResult, 2)
 
@@ -155,6 +158,7 @@ func (h *TCPHandler) handleTLS(
 	defer netutil.CloseConns(rConn)
 
 	logger.Debug().
+		Str("local", rConn.LocalAddr().String()).
 		Msgf("new remote conn (%s -> %s)", lConn.RemoteAddr(), rConn.RemoteAddr())
 
 	// Send ClientHello with Desync

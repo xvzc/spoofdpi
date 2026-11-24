@@ -1,7 +1,10 @@
 package packet
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"net"
 	"testing"
 	"time"
@@ -189,4 +192,70 @@ func TestTCPSniffer_IgnoresPacketToItself(t *testing.T) {
 	_, ok := learnedHops(ts.hops, ProtoTCP, remote.IP)
 	assert.False(t, ok)
 	assert.Equal(t, 0, seqs.Len())
+}
+
+// sniffLogs returns the entries that processing packets with ts logged,
+// after it replaced its logger with one that records them.
+func sniffLogs(
+	t *testing.T,
+	ts *TCPSniffer,
+	packets ...gopacket.Packet,
+) []map[string]any {
+	t.Helper()
+
+	var log bytes.Buffer
+	ts.logger = zerolog.New(&log).Level(zerolog.TraceLevel)
+	for _, p := range packets {
+		ts.processPacket(context.Background(), p)
+	}
+	return decodeLogs(t, &log)
+}
+
+func decodeLogs(t *testing.T, log *bytes.Buffer) []map[string]any {
+	t.Helper()
+
+	var entries []map[string]any
+	lines := bufio.NewScanner(bytes.NewReader(log.Bytes()))
+	for lines.Scan() {
+		var entry map[string]any
+		require.NoError(t, json.Unmarshal(lines.Bytes(), &entry))
+		entries = append(entries, entry)
+	}
+	require.NoError(t, lines.Err())
+	return entries
+}
+
+func TestTCPSniffer_LogsConnectionAddresses(t *testing.T) {
+	local := &net.TCPAddr{IP: net.ParseIP("192.168.1.11"), Port: 54321}
+	remote := &net.TCPAddr{IP: net.ParseIP("203.0.113.1"), Port: 443}
+
+	ts := newTestSniffer(nil)
+	ts.hops.Register(ProtoTCP, []net.IP{remote.IP})
+	reply := synAck(t, remote, local, 52, 7000, 1001)
+
+	entries := sniffLogs(t, ts, reply, reply)
+
+	require.Len(t, entries, 2)
+	assert.Equal(t, "ttl(tcp) update", entries[0]["message"])
+	assert.Equal(t, "203.0.113.1:443", entries[0]["from"])
+	assert.Equal(t, "192.168.1.11:54321", entries[0]["to"])
+	assert.EqualValues(t, 12, entries[0]["nhops"])
+	assert.EqualValues(t, 52, entries[0]["ttlLeft"])
+
+	assert.Equal(t, "ttl(tcp) unchanged", entries[1]["message"])
+	assert.Equal(t, "192.168.1.11:54321", entries[1]["to"])
+}
+
+func TestTCPSniffer_LogsIgnoredSynAck(t *testing.T) {
+	local := &net.TCPAddr{IP: net.ParseIP("192.168.1.11"), Port: 54321}
+	remote := &net.TCPAddr{IP: net.ParseIP("203.0.113.1"), Port: 443}
+
+	entries := sniffLogs(
+		t, newTestSniffer(nil), synAck(t, remote, local, 52, 7000, 1001),
+	)
+
+	require.Len(t, entries, 1)
+	assert.Equal(t, "ttl(tcp) ignored, destination not registered", entries[0]["message"])
+	assert.Equal(t, "203.0.113.1:443", entries[0]["from"])
+	assert.Equal(t, "192.168.1.11:54321", entries[0]["to"])
 }

@@ -8,7 +8,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/capture"
 	"github.com/xvzc/spoofdpi/internal/logging"
-	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
 var _ Sniffer = (*UDPSniffer)(nil)
@@ -82,7 +81,8 @@ func (us *UDPSniffer) processPacket(ctx context.Context, p gopacket.Packet) {
 	}
 	if !prev.Learned || nhops != prev.Hops {
 		logger.Trace().
-			Str("from", netutil.NewIPKey(u.Src).String()).
+			Str("from", joinAddrPort(u.Src, u.SrcPort)).
+			Str("to", joinAddrPort(u.Dst, u.DstPort)).
 			Uint8("nhops", nhops).
 			Uint8("ttlLeft", u.TTLLeft).
 			Msgf("ttl(udp) update")

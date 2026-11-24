@@ -101,12 +101,13 @@ Options, passed after `-args`:
 | `-start-timeout` | `20s` | How long to wait for spoofdpi to start. |
 | `-out` | `out/e2e/fake-egress-<time>` | Where the artifacts go. |
 
-Each check is a subtest, such as `TestFakeEgress_TUN_RequireRoot/fakes-on-tun`, and logs its evidence (counts, interfaces, TTLs). Each mode keeps `spoofdpi.log`, `before.txt`, `after.txt`, and on a failed reset `reset.diff` in its artifacts directory.
+Each check is a subtest, such as `TestFakeEgress_TUN_RequireRoot/fakes-on-tun`, and logs its evidence (counts, interfaces, TTLs). spoofdpi runs with `--log-level trace`. Each mode keeps `spoofdpi.log`, `before.txt`, `after.txt`, and on a failed reset `reset.diff` in its artifacts directory.
 
 | Check | Passes when |
 | --- | --- |
 | `fetch/<host>` | The site answers 2xx or 3xx through spoofdpi. |
 | `fakes-on-physical` | Low-TTL fakes leave through the physical interface. |
+| `fakes-ttl-above-1` | No captured fake has a TTL of 1 or less, which expires at the first hop. |
 | `fake-log` | The log shows `sent fake packets`. |
 | `bad-checksums` | No captured fake has a wrong TCP checksum. |
 | `fakes-on-tun` | TUN mode only: no fake loops into the TUN. |
@@ -121,7 +122,7 @@ Each check is a subtest, such as `TestFakeEgress_TUN_RequireRoot/fakes-on-tun`, 
 Some failures come from the network, not from spoofdpi:
 
 - `reset-diff` fails when a VPN, DHCP, or another tool changes routes during the run. Read `reset.diff`, and rerun once if the change is unrelated.
-- `fetch/<host>` can fail when a fake reaches the server, for example when the learned hop count is off by one. Check the TTLs in the log, and rerun once.
+- `fetch/<host>` can fail when a fake reaches the server, for example when the learned hop count is off by one. Check the TTLs in the log, and rerun once. To find the connection that taught a hop count, search `spoofdpi.log` for the SYN/ACK's `to=<ip>:<port>` in a `ttl(tcp)` line, then for `local=<ip>:<port>` in a `new remote conn` line.
 
 ## Rules for Root-Privileged and End-to-End Runs
 

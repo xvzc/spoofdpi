@@ -105,7 +105,7 @@ func runFakeEgress(t *testing.T, tun bool) {
 	} else {
 		args = append(args, "--app-mode", "http", "--listen-addr", listenAddr())
 	}
-	args = append(args, "--tls-fake-preflight", "1", "--log-level", "debug")
+	args = append(args, "--tls-fake-preflight", "1", "--log-level", "trace")
 	logPath := filepath.Join(dir, "spoofdpi.log")
 	spoofdpi := startSpoofdpi(t, logPath, args...)
 
@@ -172,6 +172,19 @@ func runFakeEgress(t *testing.T, tun bool) {
 		t.Logf("%s count=%d ttls=%v", phys, physFakes, captures[0].ttls())
 		if physFakes == 0 {
 			t.Error("no fake packets on the physical interface")
+		}
+	})
+
+	// A fake with TTL 1 expires at the first hop, which is what a wrongly
+	// learned hop count of 1 sends. The log lines `ttl(tcp) update` in the
+	// artifacts show how that count was learned.
+	t.Run("fakes-ttl-above-1", func(t *testing.T) {
+		for _, c := range captures {
+			ttls := c.ttls()
+			t.Logf("%s ttls=%v", c.iface, ttls)
+			if low := lowTTLs(ttls); len(low) != 0 {
+				t.Errorf("%s: fake packets with TTL %v expire at the first hop", c.iface, low)
+			}
 		}
 	})
 

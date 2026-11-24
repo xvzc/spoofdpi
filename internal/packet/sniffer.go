@@ -1,5 +1,15 @@
 package packet
 
+import (
+	"net"
+	"strconv"
+)
+
+// joinAddrPort formats ip and port as ip:port, or [ip]:port for IPv6.
+func joinAddrPort(ip net.IP, port uint16) string {
+	return net.JoinHostPort(ip.String(), strconv.Itoa(int(port)))
+}
+
 // Sniffer captures packets in the background and records the hop counts
 // they reveal in a HopStore.
 type Sniffer interface {

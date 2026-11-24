@@ -82,6 +82,7 @@ func (h *UDPHandler) Handle(
 	}
 
 	logger.Debug().
+		Str("local", rawConn.LocalAddr().String()).
 		Msgf("new remote conn (%s -> %s)", lConn.RemoteAddr(), rConnWrapped.RemoteAddr())
 
 	resCh := make(chan netutil.TransferResult, 2)
