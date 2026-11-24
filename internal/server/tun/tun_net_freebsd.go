@@ -18,10 +18,15 @@ import (
 const StateFile = "/tmp/spoofdpi.freebsd.tun.state"
 
 type tunNetworkInfoFreeBSD struct {
-	FIBID            int
-	GatewayIP        string
-	PhysIfaceName    string
-	PhysIfaceCIDR    string
+	FIBID int
+	// GatewayIP is empty when the default route has no gateway.
+	GatewayIP     string
+	PhysIfaceName string
+	// PhysIfaceCIDR is empty when the FIB needs no subnet route, as
+	// needsFIBSubnetRoute decides.
+	PhysIfaceCIDR string
+	// PhysIfaceP2P reports a point-to-point interface, such as PPP.
+	PhysIfaceP2P     bool
 	TUNName          string
 	TunLocalIP       string
 	TunPrefixLen     int
@@ -50,9 +55,14 @@ func collectNetworkInfo(
 		return nil, fmt.Errorf("FIB %d is already in use", sysNet.FIBID())
 	}
 
-	physIfaceCIDR, err := getInterfaceSubnet(sysNet.defaultRoute.Iface.Name)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get interface subnet: %w", err)
+	gateway := gatewayIP(sysNet.defaultRoute)
+	physIfaceP2P := sysNet.defaultRoute.Iface.Flags&net.FlagPointToPoint != 0
+	physIfaceCIDR := ""
+	if needsFIBSubnetRoute(physIfaceP2P, gateway) {
+		physIfaceCIDR, err = getInterfaceSubnet(sysNet.defaultRoute.Iface.Name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get interface subnet: %w", err)
+		}
 	}
 
 	cidr, err := netutil.FindSafeCIDR()
@@ -79,9 +89,10 @@ func collectNetworkInfo(
 
 	return &tunNetworkInfoFreeBSD{ //exhaustruct:enforce
 		FIBID:            sysNet.FIBID(),
-		GatewayIP:        sysNet.defaultRoute.Gateway.String(),
+		GatewayIP:        gateway,
 		PhysIfaceName:    sysNet.defaultRoute.Iface.Name,
 		PhysIfaceCIDR:    physIfaceCIDR,
+		PhysIfaceP2P:     physIfaceP2P,
 		TUNName:          tunName,
 		TunLocalIP:       tunLocalIP,
 		TunPrefixLen:     tunPrefixLen,
@@ -120,27 +131,35 @@ func buildJobs(info *tunNetworkInfoFreeBSD) []server.NetworkJob {
 		Reset: fmt.Sprintf("ifconfig %s destroy", info.TUNName),
 	})
 
-	jobs = append(jobs, server.NetworkJob{
-		Description: "add FIB subnet route",
-		Apply: fmt.Sprintf(
-			"route add -net %s -iface %s -fib %d",
-			info.PhysIfaceCIDR,
-			info.PhysIfaceName,
-			info.FIBID,
-		),
-		Reset: fmt.Sprintf(
-			"route delete -net %s -iface %s -fib %d",
-			info.PhysIfaceCIDR,
-			info.PhysIfaceName,
-			info.FIBID,
-		),
-	})
+	if needsFIBSubnetRoute(info.PhysIfaceP2P, info.GatewayIP) {
+		jobs = append(jobs, server.NetworkJob{
+			Description: "add FIB subnet route",
+			Apply: fmt.Sprintf(
+				"route add -net %s -iface %s -fib %d",
+				info.PhysIfaceCIDR,
+				info.PhysIfaceName,
+				info.FIBID,
+			),
+			Reset: fmt.Sprintf(
+				"route delete -net %s -iface %s -fib %d",
+				info.PhysIfaceCIDR,
+				info.PhysIfaceName,
+				info.FIBID,
+			),
+		})
+	}
 
+	// Without a gateway, the FIB default route leaves through the
+	// interface itself.
+	fibDefaultTarget := info.GatewayIP
+	if info.GatewayIP == "" {
+		fibDefaultTarget = "-interface " + info.PhysIfaceName
+	}
 	jobs = append(jobs, server.NetworkJob{
 		Description: "add FIB default route",
 		Apply: fmt.Sprintf(
 			"route add default %s -fib %d",
-			info.GatewayIP,
+			fibDefaultTarget,
 			info.FIBID,
 		),
 		Reset: fmt.Sprintf("route delete default -fib %d", info.FIBID),
@@ -180,6 +199,16 @@ func buildJobs(info *tunNetworkInfoFreeBSD) []server.NetworkJob {
 	}
 
 	return jobs
+}
+
+// needsFIBSubnetRoute reports whether the FIB needs a route to the
+// physical interface's subnet, given whether the interface is
+// point-to-point and its gateway, empty when there is none. A
+// point-to-point interface without a gateway reaches the internet through
+// the interface itself, so its subnet needs no route; with a gateway, the
+// FIB keeps the subnet route that reaches that gateway.
+func needsFIBSubnetRoute(physIfaceP2P bool, gatewayIP string) bool {
+	return !physIfaceP2P || gatewayIP != ""
 }
 
 type tunSystemNetworkFreeBSD struct {

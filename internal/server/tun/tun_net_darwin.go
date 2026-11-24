@@ -17,6 +17,7 @@ import (
 const StateFile = "/tmp/spoofdpi.darwin.tun.state"
 
 type tunNetworkInfoDarwin struct {
+	// GatewayIP is empty when the default route has no gateway.
 	GatewayIP        string
 	PhysIfaceName    string
 	TUNName          string
@@ -58,7 +59,7 @@ func collectNetworkInfo(sysNet *tunSystemNetworkDarwin) (*tunNetworkInfoDarwin, 
 	_, hasIPv6Egress := netutil.IPv6Egress()
 
 	return &tunNetworkInfoDarwin{ //exhaustruct:enforce
-		GatewayIP:        sysNet.defaultRoute.Gateway.String(),
+		GatewayIP:        gatewayIP(sysNet.defaultRoute),
 		PhysIfaceName:    sysNet.defaultRoute.Iface.Name,
 		TUNName:          tunName,
 		TunLocalIP:       tunLocalIP,
@@ -93,17 +94,23 @@ func buildJobs(info *tunNetworkInfoDarwin) []server.NetworkJob {
 		Reset: fmt.Sprintf("ifconfig %s down", info.TUNName),
 	})
 
+	// Without a gateway, the scoped default route leaves through the
+	// interface itself.
+	scopedDefaultTarget := info.GatewayIP
+	if info.GatewayIP == "" {
+		scopedDefaultTarget = "-interface " + info.PhysIfaceName
+	}
 	jobs = append(jobs, server.NetworkJob{
 		Description: "add scoped default route via physical interface",
 		Apply: fmt.Sprintf(
 			"route add -ifscope %s default %s",
 			info.PhysIfaceName,
-			info.GatewayIP,
+			scopedDefaultTarget,
 		),
 		Reset: fmt.Sprintf(
 			"route delete -ifscope %s default %s",
 			info.PhysIfaceName,
-			info.GatewayIP,
+			scopedDefaultTarget,
 		),
 	})
 

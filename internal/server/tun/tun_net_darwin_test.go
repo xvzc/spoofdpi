@@ -82,3 +82,25 @@ func TestBuildJobs_Darwin(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildJobs_Darwin_NoGateway(t *testing.T) {
+	info := &tunNetworkInfoDarwin{
+		GatewayIP:        "",
+		PhysIfaceName:    "ppp0",
+		TUNName:          "utun9",
+		TunLocalIP:       "10.200.0.1",
+		TunRemoteIP:      "10.200.0.2",
+		RouteTargetCIDRs: []string{"10.200.0.0/30", "0.0.0.0/1", "128.0.0.0/1"},
+		IPv6Enabled:      false,
+		HasIPv6Egress:    false,
+	}
+
+	jobs := buildJobs(info)
+
+	assert.Equal(t, server.NetworkJob{
+		Description: "add scoped default route via physical interface",
+		Apply:       "route add -ifscope ppp0 default -interface ppp0",
+		Reset:       "route delete -ifscope ppp0 default -interface ppp0",
+	}, jobs[1])
+	assert.Len(t, jobs, 5)
+}

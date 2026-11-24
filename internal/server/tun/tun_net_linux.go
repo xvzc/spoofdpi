@@ -20,7 +20,8 @@ import (
 const StateFile = "/tmp/spoofdpi.linux.tun.state"
 
 type tunNetworkInfoLinux struct {
-	RouteTableID     int
+	RouteTableID int
+	// GatewayIP is empty when the default route has no gateway.
 	GatewayIP        string
 	TUNName          string
 	PhysIfaceName    string
@@ -52,7 +53,7 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 		return nil, fmt.Errorf("failed to allocate routing table ID: %w", err)
 	}
 
-	gatewayIP := sysNet.defaultRoute.Gateway.String()
+	gateway := gatewayIP(sysNet.defaultRoute)
 	physIfaceName := sysNet.defaultRoute.Iface.Name
 
 	physIfaceIP, err := getInterfaceIP(physIfaceName)
@@ -88,7 +89,7 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 
 	return &tunNetworkInfoLinux{ //exhaustruct:enforce
 		RouteTableID:     routeTableID,
-		GatewayIP:        gatewayIP,
+		GatewayIP:        gateway,
 		TUNName:          tunName,
 		PhysIfaceName:    physIfaceName,
 		PhysIfaceIP:      physIfaceIP,
@@ -141,29 +142,40 @@ func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 		Reset:       fmt.Sprintf("ip link set dev %s down", info.TUNName),
 	})
 
-	jobs = append(jobs, server.NetworkJob{
-		Description: "add gateway host route",
-		Apply: fmt.Sprintf(
-			"ip route add %s dev %s",
-			info.GatewayIP,
-			info.PhysIfaceName,
-		),
-		Reset: fmt.Sprintf(
-			"ip route del %s dev %s",
-			info.GatewayIP,
-			info.PhysIfaceName,
-		),
-	})
+	// Without a gateway there is no next hop to reach: the default route
+	// leaves through the interface itself.
+	defaultRouteApply := fmt.Sprintf(
+		"ip route add default dev %s table %d",
+		info.PhysIfaceName,
+		info.RouteTableID,
+	)
+	if info.GatewayIP != "" {
+		jobs = append(jobs, server.NetworkJob{
+			Description: "add gateway host route",
+			Apply: fmt.Sprintf(
+				"ip route add %s dev %s",
+				info.GatewayIP,
+				info.PhysIfaceName,
+			),
+			Reset: fmt.Sprintf(
+				"ip route del %s dev %s",
+				info.GatewayIP,
+				info.PhysIfaceName,
+			),
+		})
 
-	jobs = append(jobs, server.NetworkJob{
-		Description: "add default route to routing table",
-		Apply: fmt.Sprintf(
+		defaultRouteApply = fmt.Sprintf(
 			"ip route add default via %s dev %s table %d",
 			info.GatewayIP,
 			info.PhysIfaceName,
 			info.RouteTableID,
-		),
-		Reset: fmt.Sprintf("ip route del default table %d", info.RouteTableID),
+		)
+	}
+
+	jobs = append(jobs, server.NetworkJob{
+		Description: "add default route to routing table",
+		Apply:       defaultRouteApply,
+		Reset:       fmt.Sprintf("ip route del default table %d", info.RouteTableID),
 	})
 
 	jobs = append(jobs, server.NetworkJob{

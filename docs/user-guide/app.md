@@ -36,6 +36,8 @@ With `ipv6` on:
 - When the system has no IPv6 route to the internet, spoofdpi adds no IPv6 route. On Linux it also adds none when IPv6 is disabled on the TUN interface.
 - If the system refuses the IPv6 route, spoofdpi logs a warning and keeps running with IPv4 only; IPv6 traffic then bypasses spoofdpi.
 
+TUN mode needs no gateway when the default route goes through a point-to-point interface such as PPP: spoofdpi then routes its own traffic out of that interface directly.
+
 In TUN mode, the operating system and the applications resolve names and choose the IP version, so the [`ipv6`](rules.md#rule-fields) of rules and all [DNS settings](dns.md), global and in rules, are ignored. spoofdpi logs this at startup when a rule sets `ipv6` or the DNS settings differ from the defaults.
 
 ### IPv6 Link-Local Destinations

@@ -42,6 +42,16 @@ type TUNSystemNetwork interface {
 	BuildJobs() ([]server.NetworkJob, error)
 }
 
+// gatewayIP returns the next hop of route as the TUN job builders print it,
+// or "" when route has no gateway, as on a point-to-point uplink such as
+// PPP.
+func gatewayIP(route *netutil.Route) string {
+	if route.Gateway == nil {
+		return ""
+	}
+	return route.Gateway.String()
+}
+
 // ipv6CaptureCIDR is the IPv6 range routed into the TUN when IPv6 is enabled
 // and the host has an IPv6 route to the internet. It covers global unicast addresses only, so
 // link-local, unique local and multicast traffic keeps its on-link routes.

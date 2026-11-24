@@ -124,3 +124,51 @@ func TestIPv6Disabled(t *testing.T) {
 	assert.False(t, ipv6Disabled(write("enabled", "0\n")))
 	assert.False(t, ipv6Disabled(filepath.Join(dir, "missing")))
 }
+
+func TestBuildJobs_Linux_NoGateway(t *testing.T) {
+	info := &tunNetworkInfoLinux{
+		RouteTableID:     200,
+		GatewayIP:        "",
+		TUNName:          "tun-spoofdpi",
+		PhysIfaceName:    "ppp0",
+		PhysIfaceIP:      "100.64.0.10",
+		TunLocalIP:       "10.200.0.1",
+		TunRemoteIP:      "10.200.0.2",
+		RouteTargetCIDRs: []string{"10.200.0.0/30", "0.0.0.0/1", "128.0.0.0/1"},
+		IPv6Enabled:      false,
+		HasIPv6Egress:    false,
+		TunIPv6Disabled:  false,
+	}
+
+	jobs := buildJobs(info)
+
+	// The gateway host route is gone; the other jobs keep their order.
+	want := []server.NetworkJob{
+		{
+			Description: "remove TUN interface",
+			Reset:       "ip link delete tun-spoofdpi",
+		},
+		{
+			Description: "configure TUN interface address",
+			Apply:       "ip addr add 10.200.0.1 peer 10.200.0.2 dev tun-spoofdpi",
+			Reset:       "ip addr del 10.200.0.1 peer 10.200.0.2 dev tun-spoofdpi",
+		},
+		{
+			Description: "bring TUN interface up",
+			Apply:       "ip link set dev tun-spoofdpi up",
+			Reset:       "ip link set dev tun-spoofdpi down",
+		},
+		{
+			Description: "add default route to routing table",
+			Apply:       "ip route add default dev ppp0 table 200",
+			Reset:       "ip route del default table 200",
+		},
+		{
+			Description: "add policy routing rule",
+			Apply:       "ip rule add from 100.64.0.10 lookup 200",
+			Reset:       "ip rule del from 100.64.0.10 lookup 200",
+		},
+	}
+	assert.Equal(t, want, jobs[:len(want)])
+	assert.Len(t, jobs, len(want)+3)
+}

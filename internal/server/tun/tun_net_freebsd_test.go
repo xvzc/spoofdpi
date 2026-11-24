@@ -83,3 +83,128 @@ func TestBuildJobs_FreeBSD(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildJobs_FreeBSD_NoGateway(t *testing.T) {
+	routeTargets := []string{"0.0.0.0/1", "128.0.0.0/1"}
+	tunAddressJob := server.NetworkJob{
+		Description: "configure TUN interface address",
+		Apply:       "ifconfig tun-spoofdpi inet 10.200.0.1/30 up",
+		Reset:       "ifconfig tun-spoofdpi destroy",
+	}
+	tunRouteJobs := []server.NetworkJob{
+		{
+			Description: "add CIDR route 0.0.0.0/1 via TUN",
+			Apply:       "route -n add -net 0.0.0.0/1 -interface tun-spoofdpi",
+			Reset:       "route -n delete -net 0.0.0.0/1 -interface tun-spoofdpi",
+		},
+		{
+			Description: "add CIDR route 128.0.0.0/1 via TUN",
+			Apply:       "route -n add -net 128.0.0.0/1 -interface tun-spoofdpi",
+			Reset:       "route -n delete -net 128.0.0.0/1 -interface tun-spoofdpi",
+		},
+	}
+	fibDefaultJob := server.NetworkJob{
+		Description: "add FIB default route",
+		Apply:       "route add default -interface ppp0 -fib 3",
+		Reset:       "route delete default -fib 3",
+	}
+
+	tcs := []struct {
+		name          string
+		physIfaceCIDR string
+		physIfaceP2P  bool
+		want          []server.NetworkJob
+	}{
+		{
+			"point-to-point uplink needs no FIB subnet route",
+			"",
+			true,
+			append(
+				[]server.NetworkJob{tunAddressJob, fibDefaultJob},
+				tunRouteJobs...),
+		},
+		{
+			"broadcast interface route keeps the FIB subnet route",
+			"100.64.0.0/24",
+			false,
+			append(
+				[]server.NetworkJob{
+					tunAddressJob,
+					{
+						Description: "add FIB subnet route",
+						Apply:       "route add -net 100.64.0.0/24 -iface ppp0 -fib 3",
+						Reset:       "route delete -net 100.64.0.0/24 -iface ppp0 -fib 3",
+					},
+					fibDefaultJob,
+				},
+				tunRouteJobs...),
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			info := &tunNetworkInfoFreeBSD{
+				FIBID:            3,
+				GatewayIP:        "",
+				PhysIfaceName:    "ppp0",
+				PhysIfaceCIDR:    tc.physIfaceCIDR,
+				PhysIfaceP2P:     tc.physIfaceP2P,
+				TUNName:          "tun-spoofdpi",
+				TunLocalIP:       "10.200.0.1",
+				TunPrefixLen:     30,
+				RouteTargetCIDRs: routeTargets,
+				IPv6Enabled:      false,
+				HasIPv6Egress:    false,
+			}
+
+			assert.Equal(t, tc.want, buildJobs(info))
+		})
+	}
+}
+
+// TestBuildJobs_FreeBSD_PointToPointGateway checks that a point-to-point
+// uplink with a gateway keeps the FIB subnet route: its jobs are the same
+// as those of any interface with a gateway.
+func TestBuildJobs_FreeBSD_PointToPointGateway(t *testing.T) {
+	info := &tunNetworkInfoFreeBSD{
+		FIBID:            3,
+		GatewayIP:        "100.64.0.254",
+		PhysIfaceName:    "ppp0",
+		PhysIfaceCIDR:    "100.64.0.1/32",
+		PhysIfaceP2P:     true,
+		TUNName:          "tun-spoofdpi",
+		TunLocalIP:       "10.200.0.1",
+		TunPrefixLen:     30,
+		RouteTargetCIDRs: []string{"0.0.0.0/1", "128.0.0.0/1"},
+		IPv6Enabled:      false,
+		HasIPv6Egress:    false,
+	}
+
+	want := []server.NetworkJob{
+		{
+			Description: "configure TUN interface address",
+			Apply:       "ifconfig tun-spoofdpi inet 10.200.0.1/30 up",
+			Reset:       "ifconfig tun-spoofdpi destroy",
+		},
+		{
+			Description: "add FIB subnet route",
+			Apply:       "route add -net 100.64.0.1/32 -iface ppp0 -fib 3",
+			Reset:       "route delete -net 100.64.0.1/32 -iface ppp0 -fib 3",
+		},
+		{
+			Description: "add FIB default route",
+			Apply:       "route add default 100.64.0.254 -fib 3",
+			Reset:       "route delete default -fib 3",
+		},
+		{
+			Description: "add CIDR route 0.0.0.0/1 via TUN",
+			Apply:       "route -n add -net 0.0.0.0/1 -interface tun-spoofdpi",
+			Reset:       "route -n delete -net 0.0.0.0/1 -interface tun-spoofdpi",
+		},
+		{
+			Description: "add CIDR route 128.0.0.0/1 via TUN",
+			Apply:       "route -n add -net 128.0.0.0/1 -interface tun-spoofdpi",
+			Reset:       "route -n delete -net 128.0.0.0/1 -interface tun-spoofdpi",
+		},
+	}
+	assert.Equal(t, want, buildJobs(info))
+}
