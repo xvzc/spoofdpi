@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -336,6 +337,37 @@ func fakeSenderOptions(cfg *config.Config, route *netutil.Route) inject.Options 
 	return inject.Options{Control: tun.EgressControl(route, cfg.App.FreebsdFIB)}
 }
 
+// fakesPinning describes where fakeSenderOptions pins fake packets on goos,
+// for the startup log: an interface name, "fib N" on FreeBSD, or "none"
+// when the kernel routes them or fakesV4 turned them off.
+func fakesPinning(
+	goos string,
+	cfg *config.Config,
+	route *netutil.Route,
+	fakesV4 error,
+) string {
+	if fakesV4 != nil || cfg.App.Mode != config.AppModeTUN || route == nil {
+		return "none"
+	}
+	if goos == "freebsd" {
+		return fmt.Sprintf("fib %d", cfg.App.FreebsdFIB)
+	}
+	return route.Iface.Name
+}
+
+// fakesState describes fakesOff, the reason fake packets are off for a
+// family, for the startup log: "on" when it is nil.
+func fakesState(fakesOff error) string {
+	if fakesOff == nil {
+		return "on"
+	}
+	var off *packet.FakesOffError
+	if errors.As(fakesOff, &off) {
+		return "off: " + off.Reason
+	}
+	return "off: " + fakesOff.Error()
+}
+
 // fakeSenderError explains err, a failure to open the sender of fake
 // packets, with what the user can do about missing privileges.
 func fakeSenderError(err error) error {
@@ -368,9 +400,24 @@ func noIPv4RouteError(err error, hasIPv6 bool) error {
 }
 
 // logTUNNotes logs how TUN mode treats the IPv6 and DNS settings of cfg.
-// hasIPv6Egress tells whether the host has an IPv6 route to the internet.
-func logTUNNotes(logger zerolog.Logger, cfg *config.Config, hasIPv6Egress bool) {
-	if !cfg.IPv6Enabled() && hasIPv6Egress {
+// hasIPv6Egress tells whether the host has an IPv6 route to the internet,
+// and ipv6Disabled whether IPv6 was turned off at startup because no usable
+// IPv6 route was found or a full-tunnel VPN carries IPv6.
+func logTUNNotes(
+	logger zerolog.Logger,
+	cfg *config.Config,
+	hasIPv6Egress bool,
+	ipv6Disabled bool,
+) {
+	switch {
+	case cfg.IPv6Enabled() || !hasIPv6Egress:
+	case ipv6Disabled:
+		logger.Warn().Msg(
+			"IPv6 was disabled because no usable IPv6 route was found " +
+				"or a full-tunnel VPN carries IPv6; " +
+				"IPv6 traffic bypasses spoofdpi in TUN mode",
+		)
+	default:
 		logger.Warn().Msg(
 			"IPv6 traffic bypasses spoofdpi in TUN mode; " +
 				"enable --ipv6 or disable IPv6 on the system",
@@ -412,6 +459,24 @@ func createServer(
 	logger zerolog.Logger,
 	cfg *config.Config,
 ) (server.Server, error) {
+	// Clean up stale network state before route discovery so a crashed TUN
+	// session does not leave the routing table in a state that obscures the
+	// real default route.
+	server.ResetJobs(logger, tun.StateFile)
+	server.ResetJobs(logger, http.StateFile)
+	server.ResetJobs(logger, socks5.StateFile)
+
+	// Egress discovery may turn IPv6 off in cfg, so it runs before anything
+	// reads the ipv6 option or the DNS record types.
+	startup, err := discoverEgresses(logger, cfg, osRouteFinder)
+	if err != nil {
+		return nil, err
+	}
+	var defaultRoute *netutil.Route
+	if startup.V4 != nil {
+		defaultRoute = &startup.V4.Route
+	}
+
 	// --- Rule set ---
 	ruleSet := rule.NewRuleSet()
 	for _, r := range cfg.Rules {
@@ -426,38 +491,28 @@ func createServer(
 		&cfg.DNS,
 	)
 
-	// Clean up stale network state before route discovery so a crashed TUN
-	// session does not leave the routing table in a state that obscures the
-	// real default route.
-	server.ResetJobs(logger, tun.StateFile)
-	server.ResetJobs(logger, http.StateFile)
-	server.ResetJobs(logger, socks5.StateFile)
-
-	var defaultRoute *netutil.Route
-	if cfg.NeedsRoute() {
-		var err error
-		defaultRoute, err = netutil.DiscoverRoute(cfg.App.Gateway.V4)
-		if errors.Is(err, netutil.ErrNoIPv4Route) {
-			_, hasIPv6 := netutil.IPv6Egress()
-			return nil, noIPv4RouteError(err, hasIPv6)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to find default route: %w", err)
-		}
-	} else if cfg.App.Gateway.V4 != nil {
-		logger.Warn().
-			Str("gateway", cfg.App.Gateway.V4.String()).
-			Msg("gateway is ignored; only fake packets and tun mode use it")
-	}
-
-	tcpStack, udpStack, hops, err := setupNetworkStack(
-		appctx,
-		logger,
-		defaultRoute,
-		cfg,
+	var (
+		tcpStack *packet.TCPStack
+		udpStack *packet.UDPStack
+		hops     *packet.HopStore
 	)
-	if err != nil {
-		return nil, err
+	if startup.FakesV4 == nil {
+		tcpStack, udpStack, hops, err = setupNetworkStack(
+			appctx,
+			logger,
+			defaultRoute,
+			cfg,
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if cfg.NeedsNetworkStack() {
+		logger.Info().
+			Str("v4", fakesState(startup.FakesV4)).
+			Str("v6", fakesState(startup.FakesV6)).
+			Str("pinned", fakesPinning(runtime.GOOS, cfg, defaultRoute, startup.FakesV4)).
+			Msg("fake packets")
 	}
 
 	// A nil stack must leave the interfaces nil: a nil *HopStore stored in
@@ -472,13 +527,7 @@ func createServer(
 		udpWriter packet.Writer
 		udpCaps   packet.FakeCapability
 	)
-	fakeGate := packet.NewStaticGate(
-		nil,
-		&packet.FakesOffError{
-			Family: netutil.FamilyV6,
-			Reason: "IPv6 fakes are not supported yet",
-		},
-	)
+	fakeGate := packet.NewStaticGate(startup.FakesV4, startup.FakesV6)
 	if tcpStack != nil {
 		tcpHops, tcpWriter, seqs = hops, tcpStack.Writer, tcpStack.Seqs
 		tcpCaps = fakeGate
@@ -547,12 +596,7 @@ func createServer(
 		), nil
 
 	case config.AppModeTUN:
-		logger.Info().
-			Str("interface", defaultRoute.Iface.Name).
-			Str("gateway", defaultRoute.Gateway.String()).
-			Msg("determined default interface and gateway")
-		_, hasIPv6Egress := netutil.IPv6Egress()
-		logTUNNotes(logger, cfg, hasIPv6Egress)
+		logTUNNotes(logger, cfg, osRouteFinder.hasIPv6Egress(), startup.IPv6Disabled)
 		sysNet, err := tun.NewTUNSystemNetwork(
 			logging.WithScope(logger, "sys"),
 			defaultRoute,

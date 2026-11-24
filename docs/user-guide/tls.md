@@ -86,6 +86,8 @@ Fake packets are not sent to a server found to be on the local link (0 hops away
 
 Fake packets, from this option and [`fake-stutter`](#fake-stutter), are sent to IPv4 servers only for now. For an IPv6 server they are skipped, and the Client Hello is still split; spoofdpi logs a warning the first time it skips them.
 
+Fake packets go out through a raw IP socket on every OS and need no gateway: a default route through a point-to-point interface, such as PPP, works. While a full-tunnel VPN carries the traffic, fake packets are off for the whole run, as the censor would not see them: spoofdpi logs a warning at startup, and the Client Hello is still split. In TUN mode, spoofdpi does not start then (see [Full-Tunnel VPNs](app.md#full-tunnel-vpns)).
+
 By default, fake packets carry the connection's real TCP sequence and acknowledgment numbers, learned from the server's SYN/ACK, so they overlap the real Client Hello. See [`fake-seq-offset`](#fake-seq-offset), [`fake-ack-offset`](#fake-ack-offset) and [`syn-ack-timeout`](#syn-ack-timeout) to change this.
 
 !!! note

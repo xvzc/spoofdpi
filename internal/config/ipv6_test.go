@@ -105,6 +105,50 @@ ipv6 = 1
 	})
 }
 
+func TestConfig_DisableIPv6(t *testing.T) {
+	const rules = `
+[[rules]]
+name = "unset"
+match = { domains = ["a.example"] }
+
+[[rules]]
+name = "on"
+match = { domains = ["b.example"] }
+ipv6 = true
+
+[[rules]]
+name = "off"
+match = { domains = ["c.example"] }
+ipv6 = false
+`
+	for _, mode := range []string{"http", "tun"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg, _ := runWithTOML(t, rules, "--ipv6", "--app-mode", mode)
+			require.True(t, cfg.IPv6Enabled())
+			require.Equal(t, DNSQueryAll, cfg.DNS.QType)
+
+			cfg.DisableIPv6()
+
+			assert.False(t, cfg.IPv6Enabled())
+			assert.False(t, cfg.App.IPv6)
+			assert.False(t, cfg.IPv6)
+			assert.Equal(t, DNSQueryIPv4, cfg.DNS.QType)
+			require.Len(t, cfg.Rules, 3)
+			for _, r := range cfg.Rules {
+				assert.False(t, r.Config.IPv6, r.Name)
+				assert.Equal(t, DNSQueryIPv4, r.Config.DNS.QType, r.Name)
+			}
+
+			// The rules' own ipv6 is kept: "off" still keeps to IPv4.
+			assert.Nil(t, cfg.Rules[0].IPv6)
+			assert.Equal(t, lo.ToPtr(true), cfg.Rules[1].IPv6)
+			assert.Equal(t, lo.ToPtr(false), cfg.Rules[2].IPv6)
+			assert.False(t, cfg.Rules[1].IPv4Only())
+			assert.True(t, cfg.Rules[2].IPv4Only())
+		})
+	}
+}
+
 func TestConfig_IPv6Enabled(t *testing.T) {
 	ruleWith := func(ipv6 bool) Rule {
 		return Rule{Config: RuntimeConfig{IPv6: ipv6}}

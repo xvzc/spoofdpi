@@ -44,6 +44,8 @@ On an interface whose link type spoofdpi cannot capture on (it supports Ethernet
 
 Fake packets are sent to IPv4 servers only for now. For an IPv6 server they are skipped, and spoofdpi logs a warning the first time it skips them.
 
+Fake packets go out through a raw IP socket on every OS and need no gateway: a default route through a point-to-point interface, such as PPP, works. While a full-tunnel VPN carries the traffic, fake packets are off for the whole run, as the censor would not see them: spoofdpi logs a warning at startup, and the datagrams are still sent. In TUN mode, spoofdpi does not start then (see [Full-Tunnel VPNs](app.md#full-tunnel-vpns)).
+
 Fake packets share the flow of the real datagrams and rely on their TTL to expire before the server. If the hop count is overestimated, a fake can reach the server, and the server's reply to it is passed on to the application like any other.
 
 !!! note

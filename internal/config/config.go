@@ -126,9 +126,26 @@ func (c *Config) IPv6Enabled() bool {
 	return false
 }
 
-// NeedsRoute reports whether the default route must be discovered at
-// startup: raw packet capture needs the gateway, and TUN mode routes
-// traffic through it.
+// DisableIPv6 turns IPv6 off for this run, as if the ipv6 option were off
+// everywhere: the global option and the ipv6 that the base config and every
+// rule apply become false, and their DNS record types follow, as Finalize
+// and resolveRules derive them. A rule's own ipv6 (Rule.IPv6) is kept, so
+// a rule that sets ipv6 = false still keeps its connections on IPv4.
+func (c *Config) DisableIPv6() {
+	c.App.IPv6 = false
+	c.IPv6 = false
+	c.DNS.QType = dnsQueryType(c.IPv6)
+	for i := range c.Rules {
+		r := &c.Rules[i].Config
+		r.IPv6 = false
+		r.DNS.QType = dnsQueryType(r.IPv6)
+	}
+}
+
+// NeedsRoute reports whether the IPv4 egress must be discovered at
+// startup: packet capture runs on its interface and fake packets follow
+// it, and TUN mode routes its own traffic out of the TUN through it. The
+// egress needs no gateway.
 func (c *Config) NeedsRoute() bool {
 	return c.NeedsNetworkStack() || c.App.Mode == AppModeTUN
 }

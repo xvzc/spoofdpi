@@ -74,7 +74,7 @@ func (f packetFakes) desyncer(ttl uint8) (helloSender, *fakeLog) {
 // numbers of their connections. Like spoofdpi's, the stack stays open until the process
 // exits.
 func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error) {
-	route, err := netutil.DiscoverRoute(nil)
+	iface, _, err := netutil.DiscoverInterface()
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error)
 	hops := packet.NewHopStore()
 	stack, err := packet.OpenTCPStack(
 		zerolog.Nop(),
-		&route.Iface,
+		iface,
 		packet.Senders{V4: sender},
 		hops,
 	)
