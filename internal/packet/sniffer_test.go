@@ -17,8 +17,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/cache"
-	"github.com/xvzc/spoofdpi/internal/capture"
 	"github.com/xvzc/spoofdpi/internal/logging"
+	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 )
 
 // captureHandle is a capture handle that reads nothing, accepts any

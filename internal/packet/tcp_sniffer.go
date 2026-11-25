@@ -6,9 +6,9 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/capture"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 )
 
 var _ Sniffer = (*TCPSniffer)(nil)

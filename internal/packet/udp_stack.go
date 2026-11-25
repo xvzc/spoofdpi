@@ -5,7 +5,7 @@ import (
 	"net"
 
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/capture"
+	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 )
 
 // UDPStack is what fake UDP packets are sent with: a sniffer that learns

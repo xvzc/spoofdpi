@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	"github.com/xvzc/spoofdpi/internal/inject"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/packetio/inject"
 )
 
 type Writer interface {

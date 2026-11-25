@@ -9,9 +9,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/xvzc/spoofdpi/internal/config"
-	"github.com/xvzc/spoofdpi/internal/inject"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
+	"github.com/xvzc/spoofdpi/internal/packetio/inject"
 )
 
 func TestFakeSenderOptions(t *testing.T) {

@@ -9,9 +9,9 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/desync"
-	"github.com/xvzc/spoofdpi/internal/inject"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packet"
+	"github.com/xvzc/spoofdpi/internal/packetio/inject"
 )
 
 // errFakeCapture marks the failure to open the capture handle of the fake

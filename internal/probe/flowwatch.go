@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/gopacket"
-	"github.com/xvzc/spoofdpi/internal/capture"
+	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 )
 
 // flowKey names a TCP connection to a probed server.

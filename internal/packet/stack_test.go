@@ -10,7 +10,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/xvzc/spoofdpi/internal/capture"
+	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 )
 
 // linkHandle is a filterHandle on the link type lt.

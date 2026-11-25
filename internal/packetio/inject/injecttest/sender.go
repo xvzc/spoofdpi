@@ -7,7 +7,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/xvzc/spoofdpi/internal/inject"
+	"github.com/xvzc/spoofdpi/internal/packetio/inject"
 )
 
 // Sender records the packets it is given instead of sending them. It is

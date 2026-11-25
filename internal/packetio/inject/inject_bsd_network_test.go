@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/gopacket/layers"
 	"github.com/stretchr/testify/require"
-	"github.com/xvzc/spoofdpi/internal/capture"
+	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 )
 
 // openLiveCapture opens a capture on iface that passes what filter, a

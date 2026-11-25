@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/inject"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/packetio/inject"
 )
 
 // OpenIPv4Sender opens the sender that IPv4 fake packets leave through: a

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/capture"
+	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 )
 
 // seqEntryTTL is how long the sequence numbers learned from a SYN/ACK are

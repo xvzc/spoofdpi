@@ -13,8 +13,8 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/xvzc/spoofdpi/internal/inject"
-	"github.com/xvzc/spoofdpi/internal/inject/injecttest"
+	"github.com/xvzc/spoofdpi/internal/packetio/inject"
+	"github.com/xvzc/spoofdpi/internal/packetio/inject/injecttest"
 )
 
 // testSenders returns Senders with a recording sender for each family.

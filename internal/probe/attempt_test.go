@@ -12,9 +12,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/xvzc/spoofdpi/internal/capture"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/packet"
+	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
