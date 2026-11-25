@@ -18,7 +18,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/rule"
 )
@@ -674,13 +673,13 @@ func (w *countingFakeWriter) WriteCraftedPacket(
 // unlearnedHops knows no hop counts, so fakes use the default TTL.
 type unlearnedHops struct{}
 
-func (unlearnedHops) Register(packet.Proto, []net.IP) {}
+func (unlearnedHops) Register(desync.Proto, []net.IP) {}
 
-func (unlearnedHops) Lookup(packet.Proto, net.IP) packet.HopEstimate {
-	return packet.HopEstimate{Source: packet.HopSourceDefault}
+func (unlearnedHops) Lookup(desync.Proto, net.IP) desync.HopEstimate {
+	return desync.HopEstimate{Source: desync.HopSourceDefault}
 }
 
-func (unlearnedHops) MarkWarned(packet.Proto, net.IP) bool { return true }
+func (unlearnedHops) MarkWarned(desync.Proto, net.IP) bool { return true }
 
 func TestUdpAssociateHandler_Handle_RulePerDatagram(t *testing.T) {
 	const nameA, nameB = "a.test", "b.test"

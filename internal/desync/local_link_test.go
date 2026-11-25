@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
-	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
 // localLinkWarnings returns the dst of each warning in log that fake
@@ -39,8 +38,8 @@ func localLinkWarnings(t *testing.T, log *bytes.Buffer) []string {
 }
 
 // hopStoreWith returns a store that learned hops for each server over p.
-func hopStoreWith(p packet.Proto, hops uint8, servers ...string) *packet.HopStore {
-	store := packet.NewHopStore()
+func hopStoreWith(p Proto, hops uint8, servers ...string) *HopStore {
+	store := NewHopStore()
 	for _, s := range servers {
 		ip := net.ParseIP(s)
 		store.Register(p, []net.IP{ip})
@@ -98,7 +97,7 @@ func TestDesync_WarnsOncePerLocalLinkDestination(t *testing.T) {
 		d := NewTLSDesyncer(
 			zerolog.New(&log),
 			&recordingWriter{},
-			hopStoreWith(packet.ProtoTCP, 0, serverA, serverB),
+			hopStoreWith(ProtoTCP, 0, serverA, serverB),
 			nil,
 			nil,
 		)
@@ -114,7 +113,7 @@ func TestDesync_WarnsOncePerLocalLinkDestination(t *testing.T) {
 		d := NewUDPDesyncer(
 			zerolog.New(&log),
 			&udpWriter{},
-			hopStoreWith(packet.ProtoUDP, 0, serverA, serverB),
+			hopStoreWith(ProtoUDP, 0, serverA, serverB),
 			nil,
 		)
 
@@ -130,18 +129,18 @@ func TestDesync_NoLocalLinkWarningWhenFakesAreSent(t *testing.T) {
 
 	for _, tc := range []struct {
 		name  string
-		store func(p packet.Proto) *packet.HopStore
+		store func(p Proto) *HopStore
 	}{
-		{"learned one hop away", func(p packet.Proto) *packet.HopStore {
+		{"learned one hop away", func(p Proto) *HopStore {
 			return hopStoreWith(p, 1, server)
 		}},
-		{"registered, not learned", func(p packet.Proto) *packet.HopStore {
-			store := packet.NewHopStore()
+		{"registered, not learned", func(p Proto) *HopStore {
+			store := NewHopStore()
 			store.Register(p, []net.IP{net.ParseIP(server)})
 			return store
 		}},
-		{"not in the store", func(packet.Proto) *packet.HopStore {
-			return packet.NewHopStore()
+		{"not in the store", func(Proto) *HopStore {
+			return NewHopStore()
 		}},
 	} {
 		t.Run(tc.name+"/tls", func(t *testing.T) {
@@ -149,7 +148,7 @@ func TestDesync_NoLocalLinkWarningWhenFakesAreSent(t *testing.T) {
 			d := NewTLSDesyncer(
 				zerolog.New(&log),
 				&recordingWriter{},
-				tc.store(packet.ProtoTCP),
+				tc.store(ProtoTCP),
 				nil,
 				nil,
 			)
@@ -162,7 +161,7 @@ func TestDesync_NoLocalLinkWarningWhenFakesAreSent(t *testing.T) {
 			d := NewUDPDesyncer(
 				zerolog.New(&log),
 				&udpWriter{},
-				tc.store(packet.ProtoUDP),
+				tc.store(ProtoUDP),
 				nil,
 			)
 			assert.NotZero(t, desyncUDP(t, d, server))

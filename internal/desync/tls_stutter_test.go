@@ -12,15 +12,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
 // event is a packet put on the wire: a crafted fake, or a real write.
 type event struct {
 	fake    bool
-	seq     packet.SeqAck // fakes only
-	md5     bool          // fakes only
+	seq     SeqAck // fakes only
+	md5     bool   // fakes only
 	payload []byte
 }
 
@@ -41,7 +40,7 @@ func (w eventWriter) WriteCraftedPacket(
 }
 
 func (w eventWriter) WriteCraftedPacketWithSeq(
-	_ context.Context, _, _ net.Addr, _ uint8, payload []byte, fake packet.TCPFake,
+	_ context.Context, _, _ net.Addr, _ uint8, payload []byte, fake TCPFake,
 ) (int, error) {
 	if w.failAt > 0 {
 		*w.sent++
@@ -70,14 +69,14 @@ func (c eventConn) Write(b []byte) (int, error) {
 // 300-byte fake packet of 0xAB.
 func stutterRun(t *testing.T, mutate func(*config.HTTPSOptions)) ([]event, []byte) {
 	t.Helper()
-	return stutterRunWith(t, packet.SeqAck{Seq: 1000, Ack: 5000}, 0, mutate)
+	return stutterRunWith(t, SeqAck{Seq: 1000, Ack: 5000}, 0, mutate)
 }
 
 // stutterRunWith is stutterRun with the learned numbers and the writer's
 // failAt given.
 func stutterRunWith(
 	t *testing.T,
-	real packet.SeqAck,
+	real SeqAck,
 	failAt int,
 	mutate func(*config.HTTPSOptions),
 ) ([]event, []byte) {
@@ -85,7 +84,7 @@ func stutterRunWith(
 
 	log := &eventLog{}
 	var sent int
-	seqs := packet.NewSeqTracker(time.Minute)
+	seqs := NewSeqTracker(time.Minute)
 	d := NewTLSDesyncer(
 		zerolog.Nop(),
 		eventWriter{log: log, failAt: failAt, sent: &sent},
@@ -94,7 +93,7 @@ func stutterRunWith(
 		nil,
 	)
 	sc := newStubConn("203.0.113.1")
-	seqs.Put(packet.SeqKey(sc.local, sc.remote), real)
+	seqs.Put(SeqKey(sc.local, sc.remote), real)
 
 	opts := tlsOpts(0, 100)
 	opts.FakePacket = proto.NewFakeTLSMessage(bytes.Repeat([]byte{0xAB}, 300))
@@ -135,7 +134,7 @@ func TestStutter_FakesPrecedeEachSegment(t *testing.T) {
 		for i := range 2 {
 			e := events[3*k+i]
 			require.True(t, e.fake, "segment %d event %d is a fake", k, i)
-			assert.Equal(t, packet.SeqAck{Seq: uint32(1000 + offset), Ack: 5000}, e.seq)
+			assert.Equal(t, SeqAck{Seq: uint32(1000 + offset), Ack: 5000}, e.seq)
 			assert.Equal(t, wantFakeBytes(offset, length), e.payload, "segment %d", k)
 		}
 		r := events[3*k+2]
@@ -258,7 +257,7 @@ func TestStutter_WithDisorder(t *testing.T) {
 
 func TestStutter_WriterError(t *testing.T) {
 	// The 3rd fake fails: stutter stops, but every real segment is sent.
-	events, raw := stutterRunWith(t, packet.SeqAck{Seq: 1000, Ack: 5000}, 3,
+	events, raw := stutterRunWith(t, SeqAck{Seq: 1000, Ack: 5000}, 3,
 		func(o *config.HTTPSOptions) { o.FakeStutter = 1 })
 
 	var fakes int
@@ -276,7 +275,7 @@ func TestStutter_WriterError(t *testing.T) {
 
 func TestStutter_SeqWrapAround(t *testing.T) {
 	start := uint32(0xFFFFFFC0)
-	events, raw := stutterRunWith(t, packet.SeqAck{Seq: start, Ack: 5000}, 0,
+	events, raw := stutterRunWith(t, SeqAck{Seq: start, Ack: 5000}, 0,
 		func(o *config.HTTPSOptions) {
 			o.FakePreflight = 1
 			o.FakeStutter = 1
@@ -305,7 +304,7 @@ func TestFakeSender_SplitsByMSS(t *testing.T) {
 		opts.FakeStutter = stutter
 		opts.FakePacket = proto.NewFakeTLSMessage(bytes.Repeat([]byte{0xAB}, 120))
 		f := newFakeSender(eventWriter{log: log}, newStubConn("203.0.113.1"), 8, opts,
-			packet.SeqAck{Seq: 1000, Ack: 5000})
+			SeqAck{Seq: 1000, Ack: 5000})
 		f.mss = 50
 		return f
 	}
@@ -320,7 +319,7 @@ func TestFakeSender_SplitsByMSS(t *testing.T) {
 	t.Run("stutter", func(t *testing.T) {
 		log := &eventLog{}
 		n, err := newSender(log, 0, 1).stutter(
-			context.Background(), packet.SeqAck{Seq: 2000, Ack: 5000}, 0, 120)
+			context.Background(), SeqAck{Seq: 2000, Ack: 5000}, 0, 120)
 		require.NoError(t, err)
 		assert.Equal(t, 120, n)
 		seqs, lens := pieces(log.events)
@@ -341,7 +340,7 @@ func TestFakeSender_SplitsByMSS(t *testing.T) {
 	t.Run("short payloads are one packet", func(t *testing.T) {
 		log := &eventLog{}
 		_, err := newSender(log, 0, 1).stutter(
-			context.Background(), packet.SeqAck{Seq: 2000, Ack: 5000}, 0, 50)
+			context.Background(), SeqAck{Seq: 2000, Ack: 5000}, 0, 50)
 		require.NoError(t, err)
 		assert.Len(t, log.events, 1)
 	})
@@ -401,7 +400,7 @@ func TestFakeSender_BadMD5Sig(t *testing.T) {
 		opts := tlsOpts(0, 100)
 		assert.Equal(t, fallbackMSS, fakeMSS(newStubConn("203.0.113.1"), opts))
 		opts.FakeBadMD5Sig = true
-		assert.Equal(t, fallbackMSS-packet.MD5SigOptionLen,
+		assert.Equal(t, fallbackMSS-MD5SigOptionLen,
 			fakeMSS(newStubConn("203.0.113.1"), opts))
 	})
 }

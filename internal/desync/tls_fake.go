@@ -7,7 +7,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
 // fakeSender sends the fake packets of one connection: the copies of the
@@ -17,12 +16,12 @@ import (
 // Every fake carries the real sequence numbers of the bytes it covers,
 // plus fake-seq-offset and fake-ack-offset.
 type fakeSender struct {
-	writer    packet.TCPSeqWriter
+	writer    TCPSeqWriter
 	conn      net.Conn
 	ttl       uint8
 	opts      *config.HTTPSOptions
-	realStart packet.SeqAck
-	fakeStart packet.SeqAck
+	realStart SeqAck
+	fakeStart SeqAck
 
 	// mss is the largest payload of one fake packet: the connection's MSS,
 	// less the room for the options fakes carry, so that no fake exceeds
@@ -43,7 +42,7 @@ const minFakeMSS = 64
 func fakeMSS(conn net.Conn, opts *config.HTTPSOptions) int {
 	mss := connMSS(conn)
 	if opts.FakeBadMD5Sig {
-		mss -= packet.MD5SigOptionLen
+		mss -= MD5SigOptionLen
 	}
 	// Real kernels report MSS values far above this, but write must always
 	// make progress.
@@ -60,11 +59,11 @@ func connMSS(conn net.Conn) int {
 }
 
 func newFakeSender(
-	writer packet.TCPSeqWriter,
+	writer TCPSeqWriter,
 	conn net.Conn,
 	ttl uint8,
 	opts *config.HTTPSOptions,
-	real packet.SeqAck,
+	real SeqAck,
 ) *fakeSender {
 	return &fakeSender{
 		writer:    writer,
@@ -82,7 +81,7 @@ func newFakeSender(
 func (f *fakeSender) write(
 	ctx context.Context,
 	payload []byte,
-	sa packet.SeqAck,
+	sa SeqAck,
 ) (int, error) {
 	var total int
 	for len(payload) > 0 {
@@ -93,7 +92,7 @@ func (f *fakeSender) write(
 			f.conn.RemoteAddr(),
 			f.ttl,
 			piece,
-			packet.TCPFake{SeqAck: sa, BadMD5Sig: f.opts.FakeBadMD5Sig},
+			TCPFake{SeqAck: sa, BadMD5Sig: f.opts.FakeBadMD5Sig},
 		)
 		total += n
 		if err != nil {
@@ -137,7 +136,7 @@ func (f *fakeSender) preflight(
 // that range, padded with zeros past its end.
 func (f *fakeSender) stutter(
 	ctx context.Context,
-	real packet.SeqAck,
+	real SeqAck,
 	offset, length int,
 ) (int, error) {
 	payload := fakeRange(f.opts.FakePacket.Raw(), offset, length)

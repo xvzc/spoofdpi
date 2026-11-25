@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
+	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
 // fakeRouteFinder answers the calls of a routeFinder with fixed results per
@@ -370,17 +370,17 @@ func TestDiscoverEgresses_IPv4Matrix(t *testing.T) {
 					assert.NoError(t, got.FakesV4)
 				} else {
 					assert.EqualError(t, got.FakesV4, tc.wantFakesV4)
-					assert.Equal(t, &packet.FakesOffError{
+					assert.Equal(t, &desync.FakesOffError{
 						Family:    netutil.FamilyV4,
-						Kind:      packet.FakesOffVPNAtStartup,
+						Kind:      desync.FakesOffVPNAtStartup,
 						Interface: "utun4",
 						Reason:    "a full-tunnel VPN (VPN link utun4 (utun)) carries the traffic",
 					}, got.FakesV4)
 				}
 				assert.EqualError(t, got.FakesV6, fakesV6Off)
-				var off6 *packet.FakesOffError
+				var off6 *desync.FakesOffError
 				require.ErrorAs(t, got.FakesV6, &off6)
-				assert.Equal(t, packet.FakesOffIPv6Unsupported, off6.Kind)
+				assert.Equal(t, desync.FakesOffIPv6Unsupported, off6.Kind)
 				assert.Nil(t, got.V6)
 				assert.Equal(t, ipv6StayedOn, got.IPv6Off)
 			}
@@ -716,7 +716,7 @@ func TestDstFakeCheck(t *testing.T) {
 		routeErr     error
 		class        *netutil.Egress
 		classErr     error
-		wantErr      *packet.FakesOffError
+		wantErr      *desync.FakesOffError
 		start        *netutil.Egress // directEgress when nil
 		noStart      bool
 		wantClassify bool
@@ -743,9 +743,9 @@ func TestDstFakeCheck(t *testing.T) {
 			path:         pathVia(dst, vpnEgress),
 			class:        vpnEgress,
 			wantClassify: true,
-			wantErr: &packet.FakesOffError{
+			wantErr: &desync.FakesOffError{
 				Family:    netutil.FamilyV4,
-				Kind:      packet.FakesOffDstViaVPN,
+				Kind:      desync.FakesOffDstViaVPN,
 				Interface: "utun4",
 				Reason:    "the route to 10.20.0.5 goes through a VPN (utun4)",
 			},

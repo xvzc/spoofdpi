@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
-	"github.com/xvzc/spoofdpi/internal/packet"
+	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
@@ -313,7 +313,7 @@ func TestSegmentChecks(t *testing.T) {
 // capture would, on a connection whose next sequence numbers are real.
 type scriptedFakes struct {
 	flows *flowWatch
-	real  packet.SeqAck
+	real  desync.SeqAck
 	// wrongSeq makes every fake carry other sequence numbers, and
 	// wrongFirst only the first one.
 	wrongSeq, wrongFirst bool
@@ -352,14 +352,14 @@ func (s scriptedSender) Desync(
 ) (int, error) {
 	local := conn.LocalAddr().(*net.TCPAddr)
 	remote := conn.RemoteAddr().(*net.TCPAddr)
-	seg := func(sa packet.SeqAck, payload int) capture.TCPSegment {
+	seg := func(sa desync.SeqAck, payload int) capture.TCPSegment {
 		return capture.TCPSegment{
 			Src: local.IP, Dst: remote.IP,
 			SrcPort: uint16(local.Port), DstPort: uint16(remote.Port),
 			Seq: sa.Seq, Ack: sa.Ack, ACK: true, PayloadLen: payload, TTL: 64,
 		}
 	}
-	fake := packet.SeqAck{
+	fake := desync.SeqAck{
 		Seq: s.f.real.Seq + uint32(opts.FakeSeqOffset),
 		Ack: s.f.real.Ack + uint32(opts.FakeAckOffset),
 	}
@@ -370,7 +370,7 @@ func (s scriptedSender) Desync(
 		s.log.err = s.f.sendErr
 	} else {
 		s.log.sent = 1
-		s.log.first = packet.TCPFake{SeqAck: fake, BadMD5Sig: opts.FakeBadMD5Sig}
+		s.log.first = desync.TCPFake{SeqAck: fake, BadMD5Sig: opts.FakeBadMD5Sig}
 		s.f.flows.keep(seg(fake, len(config.FakeClientHello)))
 	}
 	n, err := conn.Write(msg.Raw())
@@ -390,7 +390,7 @@ func fakeProber(t *testing.T, fakes *scriptedFakes) *Prober {
 	p.flows = newFlowWatch(newFakeSource(t))
 	t.Cleanup(p.flows.Close)
 	fakes.flows = p.flows
-	fakes.real = packet.SeqAck{Seq: 1000, Ack: 70000}
+	fakes.real = desync.SeqAck{Seq: 1000, Ack: 70000}
 	p.fakes = func() (fakeStack, string) { return fakes, "" }
 	return p
 }
@@ -544,25 +544,25 @@ func TestHelloStart(t *testing.T) {
 		name  string
 		segs  []flowSegment
 		fakes []fakePiece
-		want  packet.SeqAck
+		want  desync.SeqAck
 		v     verdict
 	}{
 		{
 			name: "one segment",
 			segs: []flowSegment{out(1000, 7, 1500)},
-			want: packet.SeqAck{Seq: 1000, Ack: 7},
+			want: desync.SeqAck{Seq: 1000, Ack: 7},
 			v:    matched,
 		},
 		{
 			name: "two segments after a fake at an offset",
 			segs: []flowSegment{out(990, 7, 517), out(1000, 7, 1400), out(2400, 7, 100)},
-			want: packet.SeqAck{Seq: 1000, Ack: 7},
+			want: desync.SeqAck{Seq: 1000, Ack: 7},
 			v:    matched,
 		},
 		{
 			name: "a fake at the same seq with another ack",
 			segs: []flowSegment{out(1000, 9, 517), out(1000, 7, 1400), out(2400, 7, 100)},
-			want: packet.SeqAck{Seq: 1000, Ack: 7},
+			want: desync.SeqAck{Seq: 1000, Ack: 7},
 			v:    matched,
 		},
 		{
@@ -571,15 +571,15 @@ func TestHelloStart(t *testing.T) {
 			// does.
 			name:  "a fake whose offset ends it where the first segment does",
 			segs:  []flowSegment{out(900, 7, 517), out(1000, 7, 1400), out(2400, 7, 100)},
-			fakes: []fakePiece{{SeqAck: packet.SeqAck{Seq: 900, Ack: 7}, length: 517}},
-			want:  packet.SeqAck{Seq: 1000, Ack: 7},
+			fakes: []fakePiece{{SeqAck: desync.SeqAck{Seq: 900, Ack: 7}, length: 517}},
+			want:  desync.SeqAck{Seq: 1000, Ack: 7},
 			v:     matched,
 		},
 		{
 			name:  "a fake the same as the first segment",
 			segs:  []flowSegment{out(1000, 7, 1400), out(1000, 7, 1400), out(2400, 7, 100)},
-			fakes: []fakePiece{{SeqAck: packet.SeqAck{Seq: 1000, Ack: 7}, length: 1400}},
-			want:  packet.SeqAck{Seq: 1000, Ack: 7},
+			fakes: []fakePiece{{SeqAck: desync.SeqAck{Seq: 1000, Ack: 7}, length: 1400}},
+			want:  desync.SeqAck{Seq: 1000, Ack: 7},
 			v:     matched,
 		},
 		{

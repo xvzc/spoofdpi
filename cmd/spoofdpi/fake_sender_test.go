@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/xvzc/spoofdpi/internal/config"
+	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/packetio/inject"
 )
 
@@ -56,7 +56,7 @@ func TestFakeSenderError(t *testing.T) {
 
 func TestFakesPinning(t *testing.T) {
 	route := &netutil.Route{Iface: net.Interface{Index: 4, Name: "en0"}}
-	off := &packet.FakesOffError{Family: netutil.FamilyV4, Reason: "a VPN"}
+	off := &desync.FakesOffError{Family: netutil.FamilyV4, Reason: "a VPN"}
 	withMode := func(mode config.AppModeType) *config.Config {
 		cfg := config.DefaultConfig()
 		cfg.App.Mode = mode
@@ -90,7 +90,7 @@ func TestFakesState(t *testing.T) {
 	assert.Equal(
 		t,
 		"off: IPv6 fakes are not supported yet",
-		fakesState(&packet.FakesOffError{
+		fakesState(&desync.FakesOffError{
 			Family: netutil.FamilyV6,
 			Reason: "IPv6 fakes are not supported yet",
 		}),

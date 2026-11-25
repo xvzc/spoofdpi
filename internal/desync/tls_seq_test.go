@@ -10,14 +10,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
 type writtenPacket struct {
 	ttl     uint8
 	payload []byte
-	seq     packet.SeqAck
+	seq     SeqAck
 	md5     bool
 }
 
@@ -32,7 +31,7 @@ func (w *recordingWriter) WriteCraftedPacket(
 }
 
 func (w *recordingWriter) WriteCraftedPacketWithSeq(
-	_ context.Context, _, _ net.Addr, ttl uint8, payload []byte, fake packet.TCPFake,
+	_ context.Context, _, _ net.Addr, ttl uint8, payload []byte, fake TCPFake,
 ) (int, error) {
 	w.packets = append(
 		w.packets,
@@ -48,13 +47,13 @@ type stubHops struct {
 	hops       uint8
 }
 
-func (stubHops) Register(packet.Proto, []net.IP)      {}
-func (stubHops) MarkWarned(packet.Proto, net.IP) bool { return true }
-func (s stubHops) Lookup(packet.Proto, net.IP) packet.HopEstimate {
+func (stubHops) Register(Proto, []net.IP)      {}
+func (stubHops) MarkWarned(Proto, net.IP) bool { return true }
+func (s stubHops) Lookup(Proto, net.IP) HopEstimate {
 	if !s.hopLearned {
-		return packet.HopEstimate{Source: packet.HopSourceDefault}
+		return HopEstimate{Source: HopSourceDefault}
 	}
-	return packet.HopEstimate{Hops: s.hops, Source: packet.HopSourceLearned}
+	return HopEstimate{Hops: s.hops, Source: HopSourceLearned}
 }
 
 // baseConnOpts are the default hop-count options.
@@ -97,7 +96,7 @@ func TestFakeSenderPreflight_SegmentsAndCopies(t *testing.T) {
 	w := &recordingWriter{}
 	f := newFakeSender(
 		w, newStubConn("203.0.113.1"), 8, tlsOpts(2, 100),
-		packet.SeqAck{Seq: 1000, Ack: 5000},
+		SeqAck{Seq: 1000, Ack: 5000},
 	)
 
 	_, err := f.preflight(context.Background(), zerolog.Nop())
@@ -120,50 +119,50 @@ func TestFakeSeqAck(t *testing.T) {
 	tcs := []struct {
 		name     string
 		seq, ack int64
-		real     packet.SeqAck
-		want     packet.SeqAck
+		real     SeqAck
+		want     SeqAck
 	}{
 		{
 			"offset 0 keeps the real numbers",
 			0,
 			0,
-			packet.SeqAck{Seq: 5000, Ack: 7000},
-			packet.SeqAck{Seq: 5000, Ack: 7000},
+			SeqAck{Seq: 5000, Ack: 7000},
+			SeqAck{Seq: 5000, Ack: 7000},
 		},
 		{
 			"negative offsets",
 			-10000,
 			-1000,
-			packet.SeqAck{Seq: 20000, Ack: 30000},
-			packet.SeqAck{Seq: 10000, Ack: 29000},
+			SeqAck{Seq: 20000, Ack: 30000},
+			SeqAck{Seq: 10000, Ack: 29000},
 		},
 		{
 			"negative offset wraps",
 			-10000,
 			0,
-			packet.SeqAck{Seq: 5000, Ack: 1},
-			packet.SeqAck{Seq: 1<<32 - 5000, Ack: 1},
+			SeqAck{Seq: 5000, Ack: 1},
+			SeqAck{Seq: 1<<32 - 5000, Ack: 1},
 		},
 		{
 			"positive offset",
 			66000,
 			66000,
-			packet.SeqAck{Seq: 5000, Ack: 5000},
-			packet.SeqAck{Seq: 71000, Ack: 71000},
+			SeqAck{Seq: 5000, Ack: 5000},
+			SeqAck{Seq: 71000, Ack: 71000},
 		},
 		{
 			"positive offset wraps",
 			1 << 31,
 			0,
-			packet.SeqAck{Seq: 1 << 31, Ack: 1},
-			packet.SeqAck{Seq: 0, Ack: 1},
+			SeqAck{Seq: 1 << 31, Ack: 1},
+			SeqAck{Seq: 0, Ack: 1},
 		},
 		{
 			"largest offsets",
 			1<<32 - 1,
 			-(1<<32 - 1),
-			packet.SeqAck{Seq: 5, Ack: 5},
-			packet.SeqAck{Seq: 4, Ack: 6},
+			SeqAck{Seq: 5, Ack: 5},
+			SeqAck{Seq: 4, Ack: 6},
 		},
 	}
 
@@ -177,7 +176,7 @@ func TestFakeSeqAck(t *testing.T) {
 
 func TestSendSegments_AdvancesSeq(t *testing.T) {
 	d := NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil)
-	seq := &packet.SeqAck{Seq: 1000, Ack: 5000}
+	seq := &SeqAck{Seq: 1000, Ack: 5000}
 
 	n, err := d.sendSegments(
 		context.Background(),
@@ -189,17 +188,17 @@ func TestSendSegments_AdvancesSeq(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.Equal(t, 8, n)
-	assert.Equal(t, packet.SeqAck{Seq: 1008, Ack: 5000}, *seq)
+	assert.Equal(t, SeqAck{Seq: 1008, Ack: 5000}, *seq)
 }
 
 func TestDesync_UsesLearnedSeqAckWithOffsets(t *testing.T) {
 	w := &recordingWriter{}
-	seqs := packet.NewSeqTracker(time.Minute)
+	seqs := NewSeqTracker(time.Minute)
 	d := NewTLSDesyncer(zerolog.Nop(), w, stubHops{}, seqs, nil)
 	conn := newStubConn("203.0.113.1")
 	seqs.Put(
-		packet.SeqKey(conn.local, conn.remote),
-		packet.SeqAck{Seq: 20000, Ack: 30000},
+		SeqKey(conn.local, conn.remote),
+		SeqAck{Seq: 20000, Ack: 30000},
 	)
 
 	opts := tlsOpts(1, 100)
@@ -210,7 +209,7 @@ func TestDesync_UsesLearnedSeqAckWithOffsets(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotEmpty(t, w.packets)
-	assert.Equal(t, packet.SeqAck{Seq: 10000, Ack: 96000}, w.packets[0].seq)
+	assert.Equal(t, SeqAck{Seq: 10000, Ack: 96000}, w.packets[0].seq)
 }
 
 func TestDesync_UnlearnedFakeSegmentsLineUp(t *testing.T) {
@@ -219,7 +218,7 @@ func TestDesync_UnlearnedFakeSegmentsLineUp(t *testing.T) {
 		zerolog.Nop(),
 		w,
 		stubHops{},
-		packet.NewSeqTracker(time.Minute),
+		NewSeqTracker(time.Minute),
 		nil,
 	)
 	opts := tlsOpts(1, 100)
@@ -266,7 +265,7 @@ func TestDesync_WaitRules(t *testing.T) {
 				zerolog.Nop(),
 				&recordingWriter{},
 				stubHops{hopLearned: tc.hopLearned},
-				packet.NewSeqTracker(time.Minute),
+				NewSeqTracker(time.Minute),
 				nil,
 			)
 			opts := tlsOpts(tc.fakeCount, 100)
@@ -327,13 +326,13 @@ func TestDesync_SkipsFakesOnLocalLink(t *testing.T) {
 
 func TestOnLocalLink(t *testing.T) {
 	tcs := []struct {
-		est  packet.HopEstimate
+		est  HopEstimate
 		want bool
 	}{
-		{packet.HopEstimate{Hops: 0, Source: packet.HopSourceLearned}, true},
-		{packet.HopEstimate{Hops: 0, Source: packet.HopSourceLearnedOther}, true},
-		{packet.HopEstimate{Hops: 1, Source: packet.HopSourceLearned}, false},
-		{packet.HopEstimate{Hops: 0, Source: packet.HopSourceDefault}, false},
+		{HopEstimate{Hops: 0, Source: HopSourceLearned}, true},
+		{HopEstimate{Hops: 0, Source: HopSourceLearnedOther}, true},
+		{HopEstimate{Hops: 1, Source: HopSourceLearned}, false},
+		{HopEstimate{Hops: 0, Source: HopSourceDefault}, false},
 	}
 
 	for _, tc := range tcs {

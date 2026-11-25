@@ -16,7 +16,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
@@ -29,20 +28,20 @@ type Segment struct {
 // disorders packets by manipulating TTL.
 type TLSDesyncer struct {
 	logger zerolog.Logger
-	writer packet.TCPSeqWriter
-	hops   packet.HopReader
-	seqs   *packet.SeqTracker
-	caps   packet.FakeCapability
+	writer TCPSeqWriter
+	hops   HopReader
+	seqs   *SeqTracker
+	caps   FakeCapability
 }
 
 // NewTLSDesyncer returns a desyncer that sends fake packets with writer,
 // to the destinations caps allows; a nil caps allows every destination.
 func NewTLSDesyncer(
 	logger zerolog.Logger,
-	writer packet.TCPSeqWriter,
-	hops packet.HopReader,
-	seqs *packet.SeqTracker,
-	caps packet.FakeCapability,
+	writer TCPSeqWriter,
+	hops HopReader,
+	seqs *SeqTracker,
+	caps FakeCapability,
 ) *TLSDesyncer {
 	return &TLSDesyncer{
 		logger: logger,
@@ -59,7 +58,7 @@ func (d *TLSDesyncer) PrepareHopTrack(addrs []net.IP, cfg *config.HTTPSOptions) 
 	if d.hops == nil || cfg.Skip || !cfg.UsesFakes() {
 		return
 	}
-	d.hops.Register(packet.ProtoTCP, addrs)
+	d.hops.Register(ProtoTCP, addrs)
 }
 
 func (d *TLSDesyncer) Desync(
@@ -84,7 +83,7 @@ func (d *TLSDesyncer) Desync(
 	// seq tracks the connection's next sequence number while segments are
 	// sent; fakes sends the fake packets. Both are nil when no fake packets
 	// are sent.
-	var seq *packet.SeqAck
+	var seq *SeqAck
 	var fakes *fakeSender
 	if httpsOpts.UsesFakes() && d.hops != nil && d.writer != nil {
 		dstIP := conn.RemoteAddr().(*net.TCPAddr).IP
@@ -96,9 +95,9 @@ func (d *TLSDesyncer) Desync(
 		// Wait for the SYN/ACK first: the sniffer learns the hop count from
 		// it too, so the TTL read after it is fresher.
 		real := d.learnSeqAck(ctx, logger, conn, httpsOpts)
-		est := d.hops.Lookup(packet.ProtoTCP, dstIP)
+		est := d.hops.Lookup(ProtoTCP, dstIP)
 		if onLocalLink(est) {
-			if d.hops.MarkWarned(packet.ProtoTCP, dstIP) {
+			if d.hops.MarkWarned(ProtoTCP, dstIP) {
 				warnLocalLink(logger, dstIP)
 			} else {
 				logger.Debug().Msg("server is on the local link, skipping fake packets")
@@ -146,17 +145,17 @@ func (d *TLSDesyncer) learnSeqAck(
 	logger zerolog.Logger,
 	conn net.Conn,
 	opts *config.HTTPSOptions,
-) packet.SeqAck {
-	random := packet.SeqAck{Seq: rand.Uint32(), Ack: rand.Uint32()}
+) SeqAck {
+	random := SeqAck{Seq: rand.Uint32(), Ack: rand.Uint32()}
 
 	local, lok := conn.LocalAddr().(*net.TCPAddr)
 	remote, rok := conn.RemoteAddr().(*net.TCPAddr)
-	if d.seqs == nil || !lok || !rok || !packet.CanLearnSeq(remote.IP) {
+	if d.seqs == nil || !lok || !rok || !CanLearnSeq(remote.IP) {
 		return random
 	}
 
 	start := time.Now()
-	sa, ok := d.seqs.Wait(ctx, packet.SeqKey(local, remote), opts.SynAckTimeout)
+	sa, ok := d.seqs.Wait(ctx, SeqKey(local, remote), opts.SynAckTimeout)
 	logger.Trace().
 		Bool("learned", ok).
 		Dur("waited", time.Since(start)).
@@ -172,7 +171,7 @@ func (d *TLSDesyncer) learnSeqAck(
 // learned 0 hops). No TTL can stop a fake packet before such a server, and
 // no DPI can sit in between, so fakes are pointless and only risk the
 // connection.
-func onLocalLink(est packet.HopEstimate) bool {
+func onLocalLink(est HopEstimate) bool {
 	return est.Learned() && est.Hops == 0
 }
 
@@ -192,7 +191,7 @@ var cannotFakeWarned sync.Map
 
 // checkFake returns why fake packets cannot be sent to dst, or nil when
 // they can. A nil caps lets them be sent anywhere.
-func checkFake(caps packet.FakeCapability, dst net.IP) error {
+func checkFake(caps FakeCapability, dst net.IP) error {
 	if caps == nil {
 		return nil
 	}
@@ -210,7 +209,7 @@ func logCannotFake(logger zerolog.Logger, ip net.IP, err error) {
 	event = event.Str("dst", ip.String())
 
 	reason := err.Error()
-	var off *packet.FakesOffError
+	var off *FakesOffError
 	if errors.As(err, &off) {
 		reason = off.Reason
 		event = event.Str("family", off.Family.String())
@@ -227,7 +226,7 @@ func logCannotFake(logger zerolog.Logger, ip net.IP, err error) {
 // warning, and the keys stay few as interfaces are. Other errors are fixed
 // texts.
 func cannotFakeKey(err error) string {
-	var off *packet.FakesOffError
+	var off *FakesOffError
 	if errors.As(err, &off) {
 		return off.Family.String() + "/" + off.Kind + "/" + off.Interface
 	}
@@ -237,8 +236,8 @@ func cannotFakeKey(err error) string {
 // hopPolicy returns the policy that turns a hop count estimate into the
 // TTL of fake packets, from the hop-count options of the connection, which
 // a matched rule may override.
-func hopPolicy(o *config.ConnOptions) packet.HopPolicy {
-	return packet.HopPolicy{
+func hopPolicy(o *config.ConnOptions) HopPolicy {
+	return HopPolicy{
 		Default: o.HopCountDefault,
 		Min:     o.HopCountMin,
 		Max:     o.HopCountMax,
@@ -249,8 +248,8 @@ func hopPolicy(o *config.ConnOptions) packet.HopPolicy {
 // fakeSeqAck adds opts.FakeSeqOffset and opts.FakeAckOffset to the
 // connection's real sequence numbers. The uint32 conversion of a negative
 // offset wraps, which is what we want (mod 2^32).
-func fakeSeqAck(real packet.SeqAck, opts *config.HTTPSOptions) packet.SeqAck {
-	return packet.SeqAck{
+func fakeSeqAck(real SeqAck, opts *config.HTTPSOptions) SeqAck {
+	return SeqAck{
 		Seq: real.Seq + uint32(opts.FakeSeqOffset),
 		Ack: real.Ack + uint32(opts.FakeAckOffset),
 	}
@@ -265,7 +264,7 @@ func (d *TLSDesyncer) sendSegments(
 	conn net.Conn,
 	logger zerolog.Logger,
 	segments []Segment,
-	seq *packet.SeqAck,
+	seq *SeqAck,
 	fakes *fakeSender,
 ) (int, error) {
 	var isIPv4 bool

@@ -17,7 +17,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/proto"
 	"github.com/xvzc/spoofdpi/internal/rule"
 	"github.com/xvzc/spoofdpi/internal/server"
@@ -159,12 +158,12 @@ func TestTCPHandler_Handle_Block(t *testing.T) {
 
 // hopRegistrar records the addresses registered for hop-count learning.
 type hopRegistrar struct {
-	packet.HopReader
+	desync.HopReader
 	mu         sync.Mutex
 	registered [][]net.IP
 }
 
-func (r *hopRegistrar) Register(_ packet.Proto, addrs []net.IP) {
+func (r *hopRegistrar) Register(_ desync.Proto, addrs []net.IP) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.registered = append(r.registered, addrs)

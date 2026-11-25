@@ -9,7 +9,6 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
 func TestTLSDesync_LogsCarrySNI(t *testing.T) {
@@ -23,7 +22,7 @@ func TestTLSDesync_LogsCarrySNI(t *testing.T) {
 	d := NewTLSDesyncer(
 		zerolog.New(&log).Level(zerolog.DebugLevel),
 		&recordingWriter{},
-		hopStoreWith(packet.ProtoTCP, 12, server),
+		hopStoreWith(ProtoTCP, 12, server),
 		nil,
 		nil,
 	)

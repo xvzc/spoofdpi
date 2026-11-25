@@ -8,8 +8,8 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
+	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
 // routeFinder discovers the egress of the host. Tests replace it to fake
@@ -87,9 +87,9 @@ func discoverEgresses(
 		V4:      v4,
 		V6:      v6,
 		FakesV4: fakesV4,
-		FakesV6: &packet.FakesOffError{
+		FakesV6: &desync.FakesOffError{
 			Family: netutil.FamilyV6,
-			Kind:   packet.FakesOffIPv6Unsupported,
+			Kind:   desync.FakesOffIPv6Unsupported,
 			Reason: "IPv6 fakes are not supported yet",
 		},
 		IPv6Off: ipv6Off,
@@ -148,9 +148,9 @@ func discoverEgressV4(
 			warn += fmt.Sprintf(" (gateway %s is ignored)", gateway)
 		}
 		logger.Warn().Msg(warn)
-		return egress, &packet.FakesOffError{
+		return egress, &desync.FakesOffError{
 			Family:    netutil.FamilyV4,
-			Kind:      packet.FakesOffVPNAtStartup,
+			Kind:      desync.FakesOffVPNAtStartup,
 			Interface: egress.Route.Iface.Name,
 			Reason: fmt.Sprintf(
 				"a full-tunnel VPN (%s) carries the traffic",
@@ -241,7 +241,7 @@ func discoverEgressV6(
 	return egress, ipv6StayedOn, nil
 }
 
-// dstFakeCheck returns the lookup of a packet.RouteGate in the proxy
+// dstFakeCheck returns the lookup of a desync.RouteGate in the proxy
 // modes: fake packets to a destination are off when the kernel routes it
 // through a VPN, as a split-tunnel VPN does for some destinations, since
 // the VPN's far end, not the censor, would see them. start is the IPv4
@@ -285,9 +285,9 @@ func dstFakeCheck(
 		if egress.Class != netutil.EgressVPN {
 			return nil
 		}
-		return &packet.FakesOffError{
+		return &desync.FakesOffError{
 			Family:    path.Family,
-			Kind:      packet.FakesOffDstViaVPN,
+			Kind:      desync.FakesOffDstViaVPN,
 			Interface: path.Iface.Name,
 			Reason: fmt.Sprintf(
 				"the route to %s goes through a VPN (%s)", dst, path.Iface.Name,

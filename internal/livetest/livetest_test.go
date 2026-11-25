@@ -542,7 +542,7 @@ func TestImportIsolation(t *testing.T) {
 	require.NoError(t, err)
 
 	deps := strings.Fields(string(out))
-	for _, pkg := range []string{"internal/config", "internal/server", "internal/packet"} {
+	for _, pkg := range []string{"internal/config", "internal/server", "internal/desync"} {
 		for _, dep := range deps {
 			assert.False(t,
 				strings.HasPrefix(dep, "github.com/xvzc/spoofdpi/"+pkg),

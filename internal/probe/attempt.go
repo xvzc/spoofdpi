@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/xvzc/spoofdpi/internal/config"
+	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
 const (
@@ -365,7 +365,7 @@ func (p *Prober) fakeTry(
 	if log.sent == 0 || log.err != nil {
 		return localOutcome("fake not sent"), false
 	}
-	var real packet.SeqAck
+	var real desync.SeqAck
 	sent := p.flows.await(ctx, flow, ttlConfirmWait, func(segs []flowSegment) verdict {
 		var v verdict
 		real, v = helloStart(segs, len(msg.Raw()), log.pieces)
@@ -391,8 +391,8 @@ func (p *Prober) fakeTry(
 // fakeSeqAck returns the sequence numbers of a fake crafted as v on a
 // connection whose next ones are real, as spoofdpi's desyncer computes
 // them.
-func fakeSeqAck(real packet.SeqAck, v fakeVariant) packet.SeqAck {
-	return packet.SeqAck{
+func fakeSeqAck(real desync.SeqAck, v fakeVariant) desync.SeqAck {
+	return desync.SeqAck{
 		Seq: real.Seq + uint32(v.seqOffset),
 		Ack: real.Ack + uint32(v.ackOffset),
 	}
@@ -410,7 +410,7 @@ func helloStart(
 	segs []flowSegment,
 	size int,
 	fakes []fakePiece,
-) (packet.SeqAck, verdict) {
+) (desync.SeqAck, verdict) {
 	isFake := func(s flowSegment) bool {
 		for _, f := range fakes {
 			if s.Seq == f.Seq && s.Ack == f.Ack && s.PayloadLen == f.length {
@@ -429,10 +429,10 @@ func helloStart(
 				if last.out && last.PayloadLen > 0 && last.Seq+uint32(last.PayloadLen) == end {
 					// The last segment is the real one even when the fake
 					// starts at the same sequence number.
-					return packet.SeqAck{Seq: start.Seq, Ack: last.Ack}, matched
+					return desync.SeqAck{Seq: start.Seq, Ack: last.Ack}, matched
 				}
 			}
 		}
 	}
-	return packet.SeqAck{}, undecided
+	return desync.SeqAck{}, undecided
 }

@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
-	"github.com/xvzc/spoofdpi/internal/packet"
 )
 
 // fakeTTLCases are fake TTLs for the connection options a connection was
@@ -124,7 +123,7 @@ func TestDesync_UnknownServerGetsDefaultTTL(t *testing.T) {
 
 	t.Run("tls", func(t *testing.T) {
 		w := &recordingWriter{}
-		d := NewTLSDesyncer(zerolog.Nop(), w, packet.NewHopStore(), nil, nil)
+		d := NewTLSDesyncer(zerolog.Nop(), w, NewHopStore(), nil, nil)
 		opts := tlsOpts(1, 100)
 		opts.SynAckTimeout = 0
 
@@ -148,7 +147,7 @@ func TestDesync_UnknownServerGetsDefaultTTL(t *testing.T) {
 			remote: &net.UDPAddr{IP: net.ParseIP("203.0.113.1"), Port: 443},
 		}
 		w := &udpWriter{}
-		d := NewUDPDesyncer(zerolog.Nop(), w, packet.NewHopStore(), nil)
+		d := NewUDPDesyncer(zerolog.Nop(), w, NewHopStore(), nil)
 
 		_, err := d.Desync(
 			context.Background(),

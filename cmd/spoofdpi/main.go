@@ -19,7 +19,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
-	"github.com/xvzc/spoofdpi/internal/packet"
 	"github.com/xvzc/spoofdpi/internal/packetio/inject"
 	"github.com/xvzc/spoofdpi/internal/rule"
 	"github.com/xvzc/spoofdpi/internal/server"
@@ -267,9 +266,9 @@ func setupNetworkStack(
 	route *netutil.Route,
 	cfg *config.Config,
 ) (
-	tcpStack *packet.TCPStack,
-	udpStack *packet.UDPStack,
-	hops *packet.HopStore,
+	tcpStack *desync.TCPStack,
+	udpStack *desync.UDPStack,
+	hops *desync.HopStore,
 	err error,
 ) {
 	if !cfg.NeedsNetworkStack() {
@@ -277,14 +276,14 @@ func setupNetworkStack(
 	}
 
 	runID, _ := logging.TraceIDFromContext(ctx)
-	hops = packet.NewHopStore()
+	hops = desync.NewHopStore()
 
 	logger.Info().Msg("network info")
 	logger.Info().
 		Str("name", route.Iface.Name).
 		Msg(" interface")
 
-	sender, sErr := packet.OpenIPv4Sender(
+	sender, sErr := desync.OpenIPv4Sender(
 		ctx,
 		logger,
 		fakeSenderOptions(cfg, route),
@@ -293,10 +292,10 @@ func setupNetworkStack(
 		err = fakeSenderError(sErr)
 		return
 	}
-	senders := packet.Senders{V4: sender}
+	senders := desync.Senders{V4: sender}
 
 	if cfg.NeedsTCPStack() {
-		stack, hErr := packet.OpenTCPStack(
+		stack, hErr := desync.OpenTCPStack(
 			runID,
 			logger,
 			&route.Iface,
@@ -312,7 +311,7 @@ func setupNetworkStack(
 	}
 
 	if cfg.NeedsUDPStack() {
-		stack, hErr := packet.OpenUDPStack(
+		stack, hErr := desync.OpenUDPStack(
 			runID,
 			logger,
 			&route.Iface,
@@ -366,7 +365,7 @@ func fakesState(fakesOff error) string {
 	if fakesOff == nil {
 		return "on"
 	}
-	var off *packet.FakesOffError
+	var off *desync.FakesOffError
 	if errors.As(fakesOff, &off) {
 		return "off: " + off.Reason
 	}
@@ -504,9 +503,9 @@ func createServer(
 	)
 
 	var (
-		tcpStack *packet.TCPStack
-		udpStack *packet.UDPStack
-		hops     *packet.HopStore
+		tcpStack *desync.TCPStack
+		udpStack *desync.UDPStack
+		hops     *desync.HopStore
 	)
 	if startup.FakesV4 == nil {
 		tcpStack, udpStack, hops, err = setupNetworkStack(
@@ -528,23 +527,23 @@ func createServer(
 	}
 
 	// A nil stack must leave the interfaces nil: a nil *HopStore stored in
-	// a packet.HopReader would be non-nil and defeat the desyncers' nil
+	// a desync.HopReader would be non-nil and defeat the desyncers' nil
 	// checks.
 	var (
-		tcpHops   packet.HopReader
-		tcpWriter packet.TCPSeqWriter
-		seqs      *packet.SeqTracker
-		tcpCaps   packet.FakeCapability
-		udpHops   packet.HopReader
-		udpWriter packet.Writer
-		udpCaps   packet.FakeCapability
+		tcpHops   desync.HopReader
+		tcpWriter desync.TCPSeqWriter
+		seqs      *desync.SeqTracker
+		tcpCaps   desync.FakeCapability
+		udpHops   desync.HopReader
+		udpWriter desync.Writer
+		udpCaps   desync.FakeCapability
 	)
-	staticGate := packet.NewStaticGate(startup.FakesV4, startup.FakesV6)
-	var fakeGate packet.FakeCapability = staticGate
+	staticGate := desync.NewStaticGate(startup.FakesV4, startup.FakesV6)
+	var fakeGate desync.FakeCapability = staticGate
 	// The proxy modes check each server's route too. TUN mode routes the
 	// whole traffic itself, and a full-tunnel VPN stops it at startup.
 	if (tcpStack != nil || udpStack != nil) && cfg.App.Mode != config.AppModeTUN {
-		fakeGate = packet.NewRouteGate(
+		fakeGate = desync.NewRouteGate(
 			staticGate,
 			dstFakeCheck(
 				logger,
@@ -552,7 +551,7 @@ func createServer(
 				netutil.RouteTo,
 				netutil.ClassifyPath,
 			),
-			packet.RouteGateOptions{},
+			desync.RouteGateOptions{},
 		)
 	}
 	if tcpStack != nil {
