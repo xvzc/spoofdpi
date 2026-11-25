@@ -27,6 +27,12 @@ type Server interface {
 	// Addr returns the network address or interface name the server is bound to
 	Addr() string
 
+	// ActiveConns returns how many connections the server is handling now:
+	// each accepted client conn of the HTTP and SOCKS5 proxies, which counts
+	// an HTTP keep-alive conn and a SOCKS5 UDP ASSOCIATE once, and each TCP
+	// conn and UDP flow of the TUN device.
+	ActiveConns() int64
+
 	// SetupNetworkJobs builds the job list, saves it to the state file, and
 	// returns the state file path. On darwin, HTTP/SOCKS5 also start the PAC
 	// server, tied to ctx so it shuts down automatically when ctx is cancelled.

@@ -3,11 +3,13 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -54,7 +56,7 @@ func alertRecord(description byte) []byte {
 }
 
 // watchedRead relays what a server at dstIP sends as replies, one write
-// each, through TunnelConnsFirstRead with w's inspector, and returns what
+// each, through RelayBidirectional with w's inspector, and returns what
 // the client reads.
 func watchedRead(
 	t *testing.T,
@@ -65,6 +67,11 @@ func watchedRead(
 	replies ...[]byte,
 ) []byte {
 	t.Helper()
+
+	// The relay logs its summary at trace level.
+	prevLevel := zerolog.GlobalLevel()
+	zerolog.SetGlobalLevel(zerolog.TraceLevel)
+	t.Cleanup(func() { zerolog.SetGlobalLevel(prevLevel) })
 
 	upstream, rEnd := net.Pipe()
 	lEnd, client := net.Pipe()
@@ -79,17 +86,34 @@ func watchedRead(
 	// The watcher keys on the address the conn reports, so a conn that
 	// reports dstIP stands in for the server.
 	rConn := &remoteAddrConn{Conn: rEnd, remote: &net.TCPAddr{IP: dstIP, Port: 443}}
-	resCh := make(chan netutil.TransferResult, 1)
-	go netutil.TunnelConnsFirstRead(
-		context.Background(), resCh, rConn, lEnd, netutil.TunnelDirIn,
-		w.Inspector(logger, rConn, sni, host),
-	)
+	var logs bytes.Buffer
+	relayLogger := zerolog.New(&logs).Level(zerolog.TraceLevel)
+	done := make(chan error, 1)
+	go func() {
+		done <- netutil.RelayBidirectional(
+			context.Background(), relayLogger, lEnd, rConn, netutil.RelayOptions{
+				OnFirstReply: w.Inspector(logger, rConn, sni, host),
+			},
+		)
+	}()
 
 	got, err := io.ReadAll(client)
 	require.NoError(t, err)
-	res := <-resCh
-	require.NoError(t, res.Err)
-	assert.Equal(t, int64(len(got)), res.Written)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the relay outlived the end of the replies")
+	}
+	var closed struct {
+		In   int64 `json:"in"`
+		Errs int   `json:"errs"`
+	}
+	require.NoError(t, json.Unmarshal(logs.Bytes(), &closed))
+	assert.Equal(t, int64(len(got)), closed.In)
+	// Only the client-to-remote direction fails: it reads lEnd, a pipe
+	// that the reply direction closed, which a pipe reports as
+	// io.ErrClosedPipe.
+	assert.Equal(t, 1, closed.Errs)
 
 	return got
 }

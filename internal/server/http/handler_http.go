@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -164,21 +163,11 @@ func (c *httpConn) forward() error {
 // both. The remote closes after its response to a request forwarded with
 // "Connection: close", which closes the client conn as well.
 func (c *httpConn) tunnel(ctx context.Context) error {
-	resCh := make(chan netutil.TransferResult, 2)
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	startedAt := time.Now()
-	go netutil.TunnelConns(ctx, resCh, c.conn, c.rConn, netutil.TunnelDirOut)
-	go netutil.TunnelConns(ctx, resCh, c.rConn, c.conn, netutil.TunnelDirIn)
-
-	return netutil.WaitForTunnelCompletion(
+	return netutil.RelayBidirectional(
 		ctx,
 		c.logger,
-		resCh,
-		startedAt,
-		netutil.DescribeRoute(c.conn, c.rConn),
-		nil,
+		c.conn,
+		c.rConn,
+		netutil.RelayOptions{},
 	)
 }

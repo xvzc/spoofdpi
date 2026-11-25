@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"net/netip"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -235,24 +234,14 @@ func (c *connectConn) forwardFirstMessage(
 }
 
 func (c *connectConn) tunnel(ctx context.Context, bufConn *netutil.BufferedConn) error {
-	resCh := make(chan netutil.TransferResult, 2)
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	startedAt := time.Now()
-	go netutil.TunnelConnsFirstRead(
-		ctx, resCh, c.rConn, bufConn, netutil.TunnelDirOut, c.inspectReply,
-	)
-	go netutil.TunnelConns(ctx, resCh, bufConn, c.rConn, netutil.TunnelDirIn)
-
-	return netutil.WaitForTunnelCompletion(
+	return netutil.RelayBidirectional(
 		ctx,
 		c.logger,
-		resCh,
-		startedAt,
-		netutil.DescribeRoute(bufConn, c.rConn),
-		nil,
+		bufConn,
+		c.rConn,
+		netutil.RelayOptions{
+			OnFirstReply: c.inspectReply,
+		},
 	)
 }
 

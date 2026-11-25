@@ -96,22 +96,12 @@ func (h *TCPHandler) Handle(
 		Str("remote", rConn.RemoteAddr().String()).
 		Msg("new remote conn")
 
-	resCh := make(chan netutil.TransferResult, 2)
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	startedAt := time.Now()
-	go netutil.TunnelConns(ctx, resCh, lBufferedConn, rConn, netutil.TunnelDirOut)
-	go netutil.TunnelConns(ctx, resCh, rConn, lBufferedConn, netutil.TunnelDirIn)
-
-	err = netutil.WaitForTunnelCompletion(
+	err = netutil.RelayBidirectional(
 		ctx,
 		logger,
-		resCh,
-		startedAt,
-		netutil.DescribeRoute(lConn, rConn),
-		nil,
+		lBufferedConn,
+		rConn,
+		netutil.RelayOptions{},
 	)
 	if err != nil {
 		logger.Error().Err(err).Msg("error handling request")
@@ -176,28 +166,12 @@ func (h *TCPHandler) handleTLS(
 	}
 
 	// Tunnel rest
-	resCh := make(chan netutil.TransferResult, 2)
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	// dst.Host is the SNI here.
 	inspectReply := h.alerts.Inspector(logger, rConn, dst.Host, "")
 
-	startedAt := time.Now()
-	go netutil.TunnelConns(ctx, resCh, lConn, rConn, netutil.TunnelDirOut)
-	go netutil.TunnelConnsFirstRead(
-		ctx, resCh, rConn, lConn, netutil.TunnelDirIn, inspectReply,
-	)
-
-	return netutil.WaitForTunnelCompletion(
-		ctx,
-		logger,
-		resCh,
-		startedAt,
-		netutil.DescribeRoute(lConn, rConn),
-		nil,
-	)
+	return netutil.RelayBidirectional(ctx, logger, lConn, rConn, netutil.RelayOptions{
+		OnFirstReply: inspectReply,
+	})
 }
 
 // selectRule selects the rule for dst, matching name as its domain name

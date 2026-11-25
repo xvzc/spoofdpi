@@ -16,27 +16,24 @@ import (
 	"github.com/rs/zerolog"
 )
 
-var (
-	txBytes uint64
-	rxBytes uint64
-)
-
-type TunnelDirType int
+// relayDir is the direction of one half of a relay.
+type relayDir int
 
 const (
-	TunnelDirOut TunnelDirType = iota
-	TunnelDirIn
+	relayDirOut relayDir = iota // client -> remote
+	relayDirIn                  // remote -> client
 )
 
-// TransferResult holds the result of a unidirectional tunnel transfer.
-type TransferResult struct {
+// relayResult holds the result of one direction of a relay.
+type relayResult struct {
 	Written int64
-	Dir     TunnelDirType
+	Dir     relayDir
 	Err     error
 }
 
-// bufferPool is a package-level pool of 32KB buffers used by io.CopyBuffer
-// to reduce memory allocations and GC pressure in the tunnel hot path.
+// bufferPool is a package-level pool of 32KB buffers that the relays copy
+// with, to reduce memory allocations and GC pressure in the hot path. A
+// relay between two *net.TCPConns doesn't use it (see copyConns).
 var bufferPool = sync.Pool{
 	New: func() any {
 		// We allocate a pointer to a byte slice.
@@ -46,30 +43,19 @@ var bufferPool = sync.Pool{
 	},
 }
 
-// TunnelConns copies data from src to dst.
-// It sends the result to resCh upon completion.
+// relayOneWay copies data from src to dst, and sends the result to resCh
+// upon completion. When onFirst is not nil, it hands the bytes of the first
+// read from src to onFirst, before it writes them to dst; onFirst must not
+// change or keep them. It copies the rest between the conns that src and
+// dst wrap, when they are BufferedConns, so that on Linux a TCP src and dst
+// keep the kernel splice.
 // It filters out benign errors like EOF, pipe closed, or read timeouts (for UDP).
-func TunnelConns(
+func relayOneWay(
 	ctx context.Context,
-	resCh chan<- TransferResult,
-	src net.Conn, // Source connection (io.Reader)
-	dst net.Conn, // Destination connection (io.Writer)
-	dir TunnelDirType,
-) {
-	TunnelConnsFirstRead(ctx, resCh, src, dst, dir, nil)
-}
-
-// TunnelConnsFirstRead is TunnelConns that hands the bytes of the first read
-// from src to onFirst, before it writes them to dst. onFirst must not
-// change or keep them. It copies the rest with src itself, not a wrapper of
-// it, so that a TCP src and dst keep the kernel splice. With a nil onFirst
-// it is TunnelConns.
-func TunnelConnsFirstRead(
-	ctx context.Context,
-	resCh chan<- TransferResult,
+	resCh chan<- relayResult,
 	src net.Conn,
 	dst net.Conn,
-	dir TunnelDirType,
+	dir relayDir,
 	onFirst func(first []byte),
 ) {
 	var once sync.Once
@@ -93,7 +79,7 @@ func TunnelConnsFirstRead(
 	var err error
 	if onFirst == nil {
 		// Copy data from src to dst using the borrowed buffer.
-		n, err = io.CopyBuffer(dst, src, *bufPtr)
+		n, err = copyConns(dst, src, *bufPtr)
 	} else {
 		n, err = copyAfterFirstRead(dst, src, *bufPtr, onFirst)
 	}
@@ -102,15 +88,15 @@ func TunnelConnsFirstRead(
 	// os.IsTimeout is checked to handle UDP idle timeouts gracefully.
 	if err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.EOF) &&
 		!errors.Is(err, syscall.EPIPE) && !os.IsTimeout(err) {
-		resCh <- TransferResult{Written: n, Dir: dir, Err: err}
+		resCh <- relayResult{Written: n, Dir: dir, Err: err}
 		return
 	}
 
-	resCh <- TransferResult{Written: n, Dir: dir, Err: nil}
+	resCh <- relayResult{Written: n, Dir: dir, Err: nil}
 }
 
 // copyAfterFirstRead does the first read from src itself, so that onFirst
-// sees it, then copies the rest like io.CopyBuffer. The first read's bytes
+// sees it, then copies the rest like copyConns. The first read's bytes
 // are in the count it returns. It returns what a read or write error of
 // the first read would make io.CopyBuffer return.
 func copyAfterFirstRead(
@@ -139,24 +125,89 @@ func copyAfterFirstRead(
 		return written, rerr
 	}
 
-	n, err := io.CopyBuffer(dst, src, buf)
+	n, err := copyConns(dst, src, buf)
 	return written + n, err
 }
 
-// WaitForTunnelCompletion aggregates results and logs the summary.
-// errHandler processes the list of errors to determine the final error.
-func WaitForTunnelCompletion(
+// copyConns copies from src to dst until EOF or an error. A BufferedConn src
+// first gives the bytes its reader holds; then, like a BufferedConn dst, it
+// is replaced by the conn it wraps.
+//
+// Between two *net.TCPConns, it leaves the copy to them: on Linux they
+// splice in the kernel; on macOS and FreeBSD they allocate a buffer of
+// their own for each direction. Any other pair copies with buf, and never
+// through a ReadFrom or WriteTo of either conn, which could not splice and
+// would allocate a buffer of its own.
+func copyConns(dst io.Writer, src io.Reader, buf []byte) (int64, error) {
+	var written int64
+	if b, ok := src.(*BufferedConn); ok {
+		n, err := b.writeBufferedTo(dst)
+		written = int64(n)
+		if err != nil {
+			return written, err
+		}
+		src = b.Conn
+	}
+	if b, ok := dst.(*BufferedConn); ok {
+		dst = b.Conn
+	}
+
+	_, srcIsTCP := src.(*net.TCPConn)
+	_, dstIsTCP := dst.(*net.TCPConn)
+	var n int64
+	var err error
+	if srcIsTCP && dstIsTCP {
+		n, err = io.Copy(dst, src)
+	} else {
+		n, err = io.CopyBuffer(writerOnly{dst}, readerOnly{src}, buf)
+	}
+	return written + n, err
+}
+
+// readerOnly and writerOnly hide every method but Read and Write, so that
+// io.CopyBuffer copies with its buffer instead of a ReadFrom or WriteTo.
+type (
+	readerOnly struct{ io.Reader }
+	writerOnly struct{ io.Writer }
+)
+
+// RelayOptions are the optional hooks of RelayBidirectional.
+type RelayOptions struct {
+	// OnFirstReply receives the bytes of the first read from the remote,
+	// before they are written to the client. It must not change or keep them.
+	OnFirstReply func(first []byte)
+
+	// HandleErrs turns the errors of the two directions into the error
+	// RelayBidirectional returns. When nil, it returns the first error.
+	HandleErrs func(errs []error) error
+}
+
+// RelayBidirectional copies between client and remote in both directions
+// until either side ends, then waits for both directions, logs a summary at
+// trace level and returns the error opts.HandleErrs makes of the directions'
+// errors, or the first one. Each direction closes both conns when it ends,
+// and so does the cancellation of ctx.
+func RelayBidirectional(
 	ctx context.Context,
 	logger zerolog.Logger,
-	resCh <-chan TransferResult,
-	startedAt time.Time,
-	route string,
-	errHandler func(errs []error) error, // [Modified] Accepts slice handler
+	client, remote net.Conn,
+	opts RelayOptions,
 ) error {
+	resCh := make(chan relayResult, 2)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	route := DescribeRoute(client, remote)
+
+	startedAt := time.Now()
+	go relayOneWay(ctx, resCh, client, remote, relayDirOut, nil)
+	go relayOneWay(ctx, resCh, remote, client, relayDirIn, opts.OnFirstReply)
+
 	var (
 		outBytes int64
 		inBytes  int64
-		errs     []error // Collect all errors
+		errs     []error
 	)
 
 	// Wait for exactly 2 results.
@@ -164,12 +215,10 @@ func WaitForTunnelCompletion(
 		res := <-resCh
 
 		switch res.Dir {
-		case TunnelDirOut:
+		case relayDirOut:
 			outBytes = res.Written
-		case TunnelDirIn:
+		case relayDirIn:
 			inBytes = res.Written
-		default:
-			return fmt.Errorf("invalid tunnel dir")
 		}
 
 		if res.Err != nil {
@@ -186,8 +235,8 @@ func WaitForTunnelCompletion(
 		Int("errs", len(errs)).
 		Msg("tunnel closed")
 
-	if errHandler != nil {
-		return errHandler(errs)
+	if opts.HandleErrs != nil {
+		return opts.HandleErrs(errs)
 	}
 
 	if len(errs) > 0 {
@@ -221,9 +270,6 @@ func CloseConns(closers ...io.Closer) {
 // SetTTL configures the TTL or Hop Limit depending on the IP version.
 // The isIPv4 parameter is determined by examining the remote address of the connection.
 func SetTTL(conn net.Conn, isIPv4 bool, ttl uint8) error {
-	if tc, ok := conn.(*TrackingConn); ok {
-		conn = tc.Conn
-	}
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
 		return errors.New("failed to cast to TCPConn")
@@ -270,9 +316,6 @@ func SetTTL(conn net.Conn, isIPv4 bool, ttl uint8) error {
 // MSS returns the maximum segment size the kernel uses for conn: the
 // largest TCP payload it puts in one packet.
 func MSS(conn net.Conn) (int, error) {
-	if tc, ok := conn.(*TrackingConn); ok {
-		conn = tc.Conn
-	}
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
 		return 0, errors.New("failed to cast to TCPConn")
@@ -318,6 +361,25 @@ func (b *BufferedConn) Read(p []byte) (int, error) {
 
 func (b *BufferedConn) Peek(n int) ([]byte, error) {
 	return b.r.Peek(n)
+}
+
+// writeBufferedTo writes the bytes that b's reader holds to w, and drops
+// those that w took from the reader. It does not read from the conn, so
+// after it returns without an error, the next byte of b is the next byte
+// of the conn it wraps.
+func (b *BufferedConn) writeBufferedTo(w io.Writer) (int, error) {
+	buffered := b.r.Buffered()
+	if buffered == 0 {
+		return 0, nil
+	}
+	// Peek of no more than Buffered bytes neither reads nor fails.
+	p, _ := b.r.Peek(buffered)
+	n, err := w.Write(p)
+	_, _ = b.r.Discard(n)
+	if err == nil && n < buffered {
+		err = io.ErrShortWrite
+	}
+	return n, err
 }
 
 // IdleTimeoutConn wraps a net.Conn to extend the deadline on every Read/Write call.
@@ -432,32 +494,4 @@ func (c *IdleTimeoutConn) setDeadline(t time.Time) {
 func (c *IdleTimeoutConn) IsExpired(now time.Time) bool {
 	expUnix := atomic.LoadInt64(&c.expiredAt)
 	return expUnix != 0 && now.UnixNano() > expUnix
-}
-
-type TrackingConn struct {
-	net.Conn
-}
-
-func (c *TrackingConn) Read(b []byte) (n int, err error) {
-	n, err = c.Conn.Read(b)
-	if n > 0 {
-		atomic.AddUint64(&rxBytes, uint64(n))
-	}
-	return
-}
-
-func (c *TrackingConn) Write(b []byte) (n int, err error) {
-	n, err = c.Conn.Write(b)
-	if n > 0 {
-		atomic.AddUint64(&txBytes, uint64(n))
-	}
-	return
-}
-
-func GetRxBytes() uint64 {
-	return atomic.LoadUint64(&rxBytes)
-}
-
-func GetTxBytes() uint64 {
-	return atomic.LoadUint64(&txBytes)
 }

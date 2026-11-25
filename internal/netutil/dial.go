@@ -145,7 +145,7 @@ func DialFastest(
 				)
 			}
 			if res.err == nil {
-				return &TrackingConn{Conn: res.conn}, nil
+				return res.conn, nil
 			}
 			if firstError == nil {
 				firstError = res.err

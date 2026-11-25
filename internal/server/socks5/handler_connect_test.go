@@ -693,3 +693,78 @@ func TestConnectHandler_Handle_PlainTCPReplyIsNotWatched(t *testing.T) {
 	<-done
 	assert.NotContains(t, logs.String(), "TLS alert")
 }
+
+// tunnelSizes enables trace logs for the test, and returns a function
+// that reads the bytes sent to the remote ("out") and received from it
+// ("in") from the "tunnel closed" entry in logs.
+func tunnelSizes(t *testing.T) func(logs string) (out, in float64) {
+	t.Helper()
+
+	prev := zerolog.GlobalLevel()
+	zerolog.SetGlobalLevel(zerolog.TraceLevel)
+	t.Cleanup(func() { zerolog.SetGlobalLevel(prev) })
+
+	return func(logs string) (float64, float64) {
+		t.Helper()
+		for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
+			var entry map[string]any
+			require.NoError(t, json.Unmarshal([]byte(line), &entry))
+			if entry["message"] == "tunnel closed" {
+				return entry["out"].(float64), entry["in"].(float64)
+			}
+		}
+		require.Fail(t, "no tunnel closed entry", logs)
+		return 0, 0
+	}
+}
+
+func TestConnectHandler_Handle_RelayDirections(t *testing.T) {
+	sizes := tunnelSizes(t)
+	request, response := []byte("ping"), []byte("pong!!!")
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_, _ = io.ReadFull(conn, make([]byte, len(request)))
+		_, _ = conn.Write(response)
+	}()
+
+	var logs bytes.Buffer
+	base := &config.RuntimeConfig{}
+	base.Conn.TCPTimeout = 2 * time.Second
+	h := NewConnectHandler(
+		zerolog.New(zerolog.SyncWriter(&logs)),
+		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+		server.NewTLSAlertWatcher(),
+		nil,
+		rule.NewRuleSet(),
+		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+		base,
+	)
+
+	upstream := ln.Addr().(*net.TCPAddr)
+	client, done := runConnect(t, h, &proto.SOCKS5Request{
+		Cmd:  proto.SOCKS5CmdConnect,
+		ATYP: proto.SOCKS5AddrTypeIPv4,
+		IP:   upstream.IP,
+		Port: upstream.Port,
+	})
+	require.Equal(t, byte(proto.SOCKS5RCodeSuccess), readReply(t, client))
+	_, err = client.Write(request)
+	require.NoError(t, err)
+
+	reply, err := io.ReadAll(client)
+	require.NoError(t, err)
+	assert.Equal(t, response, reply)
+	<-done
+
+	out, in := sizes(logs.String())
+	assert.Equal(t, float64(len(request)), out, "client to remote is out")
+	assert.Equal(t, float64(len(response)), in, "remote to client is in")
+}

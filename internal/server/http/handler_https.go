@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"slices"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -211,18 +210,7 @@ func (c *httpsConn) desync(ctx context.Context) (bool, error) {
 }
 
 func (c *httpsConn) tunnel(ctx context.Context) error {
-	resCh := make(chan netutil.TransferResult, 2)
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	inspectReply := c.h.alerts.Inspector(c.logger, c.rConn, c.sni, c.req.ExtractHost())
-
-	startedAt := time.Now()
-	go netutil.TunnelConns(ctx, resCh, c.conn, c.rConn, netutil.TunnelDirOut)
-	go netutil.TunnelConnsFirstRead(
-		ctx, resCh, c.rConn, c.conn, netutil.TunnelDirIn, inspectReply,
-	)
 
 	handleErrs := func(errs []error) error {
 		if len(errs) == 0 {
@@ -234,12 +222,14 @@ func (c *httpsConn) tunnel(ctx context.Context) error {
 		return errs[0]
 	}
 
-	return netutil.WaitForTunnelCompletion(
+	return netutil.RelayBidirectional(
 		ctx,
 		c.logger,
-		resCh,
-		startedAt,
-		netutil.DescribeRoute(c.conn, c.rConn),
-		handleErrs,
+		c.conn,
+		c.rConn,
+		netutil.RelayOptions{
+			OnFirstReply: inspectReply,
+			HandleErrs:   handleErrs,
+		},
 	)
 }

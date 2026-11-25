@@ -33,7 +33,7 @@ func NewTLSAlertWatcher() *TLSAlertWatcher {
 }
 
 // Inspector returns a function that checks the first bytes read from rConn
-// for a TLS alert, for netutil.TunnelConnsFirstRead. It only logs. sni is
+// for a TLS alert, for netutil.RelayOptions.OnFirstReply. It only logs. sni is
 // the server name of the Client Hello, and host the name the client asked
 // for; either may be empty. It returns nil when rConn has no TCP address,
 // which makes the tunnel copy without inspecting.

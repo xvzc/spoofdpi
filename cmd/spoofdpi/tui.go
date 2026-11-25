@@ -12,7 +12,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
 // UI styling
@@ -22,7 +21,7 @@ var (
 		// Bold(false).
 		MarginBottom(0)
 
-	speedStyle = lipgloss.NewStyle().
+	connsStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("255")).
 			Bold(true).
 			MarginLeft(26)
@@ -41,6 +40,9 @@ var logo string
 type (
 	tickMsg time.Time
 	logMsg  string
+	// activeConnsMsg gives the model the count of the connections the
+	// server is handling.
+	activeConnsMsg func() int64
 )
 
 type model struct {
@@ -48,12 +50,8 @@ type model struct {
 	spinner      spinner.Model
 	logs         []string
 	filteredLogs []string
-	speed        string
-	lastTxBytes  uint64
-	lastRxBytes  uint64
-	lastTickTime time.Time
-	avgUpSpeed   float64
-	avgDownSpeed float64
+	conns        string
+	activeConns  func() int64
 	ready        bool
 	filterInput  string
 	activeFilter string
@@ -62,8 +60,8 @@ type model struct {
 	readyChan chan struct{}
 }
 
-func formatSpeed(up, down float64) string {
-	return fmt.Sprintf("↑ %8.1f KB/s ┆ ↓ %8.1f KB/s", up, down)
+func formatConns(n int64) string {
+	return fmt.Sprintf("active connections: %d", n)
 }
 
 func filterLogs(logs []string, filter string) []string {
@@ -89,11 +87,10 @@ func initialModel(readyChan chan struct{}) model {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
 
 	return model{
-		spinner:      s,
-		logs:         []string{},
-		speed:        formatSpeed(0, 0),
-		lastTickTime: time.Now(),
-		readyChan:    readyChan,
+		spinner:   s,
+		logs:      []string{},
+		conns:     formatConns(0),
+		readyChan: readyChan,
 	}
 }
 
@@ -191,28 +188,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
 
+	case activeConnsMsg:
+		m.activeConns = msg
+		m.conns = formatConns(m.activeConns())
+
 	case tickMsg:
-		now := time.Time(msg)
-		elapsed := now.Sub(m.lastTickTime).Seconds()
-		if elapsed <= 0.0 {
-			elapsed = 1.0
+		if m.activeConns != nil {
+			m.conns = formatConns(m.activeConns())
 		}
-
-		currentRx := netutil.GetRxBytes()
-		currentTx := netutil.GetTxBytes()
-
-		rawUpSpeed := (float64(currentTx-m.lastTxBytes) / 1024.0) / elapsed
-		rawDownSpeed := (float64(currentRx-m.lastRxBytes) / 1024.0) / elapsed
-
-		m.lastRxBytes = currentRx
-		m.lastTxBytes = currentTx
-		m.lastTickTime = now
-
-		alpha := 0.3
-		m.avgUpSpeed = (rawUpSpeed * alpha) + (m.avgUpSpeed * (1 - alpha))
-		m.avgDownSpeed = (rawDownSpeed * alpha) + (m.avgDownSpeed * (1 - alpha))
-
-		m.speed = formatSpeed(m.avgUpSpeed, m.avgDownSpeed)
 		cmds = append(cmds, tickCmd())
 
 	case logMsg:
@@ -264,8 +247,8 @@ func (m *model) updateViewport() {
 func (m model) headerView() string {
 	logoView := logoStyle.Render(strings.TrimPrefix(logo, "\n"))
 
-	speedText := fmt.Sprintf("%s %s", m.speed, m.spinner.View())
-	speedView := speedStyle.Render(speedText)
+	connsText := fmt.Sprintf("%s %s", m.conns, m.spinner.View())
+	connsView := connsStyle.Render(connsText)
 
 	width := m.viewport.Width
 	if width == 0 {
@@ -275,7 +258,7 @@ func (m model) headerView() string {
 		Foreground(lipgloss.Color("240")).
 		Render(strings.Repeat("─", width))
 
-	return lipgloss.JoinVertical(lipgloss.Left, logoView, speedView, divider)
+	return lipgloss.JoinVertical(lipgloss.Left, logoView, connsView, divider)
 }
 
 func (m model) footerView() string {
@@ -344,6 +327,14 @@ func (TUIWriter) Write(b []byte) (n int, err error) {
 		go p.Send(logMsg(strings.TrimSpace(string(b))))
 	}
 	return len(b), nil
+}
+
+// showActiveConns makes the TUI show the count that activeConns returns,
+// updated every second. It does nothing without the TUI.
+func showActiveConns(activeConns func() int64) {
+	if p != nil {
+		p.Send(activeConnsMsg(activeConns))
+	}
 }
 
 func startTUI(cancel context.CancelFunc) error {

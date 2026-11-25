@@ -395,3 +395,23 @@ func TestBindHandler_Handle_NoGoroutineOutlivesHandle(t *testing.T) {
 		"a BIND goroutine outlived Handle",
 	)
 }
+
+func TestBindHandler_Handle_RelayDirections(t *testing.T) {
+	sizes := tunnelSizes(t)
+	s := startBind(t, &proto.SOCKS5Request{})
+	remote, code, _ := s.connectIncoming(t)
+	require.Equal(t, byte(proto.SOCKS5RCodeSuccess), code)
+
+	_, err := s.client.Write([]byte("ping"))
+	require.NoError(t, err)
+	assert.Equal(t, "ping", readString(t, remote, "ping"))
+	_, err = remote.Write([]byte("pong!!"))
+	require.NoError(t, err)
+	assert.Equal(t, "pong!!", readString(t, s.client, "pong!!"))
+	_ = remote.Close()
+	require.NoError(t, s.wait(t))
+
+	out, in := sizes(s.logs.String())
+	assert.Equal(t, float64(len("ping")), out, "client to remote is out")
+	assert.Equal(t, float64(len("pong!!")), in, "remote to client is in")
+}

@@ -109,6 +109,10 @@ func (p *SOCKS5Proxy) Addr() string {
 	return p.listenAddr.String()
 }
 
+func (p *SOCKS5Proxy) ActiveConns() int64 {
+	return p.conns.Active()
+}
+
 func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 	logger := logging.WithLocalScope(ctx, p.logger, "socks5")
 

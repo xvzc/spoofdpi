@@ -3,7 +3,6 @@ package tun
 import (
 	"context"
 	"net"
-	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
@@ -85,22 +84,12 @@ func (h *UDPHandler) Handle(
 		Str("local", rawConn.LocalAddr().String()).
 		Msgf("new remote conn (%s -> %s)", lConn.RemoteAddr(), rConnWrapped.RemoteAddr())
 
-	resCh := make(chan netutil.TransferResult, 2)
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	startedAt := time.Now()
-	go netutil.TunnelConns(ctx, resCh, lConnWrapped, rConnWrapped, netutil.TunnelDirOut)
-	go netutil.TunnelConns(ctx, resCh, rConnWrapped, lConnWrapped, netutil.TunnelDirIn)
-
-	err = netutil.WaitForTunnelCompletion(
+	err = netutil.RelayBidirectional(
 		ctx,
 		logger,
-		resCh,
-		startedAt,
-		netutil.DescribeRoute(lConnWrapped, rConnWrapped),
-		nil,
+		lConnWrapped,
+		rConnWrapped,
+		netutil.RelayOptions{},
 	)
 	if err != nil {
 		logger.Error().Err(err).Msg("error handling request")

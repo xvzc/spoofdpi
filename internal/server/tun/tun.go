@@ -334,6 +334,10 @@ func (s *TunServer) Addr() string {
 	return "tun"
 }
 
+func (s *TunServer) ActiveConns() int64 {
+	return s.conns.Active()
+}
+
 func (s *TunServer) tunToStack(
 	appctx context.Context,
 	logger zerolog.Logger,

@@ -76,7 +76,7 @@ func (f *fakeDialer) requireLosersClosed(
 	f.calls.Wait()
 	var won *fakeConn
 	if winner != nil {
-		won = winner.(*TrackingConn).Conn.(*fakeConn)
+		won = winner.(*fakeConn)
 	}
 
 	require.Eventually(t, func() bool {
@@ -162,7 +162,7 @@ func TestDialFastest_SuccessAfterCancel(t *testing.T) {
 		DialOptions{AttemptDelay: time.Nanosecond},
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "192.0.2.1:443", conn.(*TrackingConn).Conn.(*fakeConn).addr)
+	assert.Equal(t, "192.0.2.1:443", conn.(*fakeConn).addr)
 	f.requireLosersClosed(t, conn, before)
 	assert.Len(t, f.conns, 2)
 }
@@ -252,7 +252,7 @@ func TestDialFastest_OneAddress(t *testing.T) {
 		DialOptions{},
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "[2001:db8::1]:443", conn.(*TrackingConn).Conn.(*fakeConn).addr)
+	assert.Equal(t, "[2001:db8::1]:443", conn.(*fakeConn).addr)
 	f.requireLosersClosed(t, conn, before)
 }
 
@@ -342,7 +342,7 @@ func TestDialFastest_FailureStartsNextAttempt(t *testing.T) {
 		DialOptions{AttemptDelay: time.Hour},
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "192.0.2.2:443", conn.(*TrackingConn).Conn.(*fakeConn).addr)
+	assert.Equal(t, "192.0.2.2:443", conn.(*fakeConn).addr)
 	assert.Equal(t, []string{
 		"[2001:db8::1]:443",
 		"192.0.2.1:443",
@@ -400,7 +400,7 @@ func TestDialFastest_PendingAttemptHoldsBackNext(t *testing.T) {
 		DialOptions{AttemptDelay: time.Hour},
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "[2001:db8::1]:443", conn.(*TrackingConn).Conn.(*fakeConn).addr)
+	assert.Equal(t, "[2001:db8::1]:443", conn.(*fakeConn).addr)
 	assert.Equal(t, []string{"[2001:db8::1]:443"}, order.get())
 	f.requireLosersClosed(t, conn, before)
 }
@@ -438,7 +438,7 @@ func TestDialFastest_AttemptDelay(t *testing.T) {
 		DialOptions{AttemptDelay: delay},
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "192.0.2.1:443", conn.(*TrackingConn).Conn.(*fakeConn).addr)
+	assert.Equal(t, "192.0.2.1:443", conn.(*fakeConn).addr)
 	f.requireLosersClosed(t, conn, before)
 
 	require.NotNil(t, secondStart.Load())

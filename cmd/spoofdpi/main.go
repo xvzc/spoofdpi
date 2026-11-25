@@ -160,6 +160,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
 	}
+	showActiveConns(srv.ActiveConns)
 
 	logger.Info().Msg("tls info")
 	logger.Info().

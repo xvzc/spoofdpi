@@ -166,20 +166,11 @@ func (c *bindConn) accept(ctx context.Context) error {
 }
 
 func (c *bindConn) tunnel(ctx context.Context) error {
-	resCh := make(chan netutil.TransferResult, 2)
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	startedAt := time.Now()
-	go netutil.TunnelConns(ctx, resCh, c.remote, c.conn, netutil.TunnelDirOut)
-	go netutil.TunnelConns(ctx, resCh, c.conn, c.remote, netutil.TunnelDirIn)
-
-	return netutil.WaitForTunnelCompletion(
+	return netutil.RelayBidirectional(
 		ctx,
 		c.logger,
-		resCh,
-		startedAt,
-		netutil.DescribeRoute(c.conn, c.remote),
-		nil,
+		c.conn,
+		c.remote,
+		netutil.RelayOptions{},
 	)
 }

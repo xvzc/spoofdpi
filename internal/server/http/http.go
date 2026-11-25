@@ -103,6 +103,10 @@ func (p *HTTPProxy) Addr() string {
 	return p.listenAddr.String()
 }
 
+func (p *HTTPProxy) ActiveConns() int64 {
+	return p.conns.Active()
+}
+
 func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 	logger := logging.WithLocalScope(ctx, p.logger, "conn_init")
 
