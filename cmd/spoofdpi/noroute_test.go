@@ -9,10 +9,10 @@ import (
 )
 
 func TestNoIPv4RouteError(t *testing.T) {
-	cause := fmt.Errorf("%w: discover gateway: no gateway found", route.ErrNoIPv4Route)
+	cause := fmt.Errorf("%w: discover gateway: no gateway found", route.ErrNoIPv4)
 
 	err := noIPv4RouteError(cause, true)
-	assert.ErrorIs(t, err, route.ErrNoIPv4Route)
+	assert.ErrorIs(t, err, route.ErrNoIPv4)
 	assert.ErrorContains(t, err, "need an IPv4 default route")
 	assert.ErrorContains(t, err, "(IPv6 route: present)")
 	assert.ErrorContains(t, err, "set --gateway")

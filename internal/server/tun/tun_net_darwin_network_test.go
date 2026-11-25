@@ -37,7 +37,7 @@ var testNet1 = netip.MustParseAddr("192.0.2.1")
 // route.
 func TestEgressControlLive_RawSocket_RequireRoot(t *testing.T) {
 	testutil.RequireRoot(t)
-	rt, err := route.DiscoverRoute(nil)
+	rt, err := route.ResolveGateway(nil)
 	if err != nil {
 		t.Skipf("no IPv4 default route: %v", err)
 	}

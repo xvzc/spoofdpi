@@ -10,10 +10,10 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
-func TestDiscoverEgress_MatchesRouteTo(t *testing.T) {
+func TestDiscoverEgress_MatchesLookup(t *testing.T) {
 	for _, fam := range []netutil.Family{netutil.FamilyV4, netutil.FamilyV6} {
 		t.Run(fam.String(), func(t *testing.T) {
-			path, err := RouteTo(probeDst(fam))
+			path, err := Lookup(probeDst(fam))
 			if err != nil {
 				t.Skipf("no route to the probe destination: %v", err)
 			}

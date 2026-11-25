@@ -310,13 +310,13 @@ func TestKernelRouteFromNetlink_Errors(t *testing.T) {
 			reply(nlRoute(linuxAFInet, 32, 254, typ, oif)),
 			dst4,
 		)
-		assert.ErrorIs(t, err, ErrNoIPv4Route, "type %d", typ)
+		assert.ErrorIs(t, err, ErrNoIPv4, "type %d", typ)
 	}
 	_, err := kernelRouteFromNetlink(
 		reply(nlRoute(linuxAFInet6, 128, 254, rtnUnreachable, oif)),
 		netip.MustParseAddr("2001:db8::1"),
 	)
-	assert.ErrorIs(t, err, ErrNoIPv6Route)
+	assert.ErrorIs(t, err, ErrNoIPv6)
 
 	tcs := []struct {
 		name    string
@@ -495,13 +495,13 @@ func TestPrefixFromNetlink_Errors(t *testing.T) {
 	// Types 2 and 3 are RTN_LOCAL and RTN_BROADCAST.
 	for _, typ := range []uint8{2, 3, rtnBlackhole, rtnUnreachable, rtnProhibit, rtnThrow} {
 		_, err := prefixFromNetlink(reply(nlRoute(linuxAFInet, 8, 254, typ)), dst4)
-		assert.ErrorIs(t, err, ErrNoIPv4Route, "type %d", typ)
+		assert.ErrorIs(t, err, ErrNoIPv4, "type %d", typ)
 	}
 	_, err := prefixFromNetlink(
 		reply(nlRoute(linuxAFInet6, 64, 254, rtnUnreachable)),
 		netip.MustParseAddr("2001:db8::1"),
 	)
-	assert.ErrorIs(t, err, ErrNoIPv6Route)
+	assert.ErrorIs(t, err, ErrNoIPv6)
 
 	tcs := []struct {
 		name    string

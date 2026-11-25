@@ -394,7 +394,7 @@ func TestDiscoverEgresses_IPv4Matrix(t *testing.T) {
 func TestDiscoverEgresses_IPv4Errors(t *testing.T) {
 	noRoute := fmt.Errorf(
 		"discover egress: route lookup 192.0.2.1: %w",
-		route.ErrNoIPv4Route,
+		route.ErrNoIPv4,
 	)
 	tcs := []struct {
 		name       string
@@ -446,7 +446,7 @@ func TestDiscoverEgresses_IPv4Errors(t *testing.T) {
 
 			require.Error(t, err)
 			assert.Equal(t, tc.wantErr, err.Error())
-			assert.Equal(t, tc.wantNoV4, errors.Is(err, route.ErrNoIPv4Route))
+			assert.Equal(t, tc.wantNoV4, errors.Is(err, route.ErrNoIPv4))
 		})
 	}
 }
@@ -509,7 +509,7 @@ func TestDiscoverEgresses_EgressLine(t *testing.T) {
 func TestDiscoverEgresses_IPv6(t *testing.T) {
 	noRoute6 := fmt.Errorf(
 		"discover egress: route lookup 2001:db8::1: %w",
-		route.ErrNoIPv6Route,
+		route.ErrNoIPv6,
 	)
 	eafnosupport := fmt.Errorf(
 		"discover egress: route lookup 2001:db8::1: %w",
@@ -683,7 +683,7 @@ func TestDiscoverEgresses_RuleEnablesIPv6(t *testing.T) {
 		{Name: "off", IPv6: &off, Config: cfg.RuntimeConfig},
 	}
 	require.True(t, cfg.IPv6Enabled())
-	finder := fakeRouteFinder{err6: route.ErrNoIPv6Route}
+	finder := fakeRouteFinder{err6: route.ErrNoIPv6}
 
 	got, err := discoverEgresses(zerolog.Nop(), cfg, finder.finder())
 

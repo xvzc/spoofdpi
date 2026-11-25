@@ -98,7 +98,7 @@ func TestSenderLive_LocalConnection_RequireRoot(t *testing.T) {
 func TestSenderLive_RoutedInterface_RequireRoot(t *testing.T) {
 	testutil.RequireRoot(t)
 	dstAddr := netip.MustParseAddr("192.0.2.1")
-	path, err := route.RouteTo(dstAddr)
+	path, err := route.Lookup(dstAddr)
 	if err != nil {
 		t.Skipf("no route to %v: %v", dstAddr, err)
 	}

@@ -115,7 +115,7 @@ func discoverEgressV4(
 	}
 
 	egress, err := f.egress(netutil.FamilyV4, gateway, "")
-	if errors.Is(err, route.ErrNoIPv4Route) {
+	if errors.Is(err, route.ErrNoIPv4) {
 		return nil, nil, noIPv4RouteError(err, f.hasIPv6Egress())
 	}
 	if errors.Is(err, route.ErrBadGateway) {
@@ -250,7 +250,7 @@ func discoverEgressV6(
 // interface of start, or through the link of its kernel route (which an
 // explicit gateway on another interface leaves different), is not
 // classified again. routeTo and classify find and classify the
-// route to a destination, as route.RouteTo and route.ClassifyPath do.
+// route to a destination, as route.Lookup and route.ClassifyPath do.
 //
 // A route that cannot be found or classified allows fake packets, with a
 // debug log.

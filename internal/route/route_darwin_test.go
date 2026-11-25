@@ -83,10 +83,10 @@ func TestKernelRouteFromReply_Scoped(t *testing.T) {
 	}, got)
 }
 
-// TestRouteTo_Loopback asks the real routing sockets of both families,
+// TestLookup_Loopback asks the real routing sockets of both families,
 // which need no privileges, for the routes to 127.0.0.1 and ::1.
-func TestRouteTo_Loopback(t *testing.T) {
-	p, err := RouteTo(netip.MustParseAddr("127.0.0.1"))
+func TestLookup_Loopback(t *testing.T) {
+	p, err := Lookup(netip.MustParseAddr("127.0.0.1"))
 	require.NoError(t, err)
 
 	assert.Equal(t, netutil.FamilyV4, p.Family)
@@ -94,7 +94,7 @@ func TestRouteTo_Loopback(t *testing.T) {
 	assert.False(t, p.Gateway.IsValid())
 	assert.Equal(t, netip.MustParseAddr("127.0.0.1"), p.Src)
 
-	p, err = RouteTo(netip.IPv6Loopback())
+	p, err = Lookup(netip.IPv6Loopback())
 	require.NoError(t, err)
 	assert.Equal(t, netutil.FamilyV6, p.Family)
 	assert.NotZero(t, p.Iface.Flags&net.FlagLoopback, "iface %s", p.Iface.Name)

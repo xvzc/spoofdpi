@@ -16,6 +16,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// The rtm names in this file follow the routing socket API, route(4): a
+// request or reply is a routing message (struct rt_msghdr) whose type is
+// an RTM_* constant. rtmGet sends RTM_GET, which asks the kernel for its
+// route to an address, as `route -n get` does.
+
 // errRTMNotFound is returned by rtmGet when the kernel has no matching
 // route.
 var errRTMNotFound = errors.New("not in table")
@@ -103,7 +108,7 @@ func primaryDefaultIndex() (int, error) {
 	}
 	m, err := rtmGet(unix.AF_INET, unix.RTF_UP, addrs)
 	if errors.Is(err, errRTMNotFound) {
-		return 0, ErrNoIPv4Route
+		return 0, ErrNoIPv4
 	}
 	if err != nil {
 		return 0, err

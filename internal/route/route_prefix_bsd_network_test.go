@@ -98,7 +98,7 @@ func TestRoutePrefixTo_MatchesRouteCommand(t *testing.T) {
 			want, ok := routeGetPrefix(t, dst)
 			got, err := routePrefixTo(dst)
 			if !ok {
-				require.ErrorIs(t, err, ErrNoIPv4Route)
+				require.ErrorIs(t, err, ErrNoIPv4)
 				t.Skipf("route reports no route to %s", dst)
 			}
 			require.NoError(t, err)

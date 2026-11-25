@@ -9,12 +9,12 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
-// ErrNoIPv4Route is returned, wrapped, by DiscoverRoute when the OS has no
-// IPv4 default route, for example on an IPv6-only network, and by RouteTo
+// ErrNoIPv4 is returned, wrapped, by ResolveGateway when the OS has no
+// IPv4 default route, for example on an IPv6-only network, and by Lookup
 // when the kernel has no route to an IPv4 destination.
-var ErrNoIPv4Route = errors.New("no IPv4 default route")
+var ErrNoIPv4 = errors.New("no IPv4 default route")
 
-// ErrNoGateway is returned, wrapped, by DiscoverRoute when the route to the
+// ErrNoGateway is returned, wrapped, by ResolveGateway when the route to the
 // internet has no gateway, such as a point-to-point or VPN link.
 var ErrNoGateway = errors.New("route has no gateway")
 
@@ -26,7 +26,8 @@ var addrsOf = func(iface *net.Interface) ([]net.Addr, error) {
 // interfaceByName resolves the interface a zone names. Tests replace it.
 var interfaceByName = net.InterfaceByName
 
-// Route represents the default network route of one address family.
+// Route is a route of one address family: the interface traffic leaves
+// through and its gateway, which is nil for an interface route.
 type Route struct {
 	Family netutil.Family
 	Iface  net.Interface
@@ -40,13 +41,6 @@ type Route struct {
 	Zone string
 }
 
-// Routes holds the default route of each address family. Either is nil
-// when it was not discovered.
-type Routes struct {
-	V4 *Route
-	V6 *Route
-}
-
 // GatewayString returns the gateway address with its zone, if any, such
 // as "192.168.1.1" or "fe80::1%en0".
 func (r *Route) GatewayString() string {
@@ -56,10 +50,10 @@ func (r *Route) GatewayString() string {
 	return r.Gateway.String() + "%" + r.Zone
 }
 
-// DiscoverInterface discovers the interface the kernel routes the internet
+// InternetInterface discovers the interface the kernel routes the internet
 // through and its local IPv4 address. It does not require a gateway.
-func DiscoverInterface() (*net.Interface, net.IP, error) {
-	path, err := RouteTo(probeDst(netutil.FamilyV4))
+func InternetInterface() (*net.Interface, net.IP, error) {
+	path, err := Lookup(probeDst(netutil.FamilyV4))
 	if err != nil {
 		return nil, nil, fmt.Errorf("discover interface: %w", err)
 	}
@@ -72,13 +66,13 @@ func DiscoverInterface() (*net.Interface, net.IP, error) {
 	return &path.Iface, localIP, nil
 }
 
-// DiscoverRoute discovers the default network route.
+// ResolveGateway resolves the IPv4 route through a gateway.
 // If gateway is nil, the gateway IP and interface are resolved from the
 // kernel's route to the internet, and ErrNoGateway is returned, wrapped,
 // when that route has no gateway. Otherwise the given gateway is used as
 // is, and the interface is the one whose subnet contains it, so the two
 // always match. An explicit gateway must be an IPv4 address.
-func DiscoverRoute(gateway net.IP) (*Route, error) {
+func ResolveGateway(gateway net.IP) (*Route, error) {
 	if gateway != nil {
 		if gateway.To4() == nil {
 			return nil, fmt.Errorf("gateway %s is not an IPv4 address", gateway)
@@ -86,7 +80,7 @@ func DiscoverRoute(gateway net.IP) (*Route, error) {
 		return routeForGateway(gateway)
 	}
 
-	path, err := RouteTo(probeDst(netutil.FamilyV4))
+	path, err := Lookup(probeDst(netutil.FamilyV4))
 	if err != nil {
 		return nil, fmt.Errorf("discover route: %w", err)
 	}
@@ -109,7 +103,7 @@ func DiscoverRoute(gateway net.IP) (*Route, error) {
 	return route, nil
 }
 
-// DiscoverRoute6 discovers the IPv6 default network route.
+// ResolveGateway6 resolves the IPv6 route through a gateway.
 // If gateway is nil, the route is the kernel's route to the internet; its
 // Gateway is nil when that route has no gateway, and its LocalIP is the
 // route's source address, if the kernel reported one. Otherwise the given
@@ -117,9 +111,9 @@ func DiscoverRoute(gateway net.IP) (*Route, error) {
 // index, if zone is not empty. Without a zone, a link-local gateway is on
 // the interface of the kernel's route to the internet, and any other
 // gateway on the interface whose subnet contains it.
-func DiscoverRoute6(gateway net.IP, zone string) (*Route, error) {
+func ResolveGateway6(gateway net.IP, zone string) (*Route, error) {
 	if gateway == nil {
-		path, err := RouteTo(probeDst(netutil.FamilyV6))
+		path, err := Lookup(probeDst(netutil.FamilyV6))
 		if err != nil {
 			return nil, fmt.Errorf("discover route: %w", err)
 		}
@@ -145,7 +139,7 @@ func DiscoverRoute6(gateway net.IP, zone string) (*Route, error) {
 	}
 
 	if netutil.NeedsZone(gateway) {
-		path, err := RouteTo(probeDst(netutil.FamilyV6))
+		path, err := Lookup(probeDst(netutil.FamilyV6))
 		if err != nil {
 			return nil, fmt.Errorf(
 				"link-local gateway %s: %w; add a %%<interface> zone to it",

@@ -97,7 +97,7 @@ func TestPrefixFromReply_Errors(t *testing.T) {
 			inet4("10.0.0.0"), inet4("127.0.0.1"), inet4("255.0.0.0"), en0, nil,
 		)...)
 		_, err := prefixFromReply(parseRTMFixture(t, m)[0].(*xroute.RouteMessage), dst)
-		assert.ErrorIs(t, err, ErrNoIPv4Route, "flag %#x", flag)
+		assert.ErrorIs(t, err, ErrNoIPv4, "flag %#x", flag)
 		var reject *rejectRouteError
 		require.ErrorAs(t, err, &reject, "flag %#x", flag)
 		assert.Equal(t, netip.MustParsePrefix("10.0.0.0/8"), reject.prefix)
@@ -111,7 +111,7 @@ func TestPrefixFromReply_Errors(t *testing.T) {
 		inet4("10.0.0.0"), inet4("127.0.0.1"), nil, en0, nil,
 	)...)
 	_, err := prefixFromReply(parseRTMFixture(t, m)[0].(*xroute.RouteMessage), dst)
-	assert.ErrorIs(t, err, ErrNoIPv4Route)
+	assert.ErrorIs(t, err, ErrNoIPv4)
 	var reject *rejectRouteError
 	assert.NotErrorAs(t, err, &reject)
 

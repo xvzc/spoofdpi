@@ -58,7 +58,7 @@ func TestEgressControl_Darwin(t *testing.T) {
 // pinned exactly as EgressControl pins the raw sockets of fake packets. A
 // UDP connect sends nothing.
 func TestBindDialer_UsesEgressControl(t *testing.T) {
-	rt, err := route.DiscoverRoute(nil)
+	rt, err := route.ResolveGateway(nil)
 	if err != nil {
 		t.Skipf("no IPv4 default route: %v", err)
 	}

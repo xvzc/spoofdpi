@@ -49,23 +49,23 @@ func ipRouteGet(t *testing.T, dst netip.Addr) (res ipRouteGetResult, ok bool) {
 	return res, res.dev != ""
 }
 
-func TestRouteTo_MatchesIPRouteGet(t *testing.T) {
+func TestLookup_MatchesIPRouteGet(t *testing.T) {
 	for _, fam := range []netutil.Family{netutil.FamilyV4, netutil.FamilyV6} {
 		t.Run(fam.String(), func(t *testing.T) {
 			dst := probeDst(fam)
 			want, ok := ipRouteGet(t, dst)
-			got, err := RouteTo(dst)
+			got, err := Lookup(dst)
 			if !ok {
-				noRoute := ErrNoIPv4Route
+				noRoute := ErrNoIPv4
 				if fam == netutil.FamilyV6 {
-					noRoute = ErrNoIPv6Route
+					noRoute = ErrNoIPv6
 				}
 				require.ErrorIs(t, err, noRoute)
 				t.Skipf("ip reports no route to %s", dst)
 			}
 			require.NoError(t, err)
 			t.Logf(
-				"ip: dev=%s via=%s src=%s; RouteTo: iface=%s gateway=%s src=%s table=%d",
+				"ip: dev=%s via=%s src=%s; Lookup: iface=%s gateway=%s src=%s table=%d",
 				want.dev, want.gateway, want.src,
 				got.Iface.Name, got.Gateway, got.Src, got.Table,
 			)

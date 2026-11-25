@@ -69,7 +69,7 @@ func openCapture(kind captureKind, servers []netip.Addr) (packetSource, error) {
 			return capture.TCPHostFilter(linkType, hosts)
 		}
 	}
-	iface, _, err := route.DiscoverInterface()
+	iface, _, err := route.InternetInterface()
 	if err != nil {
 		return nil, err
 	}

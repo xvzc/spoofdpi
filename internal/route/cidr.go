@@ -31,7 +31,7 @@ const tunSubnetBits = 30
 const tunMaxNoRouteRun = 256
 
 // osRoutePrefix asks the kernel for the prefix of the route it matches for
-// dst. It returns ErrNoIPv4Route or ErrNoIPv6Route, wrapped, when there is
+// dst. It returns ErrNoIPv4 or ErrNoIPv6, wrapped, when there is
 // none or the route rejects or drops dst; a *rejectRouteError carries that
 // route's prefix when the kernel reports it. Tests replace it.
 var osRoutePrefix = routePrefixTo
@@ -64,7 +64,7 @@ func findSafeCIDR(
 ) (string, error) {
 	probe, err := prefixOf(probeDstV4)
 	switch {
-	case errors.Is(err, ErrNoIPv4Route):
+	case errors.Is(err, ErrNoIPv4):
 		prefixOf = nil
 	case err != nil:
 		return "", err
@@ -157,7 +157,7 @@ func tunSubnetConflict(
 				reason: fmt.Sprintf("%s: %v", subnet, err),
 			}, nil
 		}
-		if errors.Is(err, ErrNoIPv4Route) {
+		if errors.Is(err, ErrNoIPv4) {
 			return tunConflict{
 				taken:   subnet,
 				reason:  fmt.Sprintf("%s: %v", subnet, err),

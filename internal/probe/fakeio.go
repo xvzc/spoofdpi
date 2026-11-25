@@ -73,7 +73,7 @@ func (f desyncFakes) desyncer(ttl uint8) (helloSender, *fakeLog) {
 // numbers of their connections. Like spoofdpi's, the stack stays open until the process
 // exits.
 func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error) {
-	iface, _, err := route.DiscoverInterface()
+	iface, _, err := route.InternetInterface()
 	if err != nil {
 		return nil, err
 	}

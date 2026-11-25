@@ -20,7 +20,7 @@ var (
 // is the Egress's Route. A link that cannot be read is LinkUnknown, and
 // default routes that cannot be read are left out of the classification
 // and noted in the reason. A route through a loopback link is an error
-// that wraps ErrNoIPv4Route or ErrNoIPv6Route: it never leaves the host.
+// that wraps ErrNoIPv4 or ErrNoIPv6: it never leaves the host.
 func ClassifyPath(p *Path) (*Egress, error) {
 	link, err := linkInfoOf(p.Iface.Index)
 	if err != nil {
@@ -62,7 +62,7 @@ var ErrBadGateway = errors.New("unusable gateway")
 // DiscoverEgress discovers and classifies the egress of fam.
 //
 // Without a gateway, the egress is the kernel's route to the internet.
-// With one, as DiscoverRoute or DiscoverRoute6 take it, the Route is the
+// With one, as ResolveGateway or ResolveGateway6 take it, the Route is the
 // one through that gateway, while the link, class and reason are those of
 // the kernel's route to the internet: a full-tunnel VPN carries the
 // traffic whatever gateway is given. When the kernel has no route of fam,
@@ -70,7 +70,7 @@ var ErrBadGateway = errors.New("unusable gateway")
 // ErrBadGateway.
 func DiscoverEgress(fam netutil.Family, gateway net.IP, zone string) (*Egress, error) {
 	if gateway == nil {
-		path, err := RouteTo(probeDst(fam))
+		path, err := Lookup(probeDst(fam))
 		if err != nil {
 			return nil, fmt.Errorf("discover egress: %w", err)
 		}
@@ -80,15 +80,15 @@ func DiscoverEgress(fam netutil.Family, gateway net.IP, zone string) (*Egress, e
 	var route *Route
 	var err error
 	if fam == netutil.FamilyV6 {
-		route, err = DiscoverRoute6(gateway, zone)
+		route, err = ResolveGateway6(gateway, zone)
 	} else {
-		route, err = DiscoverRoute(gateway)
+		route, err = ResolveGateway(gateway)
 	}
 	if err != nil {
 		return nil, &badGatewayError{err: err}
 	}
 
-	path, err := RouteTo(probeDst(fam))
+	path, err := Lookup(probeDst(fam))
 	switch {
 	case errors.Is(err, noRouteError(fam)):
 		path = pathOfRoute(route)
@@ -117,9 +117,9 @@ func (e *badGatewayError) Is(target error) bool { return target == ErrBadGateway
 // noRouteError returns the sentinel for a missing route of fam.
 func noRouteError(fam netutil.Family) error {
 	if fam == netutil.FamilyV6 {
-		return ErrNoIPv6Route
+		return ErrNoIPv6
 	}
-	return ErrNoIPv4Route
+	return ErrNoIPv4
 }
 
 // pathOfRoute returns the path to the internet through route, for a

@@ -9,12 +9,12 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
-// ErrNoIPv6Route is returned, wrapped, by RouteTo when the kernel has no
+// ErrNoIPv6 is returned, wrapped, by Lookup when the kernel has no
 // route to an IPv6 destination.
-var ErrNoIPv6Route = errors.New("no IPv6 route")
+var ErrNoIPv6 = errors.New("no IPv6 route")
 
 // Probe destinations are documentation addresses (RFC 5737, RFC 3849):
-// they are routed like any internet address but never answer. RouteTo
+// they are routed like any internet address but never answer. Lookup
 // sends no packet to them.
 var (
 	probeDstV4 = netip.MustParseAddr("192.0.2.1")
@@ -75,24 +75,25 @@ type kernelRoute struct {
 }
 
 // osRouteTo asks the kernel for its route to dst, which is valid, unzoned
-// and not an IPv4-mapped IPv6 address. It returns ErrNoIPv4Route or
-// ErrNoIPv6Route, wrapped, when there is none. Tests replace it.
+// and not an IPv4-mapped IPv6 address. It returns ErrNoIPv4 or
+// ErrNoIPv6, wrapped, when there is none. It backs Lookup. Tests replace
+// it.
 var osRouteTo = routeTo
 
 // interfaceByIndex resolves the output interface of a route. Tests
 // replace it.
 var interfaceByIndex = net.InterfaceByIndex
 
-// RouteTo returns the kernel's route to dst, as the kernel would choose it
+// Lookup returns the kernel's route to dst, as the kernel would choose it
 // for a socket connected to dst. It sends no packet and needs no
 // privileges. An IPv4-mapped IPv6 address is looked up as IPv4. IPv6
 // link-local and multicast destinations are refused: their route depends
-// on a zone or an interface that RouteTo cannot express.
+// on a zone or an interface that Lookup cannot express.
 //
 // Loopback lookups differ by OS: darwin and FreeBSD return the loopback
-// interface, while Linux reports a local route, which RouteTo returns as
+// interface, while Linux reports a local route, which Lookup returns as
 // an error.
-func RouteTo(dst netip.Addr) (*Path, error) {
+func Lookup(dst netip.Addr) (*Path, error) {
 	if !dst.IsValid() {
 		return nil, errors.New("route lookup: invalid destination")
 	}
@@ -165,7 +166,7 @@ func familyOf(addr netip.Addr) netutil.Family {
 // to.
 func errNoRoute(dst netip.Addr) error {
 	if familyOf(dst) == netutil.FamilyV6 {
-		return fmt.Errorf("route lookup %s: %w", dst, ErrNoIPv6Route)
+		return fmt.Errorf("route lookup %s: %w", dst, ErrNoIPv6)
 	}
-	return fmt.Errorf("route lookup %s: %w", dst, ErrNoIPv4Route)
+	return fmt.Errorf("route lookup %s: %w", dst, ErrNoIPv4)
 }

@@ -153,13 +153,13 @@ func TestClassifyPath(t *testing.T) {
 			name:    "loopback is no IPv4 route",
 			fam:     netutil.FamilyV4,
 			link:    lo,
-			wantErr: ErrNoIPv4Route,
+			wantErr: ErrNoIPv4,
 		},
 		{
 			name:    "loopback is no IPv6 route",
 			fam:     netutil.FamilyV6,
 			link:    lo,
-			wantErr: ErrNoIPv6Route,
+			wantErr: ErrNoIPv6,
 		},
 	}
 
@@ -217,7 +217,7 @@ func TestDiscoverEgress_NoKernelRoute(t *testing.T) {
 	fakeLinks(t, nil, nil, nil, nil)
 
 	_, err := DiscoverEgress(netutil.FamilyV6, nil, "")
-	assert.ErrorIs(t, err, ErrNoIPv6Route)
+	assert.ErrorIs(t, err, ErrNoIPv6)
 }
 
 func TestDiscoverEgress_Gateway(t *testing.T) {
@@ -279,7 +279,7 @@ func TestDiscoverEgress_Gateway(t *testing.T) {
 		}, nil, nil, nil)
 
 		_, err := DiscoverEgress(netutil.FamilyV6, gateway, "en0")
-		assert.ErrorIs(t, err, ErrNoIPv6Route)
+		assert.ErrorIs(t, err, ErrNoIPv6)
 	})
 
 	t.Run("gateway errors name the gateway", func(t *testing.T) {

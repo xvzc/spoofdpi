@@ -185,7 +185,7 @@ func TestRouteGate_FailOpenCached(t *testing.T) {
 	var calls int
 	failOpen := func(netip.Addr) error {
 		calls++
-		return nil // as dstFakeCheck answers when RouteTo fails
+		return nil // as dstFakeCheck answers when Lookup fails
 	}
 	g := NewRouteGate(v6Off, failOpen, RouteGateOptions{Now: clock.Now})
 

@@ -11,13 +11,13 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
-func TestDiscoverRoute_MatchesRouteTo(t *testing.T) {
-	path, err := RouteTo(probeDstV4)
+func TestResolveGateway_MatchesLookup(t *testing.T) {
+	path, err := Lookup(probeDstV4)
 	if err != nil {
 		t.Skipf("no route to the probe destination: %v", err)
 	}
 
-	route, err := DiscoverRoute(nil)
+	route, err := ResolveGateway(nil)
 	if !path.Gateway.IsValid() {
 		require.ErrorIs(t, err, ErrNoGateway)
 		t.Skip("route to the internet has no gateway")
@@ -28,14 +28,14 @@ func TestDiscoverRoute_MatchesRouteTo(t *testing.T) {
 	assert.NotNil(t, route.LocalIP)
 }
 
-func TestDiscoverRoute6_MatchesRouteTo(t *testing.T) {
-	path, err := RouteTo(probeDstV6)
-	if errors.Is(err, ErrNoIPv6Route) {
+func TestResolveGateway6_MatchesLookup(t *testing.T) {
+	path, err := Lookup(probeDstV6)
+	if errors.Is(err, ErrNoIPv6) {
 		t.Skipf("no IPv6 route: %v", err)
 	}
 	require.NoError(t, err)
 
-	route, err := DiscoverRoute6(nil, "")
+	route, err := ResolveGateway6(nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, netutil.FamilyV6, route.Family)
 	assert.Equal(t, path.Iface.Index, route.Iface.Index)
@@ -43,13 +43,13 @@ func TestDiscoverRoute6_MatchesRouteTo(t *testing.T) {
 	assert.Equal(t, path.Zone, route.Zone)
 }
 
-func TestDiscoverInterface_MatchesRouteTo(t *testing.T) {
-	path, err := RouteTo(probeDstV4)
+func TestInternetInterface_MatchesLookup(t *testing.T) {
+	path, err := Lookup(probeDstV4)
 	if err != nil {
 		t.Skipf("no route to the probe destination: %v", err)
 	}
 
-	iface, localIP, err := DiscoverInterface()
+	iface, localIP, err := InternetInterface()
 	require.NoError(t, err)
 	assert.Equal(t, path.Iface.Index, iface.Index)
 	assert.NotNil(t, localIP.To4())

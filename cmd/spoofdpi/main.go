@@ -548,7 +548,7 @@ func createServer(
 			dstFakeCheck(
 				logger,
 				startup.V4,
-				route.RouteTo,
+				route.Lookup,
 				route.ClassifyPath,
 			),
 			desync.RouteGateOptions{},

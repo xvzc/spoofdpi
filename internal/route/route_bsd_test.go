@@ -261,7 +261,7 @@ func TestKernelRouteFromReply_Errors(t *testing.T) {
 			parseRTMFixture(t, m)[0].(*xroute.RouteMessage),
 			netip.MustParseAddr("192.0.2.1"),
 		)
-		assert.ErrorIs(t, err, ErrNoIPv4Route)
+		assert.ErrorIs(t, err, ErrNoIPv4)
 	}
 
 	m := rtmReply(unix.RTF_UP, 0, rtmAddrs(inet6("::"), nil, nil, nil, nil)...)

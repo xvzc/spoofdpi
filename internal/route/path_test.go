@@ -12,7 +12,7 @@ import (
 )
 
 // fakeRouteTo replaces the kernel lookup and the interface lookup of
-// RouteTo for one test. ifaces maps interface indexes to interfaces.
+// Lookup for one test. ifaces maps interface indexes to interfaces.
 func fakeRouteTo(
 	t *testing.T,
 	lookup func(netip.Addr) (kernelRoute, error),
@@ -36,7 +36,7 @@ func TestProbeDst(t *testing.T) {
 	assert.Equal(t, netip.MustParseAddr("2001:db8::1"), probeDst(netutil.FamilyV6))
 }
 
-func TestRouteTo(t *testing.T) {
+func TestLookup(t *testing.T) {
 	en0 := net.Interface{Index: 4, Name: "en0", Flags: net.FlagUp}
 	wg0 := net.Interface{Index: 7, Name: "wg0", Flags: net.FlagUp}
 	ifaces := map[int]net.Interface{4: en0, 7: wg0}
@@ -164,7 +164,7 @@ func TestRouteTo(t *testing.T) {
 				return tc.kr, nil
 			}, ifaces)
 
-			got, err := RouteTo(netip.MustParseAddr(tc.dst))
+			got, err := Lookup(netip.MustParseAddr(tc.dst))
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, *got)
 			assert.Equal(t, tc.want.Dst, asked)
@@ -172,7 +172,7 @@ func TestRouteTo(t *testing.T) {
 	}
 }
 
-func TestRouteTo_Errors(t *testing.T) {
+func TestLookup_Errors(t *testing.T) {
 	en0 := net.Interface{Index: 4, Name: "en0"}
 	ifaces := map[int]net.Interface{4: en0}
 	kernelErr := errors.New("kernel says no")
@@ -239,7 +239,7 @@ func TestRouteTo_Errors(t *testing.T) {
 				return tc.kr, tc.lookErr
 			}, ifaces)
 
-			_, err := RouteTo(tc.dst)
+			_, err := Lookup(tc.dst)
 			require.Error(t, err)
 			if tc.wantIs != nil {
 				assert.ErrorIs(t, err, tc.wantIs)
@@ -253,13 +253,13 @@ func TestRouteTo_Errors(t *testing.T) {
 
 func TestErrNoRoute(t *testing.T) {
 	err := errNoRoute(netip.MustParseAddr("192.0.2.1"))
-	assert.ErrorIs(t, err, ErrNoIPv4Route)
-	assert.NotErrorIs(t, err, ErrNoIPv6Route)
+	assert.ErrorIs(t, err, ErrNoIPv4)
+	assert.NotErrorIs(t, err, ErrNoIPv6)
 	assert.Contains(t, err.Error(), "192.0.2.1")
 
 	err = errNoRoute(netip.MustParseAddr("2001:db8::1"))
-	assert.ErrorIs(t, err, ErrNoIPv6Route)
-	assert.NotErrorIs(t, err, ErrNoIPv4Route)
+	assert.ErrorIs(t, err, ErrNoIPv6)
+	assert.NotErrorIs(t, err, ErrNoIPv4)
 }
 
 func TestPath_Route(t *testing.T) {

@@ -64,7 +64,7 @@ func routeGet(t *testing.T, args ...string) (res routeGetResult, ok bool) {
 	return res, res.iface != ""
 }
 
-func TestRouteTo_MatchesRouteCommand(t *testing.T) {
+func TestLookup_MatchesRouteCommand(t *testing.T) {
 	tcs := []struct {
 		name string
 		fam  netutil.Family
@@ -85,18 +85,18 @@ func TestRouteTo_MatchesRouteCommand(t *testing.T) {
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			want, ok := routeGet(t, tc.args...)
-			got, err := RouteTo(probeDst(tc.fam))
+			got, err := Lookup(probeDst(tc.fam))
 			if !ok {
-				noRoute := ErrNoIPv4Route
+				noRoute := ErrNoIPv4
 				if tc.fam == netutil.FamilyV6 {
-					noRoute = ErrNoIPv6Route
+					noRoute = ErrNoIPv6
 				}
 				require.ErrorIs(t, err, noRoute)
 				t.Skipf("route reports no route to %s", probeDst(tc.fam))
 			}
 			require.NoError(t, err)
 			t.Logf(
-				"route: iface=%s gateway=%s; RouteTo: iface=%s gateway=%s src=%s",
+				"route: iface=%s gateway=%s; Lookup: iface=%s gateway=%s src=%s",
 				want.iface, want.gateway, got.Iface.Name, got.Gateway, got.Src,
 			)
 			assert.Equal(t, want.iface, got.Iface.Name)
@@ -117,7 +117,7 @@ func TestPrimaryInterface_MatchesRouteCommand(t *testing.T) {
 	want, ok := routeGet(t, "default")
 	got, fallback, err := PrimaryInterface()
 	if !ok {
-		require.ErrorIs(t, err, ErrNoIPv4Route)
+		require.ErrorIs(t, err, ErrNoIPv4)
 		t.Skip("route reports no default route")
 	}
 	require.NoError(t, err)
