@@ -18,8 +18,8 @@ import (
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/logging"
-	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packetio/inject"
+	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/rule"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"github.com/xvzc/spoofdpi/internal/server/http"
@@ -263,7 +263,7 @@ func runOnceWhenDone(ctx context.Context, fn func()) func() {
 func setupNetworkStack(
 	ctx context.Context,
 	logger zerolog.Logger,
-	route *netutil.Route,
+	rt *route.Route,
 	cfg *config.Config,
 ) (
 	tcpStack *desync.TCPStack,
@@ -280,13 +280,13 @@ func setupNetworkStack(
 
 	logger.Info().Msg("network info")
 	logger.Info().
-		Str("name", route.Iface.Name).
+		Str("name", rt.Iface.Name).
 		Msg(" interface")
 
 	sender, sErr := desync.OpenIPv4Sender(
 		ctx,
 		logger,
-		fakeSenderOptions(cfg, route),
+		fakeSenderOptions(cfg, rt),
 	)
 	if sErr != nil {
 		err = fakeSenderError(sErr)
@@ -298,13 +298,13 @@ func setupNetworkStack(
 		stack, hErr := desync.OpenTCPStack(
 			runID,
 			logger,
-			&route.Iface,
+			&rt.Iface,
 			senders,
 			hops,
 		)
 		if hErr != nil {
 			_ = sender.Close()
-			err = fmt.Errorf("tcp pcap handle on %s: %w", route.Iface.Name, hErr)
+			err = fmt.Errorf("tcp pcap handle on %s: %w", rt.Iface.Name, hErr)
 			return
 		}
 		tcpStack = stack
@@ -314,13 +314,13 @@ func setupNetworkStack(
 		stack, hErr := desync.OpenUDPStack(
 			runID,
 			logger,
-			&route.Iface,
+			&rt.Iface,
 			senders,
 			hops,
 		)
 		if hErr != nil {
 			_ = sender.Close()
-			err = fmt.Errorf("udp pcap handle on %s: %w", route.Iface.Name, hErr)
+			err = fmt.Errorf("udp pcap handle on %s: %w", rt.Iface.Name, hErr)
 			return
 		}
 		udpStack = stack
@@ -334,11 +334,11 @@ func setupNetworkStack(
 // interface like the dialed connections, so that the TUN's routes cannot
 // carry the fakes into the TUN. The proxy modes leave the route to the
 // kernel.
-func fakeSenderOptions(cfg *config.Config, route *netutil.Route) inject.Options {
+func fakeSenderOptions(cfg *config.Config, rt *route.Route) inject.Options {
 	if cfg.App.Mode != config.AppModeTUN {
 		return inject.Options{}
 	}
-	return inject.Options{Control: tun.EgressControl(route, cfg.App.FreebsdFIB)}
+	return inject.Options{Control: tun.EgressControl(rt, cfg.App.FreebsdFIB)}
 }
 
 // fakesPinning describes where fakeSenderOptions pins fake packets on goos,
@@ -347,16 +347,16 @@ func fakeSenderOptions(cfg *config.Config, route *netutil.Route) inject.Options 
 func fakesPinning(
 	goos string,
 	cfg *config.Config,
-	route *netutil.Route,
+	rt *route.Route,
 	fakesV4 error,
 ) string {
-	if fakesV4 != nil || cfg.App.Mode != config.AppModeTUN || route == nil {
+	if fakesV4 != nil || cfg.App.Mode != config.AppModeTUN || rt == nil {
 		return "none"
 	}
 	if goos == "freebsd" {
 		return fmt.Sprintf("fib %d", cfg.App.FreebsdFIB)
 	}
-	return route.Iface.Name
+	return rt.Iface.Name
 }
 
 // fakesState describes fakesOff, the reason fake packets are off for a
@@ -483,7 +483,7 @@ func createServer(
 	if err != nil {
 		return nil, err
 	}
-	var defaultRoute *netutil.Route
+	var defaultRoute *route.Route
 	if startup.V4 != nil {
 		defaultRoute = &startup.V4.Route
 	}
@@ -548,8 +548,8 @@ func createServer(
 			dstFakeCheck(
 				logger,
 				startup.V4,
-				netutil.RouteTo,
-				netutil.ClassifyPath,
+				route.RouteTo,
+				route.ClassifyPath,
 			),
 			desync.RouteGateOptions{},
 		)

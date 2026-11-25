@@ -12,7 +12,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
-	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/route"
 )
 
 // SetupSystemProxy serves a PAC file that routes traffic through pacDirective
@@ -94,7 +94,7 @@ func getNetworkServiceFromInterface(ifaceName string) (string, error) {
 func buildSysProxyJobs(logger zerolog.Logger, pacURL string) ([]NetworkJob, error) {
 	// A full-tunnel VPN holds the primary default; the network service to
 	// configure is still the one of the physical interface.
-	iface, fallback, err := netutil.PrimaryInterface()
+	iface, fallback, err := route.PrimaryInterface()
 	if err != nil {
 		return nil, err
 	}

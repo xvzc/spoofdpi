@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packetio/capture"
+	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/testutil"
 )
 
@@ -97,7 +98,7 @@ func TestSenderLive_LocalConnection_RequireRoot(t *testing.T) {
 func TestSenderLive_RoutedInterface_RequireRoot(t *testing.T) {
 	testutil.RequireRoot(t)
 	dstAddr := netip.MustParseAddr("192.0.2.1")
-	path, err := netutil.RouteTo(dstAddr)
+	path, err := route.RouteTo(dstAddr)
 	if err != nil {
 		t.Skipf("no route to %v: %v", dstAddr, err)
 	}

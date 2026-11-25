@@ -17,14 +17,15 @@ import (
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/route"
 )
 
 // fakeRouteFinder answers the calls of a routeFinder with fixed results per
 // family and records them.
 type fakeRouteFinder struct {
-	egress4    *netutil.Egress
+	egress4    *route.Egress
 	err4       error
-	egress6    *netutil.Egress
+	egress6    *route.Egress
 	err6       error
 	ipv6Egress bool
 	calls      []string // family gateway%zone
@@ -32,7 +33,7 @@ type fakeRouteFinder struct {
 
 func (f *fakeRouteFinder) finder() routeFinder {
 	return routeFinder{
-		egress: func(fam netutil.Family, gateway net.IP, zone string) (*netutil.Egress, error) {
+		egress: func(fam netutil.Family, gateway net.IP, zone string) (*route.Egress, error) {
 			f.calls = append(f.calls, fmt.Sprintf("%s %v%%%s", fam, gateway, zone))
 			if fam == netutil.FamilyV6 {
 				return f.egress6, f.err6
@@ -43,11 +44,11 @@ func (f *fakeRouteFinder) finder() routeFinder {
 	}
 }
 
-// badGatewayErr is an error that netutil.DiscoverEgress reports for a
+// badGatewayErr is an error that route.DiscoverEgress reports for a
 // gateway it cannot use.
 type badGatewayErr struct{ error }
 
-func (e badGatewayErr) Is(target error) bool { return target == netutil.ErrBadGateway }
+func (e badGatewayErr) Is(target error) bool { return target == route.ErrBadGateway }
 
 // logLines returns the logs in buf as "level: message" lines.
 func logLines(t *testing.T, buf *bytes.Buffer) []string {
@@ -65,70 +66,70 @@ func logLines(t *testing.T, buf *bytes.Buffer) []string {
 	return lines
 }
 
-// Egresses of each class, as netutil.ClassifyEgress explains them.
+// Egresses of each class, as route.ClassifyEgress explains them.
 var (
-	directEgress = &netutil.Egress{
-		Route: netutil.Route{
+	directEgress = &route.Egress{
+		Route: route.Route{
 			Family:  netutil.FamilyV4,
 			Iface:   net.Interface{Index: 4, Name: "en0"},
 			LocalIP: net.IPv4(192, 168, 1, 11).To4(),
 			Gateway: net.IPv4(192, 168, 1, 1).To4(),
 		},
-		Link: netutil.LinkInfo{
+		Link: route.LinkInfo{
 			Index:  4,
 			Name:   "en0",
-			Kind:   netutil.LinkPhysical,
+			Kind:   route.LinkPhysical,
 			Detail: "IFT_ETHER",
 		},
-		Class:  netutil.EgressDirect,
+		Class:  route.EgressDirect,
 		Reason: "physical link en0 (IFT_ETHER)",
 	}
-	uplinkEgress = &netutil.Egress{
-		Route: netutil.Route{
+	uplinkEgress = &route.Egress{
+		Route: route.Route{
 			Family:  netutil.FamilyV4,
 			Iface:   net.Interface{Index: 9, Name: "ppp0"},
 			LocalIP: net.IPv4(100, 64, 0, 2).To4(),
 		},
-		Link: netutil.LinkInfo{
+		Link: route.LinkInfo{
 			Index:  9,
 			Name:   "ppp0",
-			Kind:   netutil.LinkPPP,
+			Kind:   route.LinkPPP,
 			Detail: "IFT_PPP",
 		},
-		Class:  netutil.EgressUplink,
+		Class:  route.EgressUplink,
 		Reason: "ppp link ppp0 (IFT_PPP) is the only default route",
 	}
-	vpnEgress = &netutil.Egress{
-		Route: netutil.Route{
+	vpnEgress = &route.Egress{
+		Route: route.Route{
 			Family:  netutil.FamilyV4,
 			Iface:   net.Interface{Index: 12, Name: "utun4"},
 			LocalIP: net.IPv4(10, 8, 0, 2).To4(),
 		},
-		Link: netutil.LinkInfo{
+		Link: route.LinkInfo{
 			Index:  12,
 			Name:   "utun4",
-			Kind:   netutil.LinkVPN,
+			Kind:   route.LinkVPN,
 			Detail: "utun",
 		},
-		Class:  netutil.EgressVPN,
+		Class:  route.EgressVPN,
 		Reason: "VPN link utun4 (utun)",
 	}
-	unknownEgress = &netutil.Egress{
-		Route: netutil.Route{
+	unknownEgress = &route.Egress{
+		Route: route.Route{
 			Family:  netutil.FamilyV4,
 			Iface:   net.Interface{Index: 13, Name: "tun0"},
 			LocalIP: net.IPv4(10, 9, 0, 2).To4(),
 		},
-		Link: netutil.LinkInfo{
-			Index: 13, Name: "tun0", Kind: netutil.LinkUnknown, Detail: "IFT_OTHER p2p",
+		Link: route.LinkInfo{
+			Index: 13, Name: "tun0", Kind: route.LinkUnknown, Detail: "IFT_OTHER p2p",
 		},
-		Class:  netutil.EgressUnknown,
+		Class:  route.EgressUnknown,
 		Reason: "cannot tell whether tun0 (IFT_OTHER p2p) is a VPN",
 	}
 )
 
 // egress6 returns a copy of e as an IPv6 egress.
-func egress6(e *netutil.Egress) *netutil.Egress {
+func egress6(e *route.Egress) *route.Egress {
 	c := *e
 	c.Route.Family = netutil.FamilyV6
 	c.Route.LocalIP = net.ParseIP("2001:db8:1::11")
@@ -197,7 +198,7 @@ func startupConfig(mode startupMode, gw4 bool, ipv6 bool, gw6 bool) *config.Conf
 func TestDiscoverEgresses_IPv4Matrix(t *testing.T) {
 	type tc struct {
 		name        string
-		egress      *netutil.Egress
+		egress      *route.Egress
 		mode        startupMode
 		gateway     bool
 		wantErr     string
@@ -209,7 +210,7 @@ func TestDiscoverEgresses_IPv4Matrix(t *testing.T) {
 	var tcs []tc
 
 	// Without fake packets or TUN mode, no IPv4 egress is discovered.
-	for _, e := range []*netutil.Egress{directEgress, uplinkEgress, vpnEgress, unknownEgress} {
+	for _, e := range []*route.Egress{directEgress, uplinkEgress, vpnEgress, unknownEgress} {
 		tcs = append(tcs,
 			tc{
 				name:   e.Class.String() + "/" + string(proxyNoFakes) + "/no gateway",
@@ -393,7 +394,7 @@ func TestDiscoverEgresses_IPv4Matrix(t *testing.T) {
 func TestDiscoverEgresses_IPv4Errors(t *testing.T) {
 	noRoute := fmt.Errorf(
 		"discover egress: route lookup 192.0.2.1: %w",
-		netutil.ErrNoIPv4Route,
+		route.ErrNoIPv4Route,
 	)
 	tcs := []struct {
 		name       string
@@ -445,7 +446,7 @@ func TestDiscoverEgresses_IPv4Errors(t *testing.T) {
 
 			require.Error(t, err)
 			assert.Equal(t, tc.wantErr, err.Error())
-			assert.Equal(t, tc.wantNoV4, errors.Is(err, netutil.ErrNoIPv4Route))
+			assert.Equal(t, tc.wantNoV4, errors.Is(err, route.ErrNoIPv4Route))
 		})
 	}
 }
@@ -455,7 +456,7 @@ func TestDiscoverEgresses_IPv4Errors(t *testing.T) {
 func TestDiscoverEgresses_EgressLine(t *testing.T) {
 	tcs := []struct {
 		name   string
-		egress *netutil.Egress
+		egress *route.Egress
 		want   map[string]string
 	}{
 		{
@@ -508,7 +509,7 @@ func TestDiscoverEgresses_EgressLine(t *testing.T) {
 func TestDiscoverEgresses_IPv6(t *testing.T) {
 	noRoute6 := fmt.Errorf(
 		"discover egress: route lookup 2001:db8::1: %w",
-		netutil.ErrNoIPv6Route,
+		route.ErrNoIPv6Route,
 	)
 	eafnosupport := fmt.Errorf(
 		"discover egress: route lookup 2001:db8::1: %w",
@@ -519,7 +520,7 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 		mode      startupMode
 		ipv6      bool
 		gw6       bool
-		egress6   *netutil.Egress
+		egress6   *route.Egress
 		err6      error
 		wantErr   string
 		wantV6    bool
@@ -682,7 +683,7 @@ func TestDiscoverEgresses_RuleEnablesIPv6(t *testing.T) {
 		{Name: "off", IPv6: &off, Config: cfg.RuntimeConfig},
 	}
 	require.True(t, cfg.IPv6Enabled())
-	finder := fakeRouteFinder{err6: netutil.ErrNoIPv6Route}
+	finder := fakeRouteFinder{err6: route.ErrNoIPv6Route}
 
 	got, err := discoverEgresses(zerolog.Nop(), cfg, finder.finder())
 
@@ -698,26 +699,26 @@ func TestDiscoverEgresses_RuleEnablesIPv6(t *testing.T) {
 }
 
 // pathVia returns the IPv4 path to dst through the interface of e.
-func pathVia(dst netip.Addr, e *netutil.Egress) *netutil.Path {
-	return &netutil.Path{Family: netutil.FamilyV4, Dst: dst, Iface: e.Route.Iface}
+func pathVia(dst netip.Addr, e *route.Egress) *route.Path {
+	return &route.Path{Family: netutil.FamilyV4, Dst: dst, Iface: e.Route.Iface}
 }
 
 func TestDstFakeCheck(t *testing.T) {
 	dst := netip.MustParseAddr("10.20.0.5")
 	// An explicit gateway on another interface: the route is the gateway's,
 	// the link is the kernel route's.
-	gatewayOnOtherInterface := &netutil.Egress{
-		Route: netutil.Route{Iface: net.Interface{Index: 99, Name: "en9"}},
-		Link:  netutil.LinkInfo{Index: directEgress.Route.Iface.Index, Name: "en0"},
+	gatewayOnOtherInterface := &route.Egress{
+		Route: route.Route{Iface: net.Interface{Index: 99, Name: "en9"}},
+		Link:  route.LinkInfo{Index: directEgress.Route.Iface.Index, Name: "en0"},
 	}
 	tcs := []struct {
 		name         string
-		path         *netutil.Path
+		path         *route.Path
 		routeErr     error
-		class        *netutil.Egress
+		class        *route.Egress
 		classErr     error
 		wantErr      *desync.FakesOffError
-		start        *netutil.Egress // directEgress when nil
+		start        *route.Egress // directEgress when nil
 		noStart      bool
 		wantClassify bool
 		wantLog      string
@@ -788,11 +789,11 @@ func TestDstFakeCheck(t *testing.T) {
 			check := dstFakeCheck(
 				zerolog.New(&buf).Level(zerolog.DebugLevel),
 				start,
-				func(a netip.Addr) (*netutil.Path, error) {
+				func(a netip.Addr) (*route.Path, error) {
 					routed = append(routed, a)
 					return tc.path, tc.routeErr
 				},
-				func(p *netutil.Path) (*netutil.Egress, error) {
+				func(p *route.Path) (*route.Egress, error) {
 					classified = true
 					assert.Same(t, tc.path, p)
 					return tc.class, tc.classErr

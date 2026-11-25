@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
-	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/rule"
 	"golang.zx2c4.com/wireguard/tun"
 	"gvisor.dev/gvisor/pkg/tcpip"
@@ -24,10 +24,10 @@ import (
 )
 
 func TestGatewayIP(t *testing.T) {
-	assert.Equal(t, "192.168.1.1", gatewayIP(&netutil.Route{
+	assert.Equal(t, "192.168.1.1", gatewayIP(&route.Route{
 		Gateway: net.ParseIP("192.168.1.1"),
 	}))
-	assert.Equal(t, "", gatewayIP(&netutil.Route{}))
+	assert.Equal(t, "", gatewayIP(&route.Route{}))
 }
 
 // blockingDevice is a tun.Device whose Read blocks until Close.

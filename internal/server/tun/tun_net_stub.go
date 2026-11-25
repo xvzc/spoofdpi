@@ -7,7 +7,7 @@ import (
 	"syscall"
 
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
@@ -30,7 +30,7 @@ type tunSystemNetworkStub struct {
 // NewTUNSystemNetwork creates a new TUNSystemNetwork for TUN mode on unsupported platforms
 func NewTUNSystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *netutil.Route,
+	defaultRoute *route.Route,
 	fibID int,
 	ipv6Enabled bool,
 ) (TUNSystemNetwork, error) {
@@ -55,7 +55,7 @@ func (n *tunSystemNetworkStub) BindDialer(
 
 // EgressControl returns nil: TUN mode is not supported here.
 func EgressControl(
-	*netutil.Route,
+	*route.Route,
 	int,
 ) func(network, address string, c syscall.RawConn) error {
 	return nil

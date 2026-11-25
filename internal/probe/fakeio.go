@@ -9,8 +9,8 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/desync"
-	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packetio/inject"
+	"github.com/xvzc/spoofdpi/internal/route"
 )
 
 // errFakeCapture marks the failure to open the capture handle of the fake
@@ -73,7 +73,7 @@ func (f desyncFakes) desyncer(ttl uint8) (helloSender, *fakeLog) {
 // numbers of their connections. Like spoofdpi's, the stack stays open until the process
 // exits.
 func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error) {
-	iface, _, err := netutil.DiscoverInterface()
+	iface, _, err := route.DiscoverInterface()
 	if err != nil {
 		return nil, err
 	}

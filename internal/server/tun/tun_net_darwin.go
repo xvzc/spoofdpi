@@ -9,7 +9,7 @@ import (
 	"syscall"
 
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
@@ -38,16 +38,16 @@ func collectNetworkInfo(sysNet *tunSystemNetworkDarwin) (*tunNetworkInfoDarwin, 
 		return nil, fmt.Errorf("failed to get tunName: %w", err)
 	}
 
-	cidr, err := netutil.FindSafeCIDR()
+	cidr, err := route.FindSafeCIDR()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find safe subnet: %w", err)
 	}
 
-	tunLocalIP, err := netutil.AddrInCIDR(cidr, 1)
+	tunLocalIP, err := route.AddrInCIDR(cidr, 1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get %dth ip in %s: %w", 1, cidr, err)
 	}
-	tunRemoteIP, err := netutil.AddrInCIDR(cidr, 2)
+	tunRemoteIP, err := route.AddrInCIDR(cidr, 2)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get %dth ip in %s: %w", 2, cidr, err)
 	}
@@ -56,7 +56,7 @@ func collectNetworkInfo(sysNet *tunSystemNetworkDarwin) (*tunNetworkInfoDarwin, 
 	routeTargetCIDRs := []string{tunCIDR.String(), "0.0.0.0/1", "128.0.0.0/1"}
 
 	// Runs before the TUN routes exist, so it sees the system's own route.
-	_, hasIPv6Egress := netutil.IPv6Egress()
+	_, hasIPv6Egress := route.IPv6Egress()
 
 	return &tunNetworkInfoDarwin{ //exhaustruct:enforce
 		GatewayIP:        gatewayIP(sysNet.defaultRoute),
@@ -154,7 +154,7 @@ func buildJobs(info *tunNetworkInfoDarwin) []server.NetworkJob {
 type tunSystemNetworkDarwin struct {
 	logger       zerolog.Logger
 	tunDevice    tun.Device
-	defaultRoute *netutil.Route
+	defaultRoute *route.Route
 	ipv6Enabled  bool
 }
 
@@ -163,7 +163,7 @@ type tunSystemNetworkDarwin struct {
 // only when ipv6Enabled is set.
 func NewTUNSystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *netutil.Route,
+	defaultRoute *route.Route,
 	fibID int,
 	ipv6Enabled bool,
 ) (TUNSystemNetwork, error) {
@@ -189,19 +189,19 @@ func (n *tunSystemNetworkDarwin) FIBID() int {
 }
 
 // EgressControl returns the socket control that pins a socket's IPv4
-// traffic to the physical interface of route with IP_BOUND_IF, as TUN mode
+// traffic to the physical interface of rt with IP_BOUND_IF, as TUN mode
 // needs: its routes would otherwise carry the traffic into the TUN. fibID
-// is not used on darwin. It returns nil when route has no interface.
+// is not used on darwin. It returns nil when rt has no interface.
 // BindDialer pins the dialed connections with it, and TUN mode pins the
 // raw sockets of fake packets with it too, so the two cannot diverge.
 func EgressControl(
-	route *netutil.Route,
+	rt *route.Route,
 	fibID int,
 ) func(network, address string, c syscall.RawConn) error {
-	if route == nil || route.Iface.Name == "" {
+	if rt == nil || rt.Iface.Name == "" {
 		return nil
 	}
-	index := route.Iface.Index
+	index := rt.Iface.Index
 	return func(_, _ string, c syscall.RawConn) error {
 		var sockErr error
 		err := c.Control(func(fd uintptr) {

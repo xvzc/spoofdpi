@@ -16,6 +16,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 	"github.com/xvzc/spoofdpi/internal/packetio/inject"
+	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/testutil"
 )
 
@@ -36,16 +37,16 @@ var testNet1 = netip.MustParseAddr("192.0.2.1")
 // route.
 func TestEgressControlLive_RawSocket_RequireRoot(t *testing.T) {
 	testutil.RequireRoot(t)
-	route, err := netutil.DiscoverRoute(nil)
+	rt, err := route.DiscoverRoute(nil)
 	if err != nil {
 		t.Skipf("no IPv4 default route: %v", err)
 	}
-	src, ok := netip.AddrFromSlice(route.LocalIP)
+	src, ok := netip.AddrFromSlice(rt.LocalIP)
 	require.True(t, ok)
 	src = src.Unmap()
 
 	t.Run("default interface", func(t *testing.T) {
-		h, err := capture.NewHandleWithReadTimeout(&route.Iface, 100*time.Millisecond)
+		h, err := capture.NewHandleWithReadTimeout(&rt.Iface, 100*time.Millisecond)
 		require.NoError(t, err)
 		t.Cleanup(h.Close)
 		dh, ok := h.(*capture.DefaultHandle)
@@ -54,7 +55,7 @@ func TestEgressControlLive_RawSocket_RequireRoot(t *testing.T) {
 			"tcp and src port 47002 and dst host %s and dst port 9", testNet1,
 		)))
 
-		s := openPinned(t, route)
+		s := openPinned(t, rt)
 		require.NoError(t, s.Send(tcpPacket(t, src, testNet1, 47002)))
 
 		seen := false
@@ -68,16 +69,16 @@ func TestEgressControlLive_RawSocket_RequireRoot(t *testing.T) {
 			ip4, ok := pkt.NetworkLayer().(*layers.IPv4)
 			seen = ok && ip4.TTL == 1
 		}
-		assert.True(t, seen, "the pinned fake leaves on %s", route.Iface.Name)
+		assert.True(t, seen, "the pinned fake leaves on %s", rt.Iface.Name)
 	})
 }
 
-// openPinned opens the IPv4 sender of fake packets pinned to route's
+// openPinned opens the IPv4 sender of fake packets pinned to rt's
 // interface, and checks that the raw socket's IP_BOUND_IF is that
 // interface.
-func openPinned(t *testing.T, route *netutil.Route) inject.Sender {
+func openPinned(t *testing.T, rt *route.Route) inject.Sender {
 	t.Helper()
-	control := EgressControl(route, 0)
+	control := EgressControl(rt, 0)
 	require.NotNil(t, control)
 
 	boundIndex := -1
@@ -100,7 +101,7 @@ func openPinned(t *testing.T, route *netutil.Route) inject.Sender {
 	s, err := inject.Open(netutil.FamilyV4, inject.Options{Control: readBack})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
-	assert.Equal(t, route.Iface.Index, boundIndex, "IP_BOUND_IF of the raw socket")
+	assert.Equal(t, rt.Iface.Index, boundIndex, "IP_BOUND_IF of the raw socket")
 	return s
 }
 

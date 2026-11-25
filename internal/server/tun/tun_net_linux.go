@@ -12,7 +12,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
-	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
@@ -64,16 +64,16 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 		)
 	}
 
-	cidr, err := netutil.FindSafeCIDR()
+	cidr, err := route.FindSafeCIDR()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find safe subnet: %w", err)
 	}
 
-	tunLocalIP, err := netutil.AddrInCIDR(cidr, 1)
+	tunLocalIP, err := route.AddrInCIDR(cidr, 1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get %dth ip in %s: %w", 1, cidr, err)
 	}
-	tunRemoteIP, err := netutil.AddrInCIDR(cidr, 2)
+	tunRemoteIP, err := route.AddrInCIDR(cidr, 2)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get %dth ip in %s: %w", 2, cidr, err)
 	}
@@ -82,7 +82,7 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 	routeTargetCIDRs := []string{tunCIDR.String(), "0.0.0.0/1", "128.0.0.0/1"}
 
 	// Runs before the TUN routes exist, so it sees the system's own route.
-	_, hasIPv6Egress := netutil.IPv6Egress()
+	_, hasIPv6Egress := route.IPv6Egress()
 	tunIPv6Disabled := ipv6Disabled(
 		fmt.Sprintf("/proc/sys/net/ipv6/conf/%s/disable_ipv6", tunName),
 	)
@@ -228,7 +228,7 @@ func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 type tunSystemNetworkLinux struct {
 	logger       zerolog.Logger
 	tunDevice    tun.Device
-	defaultRoute *netutil.Route
+	defaultRoute *route.Route
 	ipv6Enabled  bool
 }
 
@@ -237,7 +237,7 @@ type tunSystemNetworkLinux struct {
 // only when ipv6Enabled is set.
 func NewTUNSystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *netutil.Route,
+	defaultRoute *route.Route,
 	fibID int,
 	ipv6Enabled bool,
 ) (TUNSystemNetwork, error) {
@@ -263,19 +263,19 @@ func (n *tunSystemNetworkLinux) FIBID() int {
 }
 
 // EgressControl returns the socket control that binds a socket to the
-// physical interface of route with SO_BINDTODEVICE, as TUN mode needs: its
+// physical interface of rt with SO_BINDTODEVICE, as TUN mode needs: its
 // routes would otherwise carry the traffic into the TUN. fibID is not used
-// on Linux. It returns nil when route has no interface. BindDialer pins
+// on Linux. It returns nil when rt has no interface. BindDialer pins
 // the dialed connections with it, and TUN mode pins the raw sockets of
 // fake packets with it too, so the two cannot diverge.
 func EgressControl(
-	route *netutil.Route,
+	rt *route.Route,
 	fibID int,
 ) func(network, address string, c syscall.RawConn) error {
-	if route == nil || route.Iface.Name == "" {
+	if rt == nil || rt.Iface.Name == "" {
 		return nil
 	}
-	name := route.Iface.Name
+	name := rt.Iface.Name
 	return func(_, _ string, c syscall.RawConn) error {
 		var sockErr error
 		err := c.Control(func(fd uintptr) {

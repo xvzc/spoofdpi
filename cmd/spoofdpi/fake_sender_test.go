@@ -12,16 +12,17 @@ import (
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packetio/inject"
+	"github.com/xvzc/spoofdpi/internal/route"
 )
 
 func TestFakeSenderOptions(t *testing.T) {
-	route := &netutil.Route{Iface: net.Interface{Index: 1, Name: "lo0"}}
+	rt := &route.Route{Iface: net.Interface{Index: 1, Name: "lo0"}}
 
 	for _, mode := range []config.AppModeType{config.AppModeHTTP, config.AppModeSOCKS5} {
 		t.Run(mode.String(), func(t *testing.T) {
 			cfg := config.DefaultConfig()
 			cfg.App.Mode = mode
-			assert.Nil(t, fakeSenderOptions(cfg, route).Control,
+			assert.Nil(t, fakeSenderOptions(cfg, rt).Control,
 				"the proxy modes leave the route to the kernel")
 		})
 	}
@@ -30,7 +31,7 @@ func TestFakeSenderOptions(t *testing.T) {
 		cfg := config.DefaultConfig()
 		cfg.App.Mode = config.AppModeTUN
 		cfg.App.FreebsdFIB = 2
-		assert.NotNil(t, fakeSenderOptions(cfg, route).Control,
+		assert.NotNil(t, fakeSenderOptions(cfg, rt).Control,
 			"TUN mode pins the raw sockets like the dialed connections")
 	})
 }
@@ -55,7 +56,7 @@ func TestFakeSenderError(t *testing.T) {
 }
 
 func TestFakesPinning(t *testing.T) {
-	route := &netutil.Route{Iface: net.Interface{Index: 4, Name: "en0"}}
+	rt := &route.Route{Iface: net.Interface{Index: 4, Name: "en0"}}
 	off := &desync.FakesOffError{Family: netutil.FamilyV4, Reason: "a VPN"}
 	withMode := func(mode config.AppModeType) *config.Config {
 		cfg := config.DefaultConfig()
@@ -80,7 +81,7 @@ func TestFakesPinning(t *testing.T) {
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, fakesPinning(tc.goos, tc.cfg, route, tc.fakesV4))
+			assert.Equal(t, tc.want, fakesPinning(tc.goos, tc.cfg, rt, tc.fakesV4))
 		})
 	}
 }

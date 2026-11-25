@@ -12,8 +12,8 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
-	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packetio/capture"
+	"github.com/xvzc/spoofdpi/internal/route"
 )
 
 const (
@@ -69,7 +69,7 @@ func openCapture(kind captureKind, servers []netip.Addr) (packetSource, error) {
 			return capture.TCPHostFilter(linkType, hosts)
 		}
 	}
-	iface, _, err := netutil.DiscoverInterface()
+	iface, _, err := route.DiscoverInterface()
 	if err != nil {
 		return nil, err
 	}

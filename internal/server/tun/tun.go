@@ -16,6 +16,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/logging"
 	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 	"gvisor.dev/gvisor/pkg/buffer"
@@ -42,14 +43,14 @@ type TUNSystemNetwork interface {
 	BuildJobs() ([]server.NetworkJob, error)
 }
 
-// gatewayIP returns the next hop of route as the TUN job builders print it,
-// or "" when route has no gateway, as on a point-to-point uplink such as
+// gatewayIP returns the next hop of rt as the TUN job builders print it,
+// or "" when rt has no gateway, as on a point-to-point uplink such as
 // PPP.
-func gatewayIP(route *netutil.Route) string {
-	if route.Gateway == nil {
+func gatewayIP(rt *route.Route) string {
+	if rt.Gateway == nil {
 		return ""
 	}
-	return route.Gateway.String()
+	return rt.Gateway.String()
 }
 
 // ipv6CaptureCIDR is the IPv6 range routed into the TUN when IPv6 is enabled

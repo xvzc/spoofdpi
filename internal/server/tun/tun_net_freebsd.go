@@ -10,7 +10,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/executil"
-	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
@@ -65,12 +65,12 @@ func collectNetworkInfo(
 		}
 	}
 
-	cidr, err := netutil.FindSafeCIDR()
+	cidr, err := route.FindSafeCIDR()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find safe subnet: %w", err)
 	}
 
-	tunLocalIP, err := netutil.AddrInCIDR(cidr, 1)
+	tunLocalIP, err := route.AddrInCIDR(cidr, 1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get %dth ip in %s: %w", 1, cidr, err)
 	}
@@ -85,7 +85,7 @@ func collectNetworkInfo(
 	routeTargetCIDRs := []string{"0.0.0.0/1", "128.0.0.0/1"}
 
 	// Runs before the TUN routes exist, so it sees the system's own route.
-	_, hasIPv6Egress := netutil.IPv6Egress()
+	_, hasIPv6Egress := route.IPv6Egress()
 
 	return &tunNetworkInfoFreeBSD{ //exhaustruct:enforce
 		FIBID:            sysNet.FIBID(),
@@ -214,7 +214,7 @@ func needsFIBSubnetRoute(physIfaceP2P bool, gatewayIP string) bool {
 type tunSystemNetworkFreeBSD struct {
 	logger       zerolog.Logger
 	tunDevice    tun.Device
-	defaultRoute *netutil.Route
+	defaultRoute *route.Route
 	fibID        int
 	ipv6Enabled  bool
 }
@@ -223,7 +223,7 @@ type tunSystemNetworkFreeBSD struct {
 // FreeBSD. IPv6 is routed into the TUN only when ipv6Enabled is set.
 func NewTUNSystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *netutil.Route,
+	defaultRoute *route.Route,
 	fibID int,
 	ipv6Enabled bool,
 ) (TUNSystemNetwork, error) {
@@ -252,12 +252,12 @@ func (n *tunSystemNetworkFreeBSD) FIBID() int {
 // EgressControl returns the socket control that puts a socket in FIB
 // fibID with SO_SETFIB, whose default route is the physical one, as TUN
 // mode needs: the main FIB's routes would otherwise carry the traffic into
-// the TUN. route is not used on FreeBSD. It returns nil when fibID is not
+// the TUN. rt is not used on FreeBSD. It returns nil when fibID is not
 // positive. BindDialer pins the dialed connections with it, and TUN mode
 // pins the raw sockets of fake packets with it too, so the two cannot
 // diverge.
 func EgressControl(
-	route *netutil.Route,
+	rt *route.Route,
 	fibID int,
 ) func(network, address string, c syscall.RawConn) error {
 	if fibID <= 0 {

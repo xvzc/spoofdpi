@@ -7,13 +7,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/route"
 )
 
 func TestEgressControl_FreeBSD(t *testing.T) {
-	route := &netutil.Route{Iface: net.Interface{Index: 1, Name: "em0"}}
-	assert.Nil(t, EgressControl(route, 0), "no FIB, nothing to pin to")
-	assert.Nil(t, EgressControl(route, -1))
-	assert.NotNil(t, EgressControl(route, 2))
+	rt := &route.Route{Iface: net.Interface{Index: 1, Name: "em0"}}
+	assert.Nil(t, EgressControl(rt, 0), "no FIB, nothing to pin to")
+	assert.Nil(t, EgressControl(rt, -1))
+	assert.NotNil(t, EgressControl(rt, 2))
 	assert.NotNil(t, EgressControl(nil, 2), "only the FIB matters")
 }
