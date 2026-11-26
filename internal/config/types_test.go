@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
@@ -155,6 +157,38 @@ func TestConnOptions_UnmarshalTOML(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestConnOptions_UnmarshalTOML_timeoutRange(t *testing.T) {
+	tcs := []struct {
+		value   int64
+		want    time.Duration
+		wantErr string
+	}{
+		{value: 0, wantErr: "value 0 out of range[1-3600000]"},
+		{value: 1, want: time.Millisecond},
+		{value: 120000, want: 2 * time.Minute},
+		{value: 3600000, want: time.Hour},
+		{value: 3600001, wantErr: "value 3600001 out of range[1-3600000]"},
+	}
+	keys := map[string]func(ConnOptions) time.Duration{
+		"tcp-timeout":      func(o ConnOptions) time.Duration { return o.TCPTimeout },
+		"udp-idle-timeout": func(o ConnOptions) time.Duration { return o.UDPIdleTimeout },
+	}
+	for key, get := range keys {
+		for _, tc := range tcs {
+			t.Run(fmt.Sprintf("%s=%d", key, tc.value), func(t *testing.T) {
+				var o ConnOptions
+				err := o.UnmarshalTOML(map[string]any{key: tc.value})
+				if tc.wantErr != "" {
+					assert.ErrorContains(t, err, tc.wantErr)
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, get(o))
+			})
+		}
 	}
 }
 
@@ -524,12 +558,12 @@ func TestConnOptions_MarshalJSON_durationsAsString(t *testing.T) {
 	o := ConnOptions{
 		HopCountDefault: 8,
 		TCPTimeout:      10000 * time.Millisecond,
-		UDPIdleTimeout:  25000 * time.Millisecond,
+		UDPIdleTimeout:  120000 * time.Millisecond,
 	}
 	b, err := json.Marshal(o)
 	assert.NoError(t, err)
 	const want = `{"hop-count-default":8,"hop-count-min":0,"hop-count-max":0,"hop-count-offset":0,` +
-		`"tcp-timeout":"10s","udp-idle-timeout":"25s"}`
+		`"tcp-timeout":"10s","udp-idle-timeout":"2m0s"}`
 	assert.JSONEq(t, want, string(b))
 }
 

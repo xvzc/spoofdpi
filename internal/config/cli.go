@@ -44,7 +44,7 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 				HopCountMax:     255,
 				HopCountOffset:  -1,
 				TCPTimeout:      10000 * time.Millisecond,
-				UDPIdleTimeout:  25000 * time.Millisecond,
+				UDPIdleTimeout:  120000 * time.Millisecond,
 			},
 			DNS: DNSOptions{ //exhaustruct:enforce
 				Mode:     DNSModeUDP,
@@ -369,7 +369,7 @@ func CreateCommand(
 				Idle timeout for udp connection in milliseconds. 
 				Must be at least 1 (default: %v, max: %v)`,
 						defaultCfg.Conn.UDPIdleTimeout.Milliseconds(),
-						math.MaxUint16,
+						maxConnTimeoutMs,
 					),
 					Value:     0,
 					OnlyOnce:  true,
@@ -498,7 +498,7 @@ func CreateCommand(
 				Timeout for tcp connection in milliseconds. 
 				Must be at least 1 (default: %v, max: %v)`,
 						defaultCfg.Conn.TCPTimeout.Milliseconds(),
-						math.MaxUint16,
+						maxConnTimeoutMs,
 					),
 					Value:     0,
 					OnlyOnce:  true,

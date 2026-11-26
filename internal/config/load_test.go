@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -125,16 +126,39 @@ func TestResolveRules_dnsTimeout(t *testing.T) {
 	)
 }
 
-func TestResolveRules_rejectsZeroConnTimeout(t *testing.T) {
-	for _, key := range []string{"tcp-timeout", "udp-idle-timeout"} {
-		t.Run(key, func(t *testing.T) {
-			raw := []map[string]any{
-				{"connection": map[string]any{key: int64(0)}},
-			}
+func TestResolveRules_connTimeoutRange(t *testing.T) {
+	tcs := []struct {
+		value   int64
+		want    time.Duration
+		wantErr string
+	}{
+		{value: 0, wantErr: "value 0 out of range[1-3600000]"},
+		{value: 1, want: time.Millisecond},
+		{value: 120000, want: 2 * time.Minute},
+		{value: 3600000, want: time.Hour},
+		{value: 3600001, wantErr: "value 3600001 out of range[1-3600000]"},
+	}
+	keys := map[string]func(RuntimeConfig) time.Duration{
+		"tcp-timeout":      func(c RuntimeConfig) time.Duration { return c.Conn.TCPTimeout },
+		"udp-idle-timeout": func(c RuntimeConfig) time.Duration { return c.Conn.UDPIdleTimeout },
+	}
+	for key, get := range keys {
+		for _, tc := range tcs {
+			t.Run(fmt.Sprintf("%s=%d", key, tc.value), func(t *testing.T) {
+				raw := []map[string]any{
+					{"connection": map[string]any{key: tc.value}},
+				}
 
-			_, err := resolveRules(raw, DefaultConfig().RuntimeConfig)
-			assert.ErrorContains(t, err, "value 0 out of range[1-65535]")
-		})
+				rules, err := resolveRules(raw, DefaultConfig().RuntimeConfig)
+				if tc.wantErr != "" {
+					assert.ErrorContains(t, err, tc.wantErr)
+					return
+				}
+				require.NoError(t, err)
+				require.Len(t, rules, 1)
+				assert.Equal(t, tc.want, get(rules[0].Config))
+			})
+		}
 	}
 }
 

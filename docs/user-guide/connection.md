@@ -4,11 +4,11 @@ Settings for network connection timeouts and packet configuration.
 
 ## `tcp-timeout`
 
-`type: uint16`
+`type: uint32`
 
 ### Description
 
-Specifies the timeout (in milliseconds) for TCP connections. `(default: 10000, min: 1, max: 65535)`
+Specifies the timeout (in milliseconds) for TCP connections. `(default: 10000, min: 1, max: 3600000)`
 
 The timeout applies to each connection attempt. When a name resolves to several addresses, the attempts to further addresses start 250 ms apart (see [Record Types](dns.md#record-types)), so connecting can take longer than the timeout in total.
 
@@ -31,13 +31,15 @@ tcp-timeout = 5000
 
 ## `udp-idle-timeout`
 
-`type: uint16`
+`type: uint32`
 
 ### Description
 
-Specifies the idle timeout (in milliseconds) for UDP connections. `(default: 25000, min: 1, max: 65535)`
+Specifies the idle timeout (in milliseconds) for UDP connections. `(default: 120000, min: 1, max: 3600000)`
 
 The connection will be closed if there is no read/write activity for this duration. Each read or write operation resets the timeout.
+
+The default follows RFC 4787, which requires a UDP mapping idle timeout of at least 2 minutes, so quiet flows such as games or VoIP keep their mapping.
 
 ### Usage
 

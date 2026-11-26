@@ -34,7 +34,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				assert.Equal(t, uint8(8), cfg.Conn.HopCountDefault)
 				assert.Equal(t, int64(5000), cfg.DNS.Timeout.Milliseconds())
 				assert.Equal(t, int64(10000), cfg.Conn.TCPTimeout.Milliseconds())
-				assert.Equal(t, int64(25000), cfg.Conn.UDPIdleTimeout.Milliseconds())
+				assert.Equal(t, int64(120000), cfg.Conn.UDPIdleTimeout.Milliseconds())
 				assert.Equal(t, "8.8.8.8:53", cfg.DNS.Addr.String())
 				assert.Equal(t, DNSModeUDP, cfg.DNS.Mode)
 				assert.Equal(t, "https://dns.google/dns-query", cfg.DNS.HTTPSURL)
@@ -258,20 +258,46 @@ func TestCreateCommand_Gateway(t *testing.T) {
 	}
 }
 
-func TestCreateCommand_RejectsZeroConnTimeout(t *testing.T) {
-	for _, flag := range []string{"--tcp-timeout", "--udp-idle-timeout"} {
-		t.Run(flag, func(t *testing.T) {
-			ran := false
-			runFunc := func(ctx context.Context, configDir string, cfg *Config) error {
-				ran = true
-				return nil
-			}
+func TestCreateCommand_ConnTimeoutRange(t *testing.T) {
+	tcs := []struct {
+		value   string
+		want    time.Duration
+		wantErr string
+	}{
+		{value: "0", wantErr: "value 0 out of range[1-3600000]"},
+		{value: "1", want: time.Millisecond},
+		{value: "120000", want: 2 * time.Minute},
+		{value: "3600000", want: time.Hour},
+		{value: "3600001", wantErr: "value 3600001 out of range[1-3600000]"},
+	}
+	flags := map[string]func(*Config) time.Duration{
+		"--tcp-timeout":      func(c *Config) time.Duration { return c.Conn.TCPTimeout },
+		"--udp-idle-timeout": func(c *Config) time.Duration { return c.Conn.UDPIdleTimeout },
+	}
+	for flag, get := range flags {
+		for _, tc := range tcs {
+			t.Run(flag+"="+tc.value, func(t *testing.T) {
+				var got *Config
+				runFunc := func(ctx context.Context, configDir string, cfg *Config) error {
+					got = cfg
+					return nil
+				}
 
-			cmd := CreateCommand(runFunc, "v0.0.0", "commit", "build")
-			err := cmd.Run(context.Background(), []string{"spoofdpi", "--clean", flag, "0"})
-			assert.ErrorContains(t, err, "value 0 out of range[1-65535]")
-			assert.False(t, ran)
-		})
+				cmd := CreateCommand(runFunc, "v0.0.0", "commit", "build")
+				err := cmd.Run(
+					context.Background(),
+					[]string{"spoofdpi", "--clean", flag, tc.value},
+				)
+				if tc.wantErr != "" {
+					assert.ErrorContains(t, err, tc.wantErr)
+					assert.Nil(t, got)
+					return
+				}
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				assert.Equal(t, tc.want, get(got))
+			})
+		}
 	}
 }
 
