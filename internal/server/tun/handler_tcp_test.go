@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -348,11 +349,40 @@ type plainSysNet struct{ TUNSystemNetwork }
 
 func (plainSysNet) BindDialer(*net.Dialer, string, net.IP) error { return nil }
 
+// timeoutError is a timeout as gVisor's gonet reports it: a net.Error
+// whose Timeout is true, which is not os.ErrDeadlineExceeded.
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "i/o timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
+
+// gonetConn reports the timeouts of the conn it wraps as gonet.TCPConn,
+// the conn the TCP handler gets on the TUN, does.
+type gonetConn struct{ net.Conn }
+
+func (c gonetConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		err = &net.OpError{Op: "read", Net: "tcp", Err: timeoutError{}}
+	}
+	return n, err
+}
+
 // A client that sends nothing first, as in a protocol where the server
 // speaks first such as SSH, is relayed as plain TCP once the wait for its
 // first byte ends: the banner of the server reaches it, and then its
 // reply reaches the server.
 func TestTCPHandler_Handle_ServerSpeaksFirst(t *testing.T) {
+	for name, wrap := range map[string]func(net.Conn) net.Conn{
+		"pipe":  func(c net.Conn) net.Conn { return c },
+		"gonet": func(c net.Conn) net.Conn { return gonetConn{c} },
+	} {
+		t.Run(name, func(t *testing.T) { testServerSpeaksFirst(t, wrap) })
+	}
+}
+
+func testServerSpeaksFirst(t *testing.T, wrap func(net.Conn) net.Conn) {
 	const banner = "SSH-2.0-test\r\n"
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -385,7 +415,7 @@ func TestTCPHandler_Handle_ServerSpeaksFirst(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		h.Handle(context.Background(), lConn, dst, plainSysNet{})
+		h.Handle(context.Background(), wrap(lConn), dst, plainSysNet{})
 		close(done)
 	}()
 

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -70,7 +69,10 @@ func (h *TCPHandler) Handle(
 	lBufferedConn := netutil.NewBufferedConn(lConn)
 	buf, err := lBufferedConn.Peek(1)
 	_ = lConn.SetReadDeadline(time.Time{})
-	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+	// gonet reports the deadline as a net.Error that times out, not as
+	// os.ErrDeadlineExceeded.
+	var netErr net.Error
+	if err != nil && (!errors.As(err, &netErr) || !netErr.Timeout()) {
 		return
 	}
 
