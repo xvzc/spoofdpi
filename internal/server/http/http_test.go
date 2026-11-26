@@ -915,3 +915,35 @@ func TestHTTPProxy_HandleNewConnection_RequestTimeoutSparesTunnel(t *testing.T) 
 	_ = client.Close()
 	<-done
 }
+
+// A client may send the ClientHello in the same write as the CONNECT
+// request, without waiting for the 200; the proxy then holds it in the
+// buffer it read the request with. It reaches the upstream intact.
+func TestHTTPProxy_HandleNewConnection_ConnectWithEarlyData(t *testing.T) {
+	echo, _ := startTCPEcho(t)
+	p := newTestProxy(
+		zerolog.Nop(),
+		&fakeResolver{},
+		rule.NewRuleSet(),
+		&config.RuntimeConfig{},
+		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+	)
+
+	client, done := runConn(t, p)
+	br := bufio.NewReader(client)
+	hello := []byte(config.FakeClientHello)
+	go func() {
+		_, _ = client.Write(
+			append([]byte(connectRequest(echo.IP.String(), echo.Port)), hello...),
+		)
+	}()
+
+	assert.Equal(t, "200 Connection Established", readStatus(t, br))
+	got := make([]byte, len(hello))
+	_, err := io.ReadFull(br, got)
+	require.NoError(t, err)
+	assert.Equal(t, hello, got)
+
+	_ = client.Close()
+	<-done
+}

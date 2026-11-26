@@ -363,6 +363,13 @@ func (b *BufferedConn) Peek(n int) ([]byte, error) {
 	return b.r.Peek(n)
 }
 
+// Reader returns the reader that b reads through. A parser that needs a
+// *bufio.Reader reads with it, so that the bytes it reads ahead are still
+// read from b.
+func (b *BufferedConn) Reader() *bufio.Reader {
+	return b.r
+}
+
 // writeBufferedTo writes the bytes that b's reader holds to w, and drops
 // those that w took from the reader. It does not read from the conn, so
 // after it returns without an error, the next byte of b is the next byte

@@ -2,7 +2,6 @@ package proto
 
 import (
 	"bufio"
-	"io"
 	"net"
 	"net/http"
 	"net/textproto"
@@ -59,14 +58,11 @@ func NewHttpRequest(req *http.Request) *HTTPRequest {
 	return &HTTPRequest{Request: req}
 }
 
-// readHttpRequest reads and parses an HTTP request from the given reader
-func ReadHttpRequest(rdr io.Reader) (*HTTPRequest, error) {
-	req, err := http.ReadRequest(bufio.NewReader(rdr))
+// ReadHttpRequest reads and parses an HTTP request from r. The bytes that
+// follow the request, which r may already hold, stay in r.
+func ReadHttpRequest(r *bufio.Reader) (*HTTPRequest, error) {
+	req, err := http.ReadRequest(r)
 	if err != nil {
-		if err == io.EOF {
-			return nil, err
-		}
-
 		return nil, err
 	}
 	return NewHttpRequest(req), nil

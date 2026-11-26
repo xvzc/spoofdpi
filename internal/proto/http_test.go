@@ -13,9 +13,9 @@ import (
 
 func readTestRequest(t *testing.T, head string) *HTTPRequest {
 	t.Helper()
-	req, err := ReadHttpRequest(strings.NewReader(
+	req, err := ReadHttpRequest(bufio.NewReader(strings.NewReader(
 		"GET http://origin.test/ HTTP/1.1\r\nHost: origin.test\r\n" + head + "\r\n",
-	))
+	)))
 	require.NoError(t, err)
 	return req
 }
@@ -75,7 +75,7 @@ func TestReadHttpRequest_ExtractHostZone(t *testing.T) {
 	}
 	for _, raw := range reqs {
 		t.Run(strings.Fields(raw)[1], func(t *testing.T) {
-			req, err := ReadHttpRequest(strings.NewReader(raw))
+			req, err := ReadHttpRequest(bufio.NewReader(strings.NewReader(raw)))
 			require.NoError(t, err)
 			assert.Equal(t, "fe80::1%en0", req.ExtractHost())
 		})

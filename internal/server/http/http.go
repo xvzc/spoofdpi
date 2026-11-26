@@ -121,12 +121,18 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 	defer cancel()
 	defer netutil.CloseConns(conn)
 
+	// The handlers read conn through the buffer the request is read with,
+	// which may hold the bytes the client sent after the request, such as
+	// a ClientHello sent without waiting for the reply to a CONNECT.
+	bufConn := netutil.NewBufferedConn(conn)
+	conn = bufConn
+
 	// A client that sends no request, or speaks another protocol, would
 	// otherwise hold the connection until it gives up.
 	if p.requestTimeout > 0 {
 		_ = conn.SetReadDeadline(time.Now().Add(p.requestTimeout))
 	}
-	req, err := proto.ReadHttpRequest(conn)
+	req, err := proto.ReadHttpRequest(bufConn.Reader())
 	if err != nil {
 		// The server closes conn and cancels ctx when it shuts down.
 		shutdown := ctx.Err() != nil || errors.Is(err, net.ErrClosed)
