@@ -9,6 +9,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/logging"
@@ -24,6 +26,9 @@ type SOCKS5Proxy struct {
 	bindHandler         *BindHandler
 	udpAssociateHandler *UdpAssociateHandler
 	listenAddr          net.TCPAddr
+	// requestTimeout bounds the wait for the greeting and the request of
+	// a connection. Zero means no bound.
+	requestTimeout time.Duration
 
 	listener *net.TCPListener
 	conns    server.ConnTracker
@@ -35,6 +40,7 @@ func NewSOCKS5Proxy(
 	bindHandler *BindHandler,
 	udpAssociateHandler *UdpAssociateHandler,
 	listenAddr net.TCPAddr,
+	requestTimeout time.Duration,
 ) server.Server {
 	return &SOCKS5Proxy{
 		logger:              logger,
@@ -42,6 +48,7 @@ func NewSOCKS5Proxy(
 		bindHandler:         bindHandler,
 		udpAssociateHandler: udpAssociateHandler,
 		listenAddr:          listenAddr,
+		requestTimeout:      requestTimeout,
 	}
 }
 
@@ -120,6 +127,12 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 	defer cancel()
 	defer netutil.CloseConns(conn)
 
+	// A client that sends nothing, or speaks another protocol, would
+	// otherwise hold the connection until it gives up.
+	if p.requestTimeout > 0 {
+		_ = conn.SetReadDeadline(time.Now().Add(p.requestTimeout))
+	}
+
 	// 1. Negotiation Phase
 	if err := p.negotiate(logger, conn); err != nil {
 		logger.Debug().Err(err).Msg("negotiation failed")
@@ -131,11 +144,16 @@ func (p *SOCKS5Proxy) handleConnection(ctx context.Context, conn net.Conn) {
 	if err != nil {
 		// The server closes conn and cancels ctx when it shuts down.
 		shutdown := ctx.Err() != nil || errors.Is(err, net.ErrClosed)
-		if err != io.EOF && !shutdown {
+		switch {
+		case err == io.EOF || shutdown:
+		case errors.Is(err, os.ErrDeadlineExceeded):
+			logger.Debug().Err(err).Msg("no request in time")
+		default:
 			logger.Warn().Err(err).Msg("failed to read request")
 		}
 		return
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 
 	logger.Debug().
 		Uint8("cmd", req.Cmd).

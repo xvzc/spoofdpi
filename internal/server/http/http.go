@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/logging"
@@ -20,6 +22,9 @@ type HTTPProxy struct {
 	httpHandler  *HTTPHandler
 	httpsHandler *HTTPSHandler
 	listenAddr   net.TCPAddr
+	// requestTimeout bounds the wait for the first request of a
+	// connection. Zero means no bound.
+	requestTimeout time.Duration
 
 	listener *net.TCPListener
 	conns    server.ConnTracker
@@ -30,12 +35,14 @@ func NewHTTPProxy(
 	httpHandler *HTTPHandler,
 	httpsHandler *HTTPSHandler,
 	listenAddr net.TCPAddr,
+	requestTimeout time.Duration,
 ) server.Server {
 	return &HTTPProxy{
-		logger:       logger,
-		httpHandler:  httpHandler,
-		httpsHandler: httpsHandler,
-		listenAddr:   listenAddr,
+		logger:         logger,
+		httpHandler:    httpHandler,
+		httpsHandler:   httpsHandler,
+		listenAddr:     listenAddr,
+		requestTimeout: requestTimeout,
 	}
 }
 
@@ -114,16 +121,26 @@ func (p *HTTPProxy) handleNewConnection(ctx context.Context, conn net.Conn) {
 	defer cancel()
 	defer netutil.CloseConns(conn)
 
+	// A client that sends no request, or speaks another protocol, would
+	// otherwise hold the connection until it gives up.
+	if p.requestTimeout > 0 {
+		_ = conn.SetReadDeadline(time.Now().Add(p.requestTimeout))
+	}
 	req, err := proto.ReadHttpRequest(conn)
 	if err != nil {
 		// The server closes conn and cancels ctx when it shuts down.
 		shutdown := ctx.Err() != nil || errors.Is(err, net.ErrClosed)
-		if err != io.EOF && !shutdown {
+		switch {
+		case err == io.EOF || shutdown:
+		case errors.Is(err, os.ErrDeadlineExceeded):
+			logger.Debug().Err(err).Msg("no http request in time")
+		default:
 			logger.Warn().Err(err).Msg("failed to read http request")
 		}
 
 		return
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 
 	logger.Debug().Str("from", conn.RemoteAddr().String()).Str("host", req.Host).
 		Msg("new request")

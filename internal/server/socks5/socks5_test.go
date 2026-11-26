@@ -225,3 +225,37 @@ func TestSOCKS5Proxy_ListenAddressInUse(t *testing.T) {
 
 	assert.Error(t, p.Listen(context.Background()))
 }
+
+// A client that sends no greeting or request in time is closed.
+func TestSOCKS5Proxy_HandleConnection_RequestTimeout(t *testing.T) {
+	for name, sent := range map[string][]byte{
+		"no greeting": nil,
+		"no request":  {proto.SOCKSVersion, 1, proto.SOCKS5AuthNone},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := &SOCKS5Proxy{
+				logger:         zerolog.Nop(),
+				requestTimeout: 50 * time.Millisecond,
+			}
+			client, srv := net.Pipe()
+			t.Cleanup(func() { _ = client.Close() })
+			require.NoError(t, client.SetDeadline(time.Now().Add(5*time.Second)))
+
+			done := make(chan struct{})
+			go func() {
+				p.handleConnection(context.Background(), srv)
+				close(done)
+			}()
+
+			if sent != nil {
+				_, err := client.Write(sent)
+				require.NoError(t, err)
+				_, err = io.ReadFull(client, make([]byte, 2))
+				require.NoError(t, err)
+			}
+			_, err := client.Read(make([]byte, 1))
+			assert.ErrorIs(t, err, io.EOF)
+			<-done
+		})
+	}
+}

@@ -599,6 +599,7 @@ func createServer(
 				&cfg.RuntimeConfig,
 			),
 			cfg.App.ListenAddr,
+			cfg.Conn.TCPTimeout,
 		), nil
 
 	case config.AppModeSOCKS5:
@@ -622,6 +623,7 @@ func createServer(
 				&cfg.RuntimeConfig,
 			),
 			cfg.App.ListenAddr,
+			cfg.Conn.TCPTimeout,
 		), nil
 
 	case config.AppModeTUN:

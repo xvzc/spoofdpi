@@ -123,6 +123,7 @@ func newTestProxy(
 			base,
 		),
 		listenAddr,
+		0,
 	).(*HTTPProxy)
 }
 
@@ -857,4 +858,60 @@ func listenLinkLocalLoopback(t *testing.T) net.Listener {
 	}
 	t.Skip("no IPv6 link-local address on a loopback interface")
 	return nil
+}
+
+// A client that sends no complete request in time, such as a SOCKS5 client
+// that waits for the reply to its greeting, is closed.
+func TestHTTPProxy_HandleNewConnection_RequestTimeout(t *testing.T) {
+	p := newTestProxy(
+		zerolog.Nop(),
+		&fakeResolver{},
+		rule.NewRuleSet(),
+		&config.RuntimeConfig{},
+		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+	)
+	p.requestTimeout = 50 * time.Millisecond
+
+	client, done := runConn(t, p)
+	_, err := client.Write([]byte{0x05, 0x01, 0x00})
+	require.NoError(t, err)
+
+	_, err = client.Read(make([]byte, 1))
+	assert.ErrorIs(t, err, io.EOF)
+	<-done
+}
+
+// The request timeout bounds only the first request: a tunnel that stays
+// idle for longer is kept.
+func TestHTTPProxy_HandleNewConnection_RequestTimeoutSparesTunnel(t *testing.T) {
+	echo, _ := startTCPEcho(t)
+	p := newTestProxy(
+		zerolog.Nop(),
+		&fakeResolver{},
+		rule.NewRuleSet(),
+		&config.RuntimeConfig{},
+		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+	)
+	p.requestTimeout = 50 * time.Millisecond
+
+	client, done := runConn(t, p)
+	br := bufio.NewReader(client)
+	_, err := client.Write([]byte(connectRequest(echo.IP.String(), echo.Port)))
+	require.NoError(t, err)
+	assert.Equal(t, "200 Connection Established", readStatus(t, br))
+
+	time.Sleep(4 * p.requestTimeout)
+
+	// The ClientHello, sent after the timeout, reaches the upstream, which
+	// echoes it back.
+	hello := []byte(config.FakeClientHello)
+	_, err = client.Write(hello)
+	require.NoError(t, err)
+	got := make([]byte, len(hello))
+	_, err = io.ReadFull(br, got)
+	require.NoError(t, err)
+	assert.Equal(t, hello, got)
+
+	_ = client.Close()
+	<-done
 }

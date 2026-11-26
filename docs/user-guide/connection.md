@@ -12,6 +12,8 @@ Specifies the timeout (in milliseconds) for TCP connections. `(default: 10000, m
 
 The timeout applies to each connection attempt. When a name resolves to several addresses, the attempts to further addresses start 250 ms apart (see [Record Types](dns.md#record-types)), so connecting can take longer than the timeout in total.
 
+In HTTP and SOCKS5 mode, it also bounds how long the proxy waits for a client's request after the client connects. A client that sends no request in time, or speaks another protocol, is disconnected.
+
 ### Usage
 
 **Command-Line Flag**
