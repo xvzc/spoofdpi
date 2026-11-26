@@ -241,7 +241,8 @@ type logStats struct {
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
-// These match messages spoofdpi logs (cmd/spoofdpi/main.go).
+// These match messages spoofdpi logs (cmd/spoofdpi/main.go and, for a
+// missing config file, internal/config/load.go).
 const (
 	startedMsg        = "server started"
 	loadedConfigMsg   = "loaded config file"

@@ -136,17 +136,13 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	}()
 
 	logger.Info().Str("version", version).Msg("spoofdpi")
-	// livetest reads these two messages, and the dir field, to report the
-	// config file its baseline case loaded (internal/livetest/case.go).
+	// livetest reads this message, and the dir field, to report the config
+	// file its baseline case loaded (internal/livetest/case.go). When no file
+	// is found, config.Load adds a warning to config.WarnMsgs instead.
 	if configDir != "" {
 		logger.Info().
 			Str("dir", configDir).
 			Msgf("loaded config file")
-	} else {
-		logger.Warn().
-			Msg("config file not found")
-		logger.Warn().
-			Msg(" please try 'sudo -E spoofdpi' if you expect a configuration to be loaded")
 	}
 
 	for _, m := range config.WarnMsgs {

@@ -9,6 +9,10 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+// configNotFoundMsg is the warning Load adds when it searches the default
+// locations and finds no config file.
+const configNotFoundMsg = "config file not found"
+
 // Load assembles the effective Config from three sources, in precedence
 // order: defaults → TOML → CLI flags. After all layers are merged it
 // runs Finalize (cross-field defaults), resolveRules (eager-resolve
@@ -63,7 +67,8 @@ func Load(cmd *cli.Command, cliOverrides []func(*Config)) (*Config, string, erro
 // for any TOML key that's absent. Raw [[rules]] entries are extracted
 // from the same decoded map so no second file read is needed. Returns the
 // path of the decoded file (or "" if none was loaded) and the captured raw
-// rules.
+// rules. A search that finds no file adds a warning; --clean, which skips
+// the search, does not.
 func loadTOML(cmd *cli.Command, cfg *Config) (string, []map[string]any, error) {
 	if cmd.Bool("clean") {
 		return "", nil, nil
@@ -74,6 +79,12 @@ func loadTOML(cmd *cli.Command, cfg *Config) (string, []map[string]any, error) {
 		return "", nil, err
 	}
 	if configPath == "" {
+		// livetest reads this message to report that spoofdpi found no
+		// config file (internal/livetest/case.go).
+		AddWarnMsg(configNotFoundMsg)
+		AddWarnMsg(
+			" please try 'sudo -E spoofdpi' if you expect a configuration to be loaded",
+		)
 		return "", nil, nil
 	}
 

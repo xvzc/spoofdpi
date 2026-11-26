@@ -212,3 +212,36 @@ func TestDNSFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestLoad_configNotFoundWarning(t *testing.T) {
+	t.Setenv("SPOOFDPI_CONFIG", "")
+	// determineRealHome takes the home from the user database, not $HOME,
+	// and prefers SUDO_USER's; nobody's home has no spoofdpi config.
+	t.Setenv("SUDO_USER", "nobody")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	run := func(t *testing.T, args ...string) []string {
+		t.Helper()
+		WarnMsgs = nil
+		t.Cleanup(func() { WarnMsgs = nil })
+		cmd := CreateCommand(
+			func(context.Context, string, *Config) error { return nil }, "", "", "",
+		)
+		require.NoError(
+			t,
+			cmd.Run(context.Background(), append([]string{"spoofdpi"}, args...)),
+		)
+		return append([]string(nil), WarnMsgs...)
+	}
+
+	t.Run("a search that finds no file warns", func(t *testing.T) {
+		if p, _ := findConfigFile(""); p != "" {
+			t.Skipf("%s exists and would be loaded", p)
+		}
+		assert.Contains(t, run(t), configNotFoundMsg)
+	})
+
+	t.Run("--clean does not search and does not warn", func(t *testing.T) {
+		assert.NotContains(t, run(t, "--clean"), configNotFoundMsg)
+	})
+}
