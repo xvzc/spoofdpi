@@ -137,17 +137,7 @@ func (h *LinuxHandle) LinkType() layers.LinkType {
 		return layers.LinkTypeEthernet
 	}
 
-	// 3. Check for VPN / TUN characteristics
-	// - Case A: No Hardware Address (MAC) -> Typical for TUN devices
-	// - Case B: Point-to-Point Flag -> Typical for VPN tunnels (WireGuard, OpenVPN)
-	if len(iface.HardwareAddr) == 0 || iface.Flags&net.FlagPointToPoint != 0 {
-		// Linux TUN devices provide Raw IP packets (No Link Header)
-		// This corresponds to DLT_RAW (12) or DLT_IPV4/IPV6 (101)
-		return layers.LinkTypeRaw
-	}
-
-	// 4. Default to Ethernet
-	return layers.LinkTypeEthernet
+	return linuxLinkType(iface.Flags, iface.HardwareAddr)
 }
 
 func (h *LinuxHandle) Close() {

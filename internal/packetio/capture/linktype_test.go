@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"net"
 	"testing"
 
 	"github.com/google/gopacket/layers"
@@ -59,4 +60,38 @@ func TestBuildForLink_PPPJumpLimit(t *testing.T) {
 	_, err = buildForLink(layers.LinkTypePPP, programOf(256))
 	assert.EqualError(t, err,
 		"PPP HDLC filter has 256 instructions, more than a BPF jump can skip (255)")
+}
+
+func TestLinuxLinkType(t *testing.T) {
+	mac := net.HardwareAddr{0x02, 0, 0, 0, 0, 1}
+	tcs := []struct {
+		name         string
+		flags        net.Flags
+		hardwareAddr net.HardwareAddr
+		want         layers.LinkType
+	}{
+		{
+			"loopback without an address is Ethernet",
+			net.FlagUp | net.FlagLoopback, nil, layers.LinkTypeEthernet,
+		},
+		{"Ethernet with an address", net.FlagUp, mac, layers.LinkTypeEthernet},
+		{"TUN without an address is Raw", net.FlagUp, nil, layers.LinkTypeRaw},
+		{
+			"loopback with an address is Ethernet",
+			net.FlagUp | net.FlagLoopback, mac, layers.LinkTypeEthernet,
+		},
+		{
+			"point-to-point is Raw",
+			net.FlagUp | net.FlagPointToPoint, mac, layers.LinkTypeRaw,
+		},
+		{
+			"point-to-point without an address is Raw",
+			net.FlagUp | net.FlagPointToPoint, nil, layers.LinkTypeRaw,
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, linuxLinkType(tc.flags, tc.hardwareAddr))
+		})
+	}
 }

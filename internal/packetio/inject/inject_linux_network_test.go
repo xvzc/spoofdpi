@@ -64,10 +64,5 @@ func openLiveCapture(
 	h, err := capture.NewHandleWithReadTimeout(iface, 100*time.Millisecond)
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
-	// lo carries a zeroed Ethernet header, but has no hardware address in
-	// net.Interface, so the handle would report raw IP for it.
-	if iface.Flags&net.FlagLoopback != 0 {
-		return h, layers.LinkTypeEthernet
-	}
 	return h, h.LinkType()
 }

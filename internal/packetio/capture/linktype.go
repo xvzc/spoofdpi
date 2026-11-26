@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 
 	"github.com/google/gopacket/layers"
 )
@@ -30,6 +31,23 @@ func normalizeLinkType(lt layers.LinkType) layers.LinkType {
 		return layers.LinkTypePPP
 	}
 	return lt
+}
+
+// linuxLinkType returns the link type of the frames an AF_PACKET socket
+// bound to a Linux interface with flags and hardwareAddr reads.
+//
+// Loopback frames carry a fake 14-byte Ethernet header (ARPHRD_LOOPBACK),
+// although the all-zero address of lo leaves hardwareAddr empty. Other
+// links without a hardware address, such as TUN devices, and
+// point-to-point links, such as VPN tunnels, carry raw IP.
+func linuxLinkType(flags net.Flags, hardwareAddr net.HardwareAddr) layers.LinkType {
+	if flags&net.FlagLoopback != 0 {
+		return layers.LinkTypeEthernet
+	}
+	if len(hardwareAddr) == 0 || flags&net.FlagPointToPoint != 0 {
+		return layers.LinkTypeRaw
+	}
+	return layers.LinkTypeEthernet
 }
 
 // linkLayout is where the IP header is on a link, and the BPF
