@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -34,20 +35,18 @@ var (
 	build   = "unknown"
 )
 
+// SwitchableWriter writes to a target that can be switched while other
+// goroutines write. SetWriter must be called before the first Write.
 type SwitchableWriter struct {
-	// target is a pointer to an interface, or just the interface itself.
-	// We use a pointer to the interface for direct updates.
-	target io.Writer
+	target atomic.Pointer[io.Writer]
 }
 
 func (sw *SwitchableWriter) SetWriter(w io.Writer) {
-	// Update the underlying value that the pointer references
-	sw.target = w
+	sw.target.Store(&w)
 }
 
 func (sw *SwitchableWriter) Write(p []byte) (n int, err error) {
-	// Access the current writer through the pointer
-	return sw.target.Write(p)
+	return (*sw.target.Load()).Write(p)
 }
 
 type DelayedWriter struct {
@@ -109,7 +108,8 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 		writer: writer,
 		delay:  29 * time.Millisecond,
 	}
-	sw := &SwitchableWriter{target: dw}
+	sw := &SwitchableWriter{}
+	sw.SetWriter(dw)
 
 	logging.SetGlobalLogger(appctx, cfg.App.LogLevel, sw)
 	logger := log.Logger.With().Ctx(appctx).Logger()
@@ -196,7 +196,16 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	// livetest waits for this message to know that spoofdpi is ready
 	// (internal/livetest/case.go).
 	logger.Info().Msgf("server started on %s", srv.Addr())
-	serveCtx := appctx
+	// shutdownCtx ends once the start of shutdown is logged, so the log
+	// comes before the ones of restoring the network and stopping the server.
+	// Shutdown begins on a signal, or when the server stops on its own.
+	shutdownCtx, endShutdownCtx := context.WithCancel(context.WithoutCancel(appctx))
+	beginShutdown := sync.OnceFunc(func() {
+		logger.Info().Msg("shutting down")
+		endShutdownCtx()
+	})
+	context.AfterFunc(appctx, beginShutdown)
+	serveCtx := shutdownCtx
 	if cfg.App.AutoConfigureNetwork {
 		if stateFile, acErr := srv.SetupNetworkJobs(appctx); acErr != nil {
 			// Non-fatal: server is running, just couldn't auto-set
@@ -209,7 +218,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 			// only then shut the server down: closing a TUN device removes
 			// its routes, which would make their reset commands fail.
 			var restore func()
-			serveCtx, restore = shutdownAfter(appctx, func() {
+			serveCtx, restore = shutdownAfter(shutdownCtx, func() {
 				server.ResetJobs(logger, stateFile)
 			})
 			defer restore()
@@ -218,6 +227,8 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 
 	sw.SetWriter(writer)
 
+	// Deferred last, so it runs first: before the network is restored.
+	defer beginShutdown()
 	return srv.Serve(serveCtx)
 }
 
@@ -465,9 +476,9 @@ func createServer(
 	// Clean up stale network state before route discovery so a crashed TUN
 	// session does not leave the routing table in a state that obscures the
 	// real default route.
-	server.ResetJobs(logger, tun.StateFile)
-	server.ResetJobs(logger, http.StateFile)
-	server.ResetJobs(logger, socks5.StateFile)
+	server.ResetStaleJobs(logger, tun.StateFile)
+	server.ResetStaleJobs(logger, http.StateFile)
+	server.ResetStaleJobs(logger, socks5.StateFile)
 
 	// Egress discovery may turn IPv6 off in cfg, so it runs before anything
 	// reads the ipv6 option or the DNS record types.
