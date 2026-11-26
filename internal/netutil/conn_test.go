@@ -113,7 +113,7 @@ func TestRelayOneWay_FirstRead(t *testing.T) {
 		resCh := make(chan relayResult, 1)
 		go relayOneWay(
 			context.Background(), resCh, src, dstEnd, relayDirIn,
-			func(b []byte) { seen = append(seen, append([]byte(nil), b...)) },
+			streamCopy(func(b []byte) { seen = append(seen, append([]byte(nil), b...)) }),
 		)
 
 		got, err := io.ReadAll(client)
@@ -137,7 +137,7 @@ func TestRelayOneWay_FirstRead(t *testing.T) {
 		resCh := make(chan relayResult, 1)
 		go relayOneWay(
 			context.Background(), resCh, srcEnd, dstEnd, relayDirIn,
-			func([]byte) { called = true },
+			streamCopy(func([]byte) { called = true }),
 		)
 
 		got, err := io.ReadAll(client)
@@ -157,7 +157,7 @@ func TestRelayOneWay_FirstRead(t *testing.T) {
 		resCh := make(chan relayResult, 1)
 		go relayOneWay(
 			context.Background(), resCh, &failingConn{err: errReset}, dstEnd,
-			relayDirIn, func([]byte) {},
+			relayDirIn, streamCopy(func([]byte) {}),
 		)
 
 		res := <-resCh
@@ -175,7 +175,7 @@ func TestRelayOneWay_FirstRead(t *testing.T) {
 
 		resCh := make(chan relayResult, 1)
 		go relayOneWay(
-			context.Background(), resCh, srcEnd, dstEnd, relayDirIn, nil,
+			context.Background(), resCh, srcEnd, dstEnd, relayDirIn, streamCopy(nil),
 		)
 
 		got, err := io.ReadAll(client)
@@ -253,7 +253,7 @@ func relay(
 	}()
 
 	resCh := make(chan relayResult, 1)
-	go relayOneWay(context.Background(), resCh, src, dst, relayDirIn, nil)
+	go relayOneWay(context.Background(), resCh, src, dst, relayDirIn, streamCopy(nil))
 
 	got, err := io.ReadAll(client)
 	require.NoError(t, err)
@@ -296,7 +296,9 @@ func TestRelayOneWay_KeepsUDPDatagrams(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	resCh := make(chan relayResult, 1)
-	go relayOneWay(ctx, resCh, src, dst, relayDirIn, nil)
+	go relayOneWay(ctx, resCh, src, dst, relayDirIn, datagramCopy(
+		func(size int, err error) { t.Errorf("dropped a %d-byte datagram: %v", size, err) },
+	))
 
 	// Within the 9216-byte datagram limit of macOS.
 	sizes := []int{1, 1400, 8000, 1400}
@@ -471,7 +473,14 @@ func TestRelayOneWay_BufferedConn(t *testing.T) {
 				require.Positive(t, src.r.Buffered())
 
 				resCh := make(chan relayResult, 1)
-				go relayOneWay(context.Background(), resCh, src, dst, relayDirOut, nil)
+				go relayOneWay(
+					context.Background(),
+					resCh,
+					src,
+					dst,
+					relayDirOut,
+					streamCopy(nil),
+				)
 
 				got, err := io.ReadAll(client)
 				require.NoError(t, err)
@@ -746,4 +755,94 @@ func TestRelayBidirectional(t *testing.T) {
 		_, err = remotePeer.Read(make([]byte, 1))
 		assert.ErrorIs(t, err, io.EOF, "the remote conn is closed")
 	})
+}
+
+// datagramConn is a net.Conn that reads and writes one datagram at a time,
+// as a UDP socket does: a read into a buffer smaller than the datagram
+// gets its head, and the rest is lost. A write of more than maxWrite bytes
+// fails, when maxWrite is set.
+type datagramConn struct {
+	net.Conn
+	in       chan []byte
+	maxWrite int
+	written  [][]byte
+}
+
+func (c *datagramConn) Read(p []byte) (int, error) {
+	d, ok := <-c.in
+	if !ok {
+		return 0, net.ErrClosed
+	}
+	return copy(p, d), nil
+}
+
+func (c *datagramConn) Write(p []byte) (int, error) {
+	if c.maxWrite > 0 && len(p) > c.maxWrite {
+		return 0, errors.New("message too long")
+	}
+	c.written = append(c.written, append([]byte(nil), p...))
+	return len(p), nil
+}
+
+// A datagram larger than the buffer of the stream relays is relayed whole,
+// and the datagrams keep their bounds.
+func TestDatagramCopy_RelaysWholeDatagrams(t *testing.T) {
+	sizes := []int{40 * 1024, 1, maxDatagram - 28, 1400}
+	src := &datagramConn{in: make(chan []byte, len(sizes))}
+	for _, size := range sizes {
+		src.in <- patternBytes(size)
+	}
+	close(src.in)
+	dst := &datagramConn{}
+
+	n, err := datagramCopy(func(size int, err error) {
+		t.Errorf("dropped a %d-byte datagram: %v", size, err)
+	})(dst, src)
+
+	assert.ErrorIs(t, err, net.ErrClosed)
+	require.Len(t, dst.written, len(sizes))
+	var total int64
+	for i, size := range sizes {
+		assert.Equal(t, patternBytes(size), dst.written[i], "datagram %d", i)
+		total += int64(size)
+	}
+	assert.Equal(t, total, n)
+}
+
+// A datagram that dst does not take is dropped, and the ones after it are
+// still relayed.
+func TestDatagramCopy_DropsWhatDstRejects(t *testing.T) {
+	src := &datagramConn{in: make(chan []byte, 3)}
+	src.in <- patternBytes(100)
+	src.in <- patternBytes(2000)
+	src.in <- patternBytes(100)
+	close(src.in)
+	dst := &datagramConn{maxWrite: 1000}
+
+	var dropped []int
+	n, _ := datagramCopy(func(size int, err error) {
+		dropped = append(dropped, size)
+		assert.EqualError(t, err, "message too long")
+	})(dst, src)
+
+	assert.Equal(t, []int{2000}, dropped)
+	assert.Len(t, dst.written, 2)
+	assert.Equal(t, int64(200), n)
+}
+
+// A dst that is closed ends the copy.
+func TestDatagramCopy_EndsWhenDstCloses(t *testing.T) {
+	src := &datagramConn{in: make(chan []byte, 2)}
+	src.in <- []byte("a")
+	src.in <- []byte("b")
+	close(src.in)
+	a, b := net.Pipe()
+	_ = a.Close()
+	_ = b.Close()
+
+	called := false
+	_, err := datagramCopy(func(int, error) { called = true })(a, src)
+
+	assert.ErrorIs(t, err, io.ErrClosedPipe)
+	assert.False(t, called)
 }

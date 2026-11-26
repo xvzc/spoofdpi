@@ -922,3 +922,37 @@ func TestUdpAssociateHandler_Handle_NoFlowLimit(t *testing.T) {
 	}
 	assert.Equal(t, 2, a.flowCount())
 }
+
+// A reply that is too large to send to the client once the SOCKS5 header
+// is added is dropped, and the flow goes on: the next reply reaches the
+// client.
+func TestUdpAssociateHandler_Handle_DropsReplyTooLargeForClient(t *testing.T) {
+	upstream, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = upstream.Close() })
+	go func() {
+		buf := make([]byte, 1500)
+		_, addr, err := upstream.ReadFromUDP(buf)
+		if err != nil {
+			return
+		}
+		// The largest datagram this host sends, 65507 bytes or the 9216
+		// of macOS: with the header added, the reply exceeds it.
+		for _, size := range []int{65507, 9216} {
+			if _, err := upstream.WriteToUDP(make([]byte, size), addr); err == nil {
+				break
+			}
+		}
+		_, _ = upstream.WriteToUDP([]byte("after"), addr)
+	}()
+
+	a := startUdpAssociation(
+		t,
+		newRelayingUdpAssociateHandler(t, &config.RuntimeConfig{}),
+	)
+	dst := upstream.LocalAddr().(*net.UDPAddr)
+	a.send(t, dst, "ping")
+
+	assert.Equal(t, "after", a.receive(t))
+	assert.True(t, a.hasFlow(dst))
+}

@@ -84,13 +84,7 @@ func (h *UDPHandler) Handle(
 		Str("local", rawConn.LocalAddr().String()).
 		Msgf("new remote conn (%s -> %s)", lConn.RemoteAddr(), rConnWrapped.RemoteAddr())
 
-	err = netutil.RelayBidirectional(
-		ctx,
-		logger,
-		lConnWrapped,
-		rConnWrapped,
-		netutil.RelayOptions{},
-	)
+	err = netutil.RelayUDPBidirectional(ctx, logger, lConnWrapped, rConnWrapped)
 	if err != nil {
 		logger.Error().Err(err).Msg("error handling request")
 	}

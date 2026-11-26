@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -504,10 +505,15 @@ func (c *udpAssociateConn) relayInbound(
 		response := append(header, respBuf[:n]...)
 
 		if _, err := c.relay.WriteToUDP(response, clientAddr); err != nil {
-			// If we can't write back to the client, it might be gone or network issue.
-			// Exit this goroutine to avoid busy looping.
-			c.logger.Warn().Err(err).Msg("failed to write udp to client")
-			return
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			// A datagram may be lost: drop this one, such as a reply too
+			// large to send once the header is added, and keep the flow.
+			c.logger.Debug().
+				Int("size", len(response)).
+				Err(err).
+				Msg("dropped a datagram to the client")
 		}
 	}
 }

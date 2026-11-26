@@ -31,9 +31,9 @@ type relayResult struct {
 	Err     error
 }
 
-// bufferPool is a package-level pool of 32KB buffers that the relays copy
-// with, to reduce memory allocations and GC pressure in the hot path. A
-// relay between two *net.TCPConns doesn't use it (see copyConns).
+// bufferPool is a package-level pool of 32KB buffers that the stream
+// relays copy with, to reduce memory allocations and GC pressure in the hot
+// path. A relay between two *net.TCPConns doesn't use it (see copyConns).
 var bufferPool = sync.Pool{
 	New: func() any {
 		// We allocate a pointer to a byte slice.
@@ -43,12 +43,78 @@ var bufferPool = sync.Pool{
 	},
 }
 
-// relayOneWay copies data from src to dst, and sends the result to resCh
-// upon completion. When onFirst is not nil, it hands the bytes of the first
-// read from src to onFirst, before it writes them to dst; onFirst must not
-// change or keep them. It copies the rest between the conns that src and
-// dst wrap, when they are BufferedConns, so that on Linux a TCP src and dst
-// keep the kernel splice.
+// maxDatagram is the size of the largest UDP datagram: its length field
+// is 16 bits. The payload of a datagram is always smaller, so a read into
+// a buffer of this size gets the whole datagram.
+const maxDatagram = 65535
+
+// datagramPool is the pool of buffers that the datagram relays copy with.
+var datagramPool = sync.Pool{
+	New: func() any {
+		b := make([]byte, maxDatagram)
+		return &b
+	},
+}
+
+// copier copies from src to dst until src ends or an error, and returns
+// the number of bytes it wrote.
+type copier func(dst io.Writer, src io.Reader) (int64, error)
+
+// streamCopy returns the copier of a stream relay. When onFirst is not
+// nil, it hands the bytes of the first read from src to onFirst, before it
+// writes them to dst; onFirst must not change or keep them. It copies the
+// rest between the conns that src and dst wrap, when they are
+// BufferedConns, so that on Linux a TCP src and dst keep the kernel
+// splice.
+func streamCopy(onFirst func(first []byte)) copier {
+	return func(dst io.Writer, src io.Reader) (int64, error) {
+		bufPtr := bufferPool.Get().(*[]byte)
+		defer bufferPool.Put(bufPtr)
+		if onFirst == nil {
+			return copyConns(dst, src, *bufPtr)
+		}
+		return copyAfterFirstRead(dst, src, *bufPtr, onFirst)
+	}
+}
+
+// datagramCopy returns the copier of a datagram relay: each read from src
+// is one datagram, which it writes to dst in one write, whole. A datagram
+// that dst fails to take, such as one too large for it, is dropped and
+// handed to onDrop with the error; the copy goes on, as a datagram may be
+// lost anyway. A closed conn or a timeout still ends the copy.
+func datagramCopy(onDrop func(size int, err error)) copier {
+	return func(dst io.Writer, src io.Reader) (int64, error) {
+		bufPtr := datagramPool.Get().(*[]byte)
+		defer datagramPool.Put(bufPtr)
+		buf := *bufPtr
+
+		var written int64
+		for {
+			n, rerr := src.Read(buf)
+			if n > 0 {
+				nw, werr := dst.Write(buf[:n])
+				switch {
+				case werr == nil:
+					written += int64(nw)
+				case errors.Is(werr, net.ErrClosed) ||
+					errors.Is(werr, io.ErrClosedPipe) || os.IsTimeout(werr):
+					return written, werr
+				default:
+					onDrop(n, werr)
+				}
+			}
+			if rerr != nil {
+				if rerr == io.EOF {
+					rerr = nil
+				}
+				return written, rerr
+			}
+		}
+	}
+}
+
+// relayOneWay copies data from src to dst with cp, and sends the result to
+// resCh upon completion.
 // It filters out benign errors like EOF, pipe closed, or read timeouts (for UDP).
 func relayOneWay(
 	ctx context.Context,
@@ -56,7 +122,7 @@ func relayOneWay(
 	src net.Conn,
 	dst net.Conn,
 	dir relayDir,
-	onFirst func(first []byte),
+	cp copier,
 ) {
 	var once sync.Once
 	closeOnce := func() {
@@ -72,17 +138,7 @@ func relayOneWay(
 		closeOnce()
 	}()
 
-	bufPtr := bufferPool.Get().(*[]byte)
-	defer bufferPool.Put(bufPtr)
-
-	var n int64
-	var err error
-	if onFirst == nil {
-		// Copy data from src to dst using the borrowed buffer.
-		n, err = copyConns(dst, src, *bufPtr)
-	} else {
-		n, err = copyAfterFirstRead(dst, src, *bufPtr, onFirst)
-	}
+	n, err := cp(dst, src)
 
 	// Filter benign errors.
 	// os.IsTimeout is checked to handle UDP idle timeouts gracefully.
@@ -182,16 +238,57 @@ type RelayOptions struct {
 	HandleErrs func(errs []error) error
 }
 
-// RelayBidirectional copies between client and remote in both directions
-// until either side ends, then waits for both directions, logs a summary at
-// trace level and returns the error opts.HandleErrs makes of the directions'
-// errors, or the first one. Each direction closes both conns when it ends,
-// and so does the cancellation of ctx.
+// RelayBidirectional copies the streams between client and remote in both
+// directions until either side ends, then waits for both directions, logs a
+// summary at trace level and returns the error opts.HandleErrs makes of the
+// directions' errors, or the first one. Each direction closes both conns
+// when it ends, and so does the cancellation of ctx.
 func RelayBidirectional(
 	ctx context.Context,
 	logger zerolog.Logger,
 	client, remote net.Conn,
 	opts RelayOptions,
+) error {
+	return relayWith(
+		ctx, logger, client, remote,
+		streamCopy(nil), streamCopy(opts.OnFirstReply), opts.HandleErrs,
+	)
+}
+
+// RelayUDPBidirectional relays the datagrams between client and remote,
+// which read and write one datagram at a time, as RelayBidirectional relays
+// streams. Each datagram is relayed whole, and one that cannot be sent is
+// dropped with a debug log; the relay goes on until a conn is closed or
+// times out, or ctx is canceled.
+func RelayUDPBidirectional(
+	ctx context.Context,
+	logger zerolog.Logger,
+	client, remote net.Conn,
+) error {
+	onDrop := func(dir string) func(int, error) {
+		return func(size int, err error) {
+			logger.Debug().
+				Str("dir", dir).
+				Int("size", size).
+				Err(err).
+				Msg("dropped a datagram")
+		}
+	}
+	return relayWith(
+		ctx, logger, client, remote,
+		datagramCopy(onDrop("out")), datagramCopy(onDrop("in")), nil,
+	)
+}
+
+// relayWith runs the two directions of a relay between client and remote with
+// out and in, and returns the error handleErrs makes of their errors, or
+// the first one.
+func relayWith(
+	ctx context.Context,
+	logger zerolog.Logger,
+	client, remote net.Conn,
+	out, in copier,
+	handleErrs func(errs []error) error,
 ) error {
 	resCh := make(chan relayResult, 2)
 
@@ -201,8 +298,8 @@ func RelayBidirectional(
 	route := DescribeRoute(client, remote)
 
 	startedAt := time.Now()
-	go relayOneWay(ctx, resCh, client, remote, relayDirOut, nil)
-	go relayOneWay(ctx, resCh, remote, client, relayDirIn, opts.OnFirstReply)
+	go relayOneWay(ctx, resCh, client, remote, relayDirOut, out)
+	go relayOneWay(ctx, resCh, remote, client, relayDirIn, in)
 
 	var (
 		outBytes int64
@@ -235,8 +332,8 @@ func RelayBidirectional(
 		Int("errs", len(errs)).
 		Msg("tunnel closed")
 
-	if opts.HandleErrs != nil {
-		return opts.HandleErrs(errs)
+	if handleErrs != nil {
+		return handleErrs(errs)
 	}
 
 	if len(errs) > 0 {
