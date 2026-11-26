@@ -342,3 +342,92 @@ func TestTCPHandler_Handle_AppliedConfig(t *testing.T) {
 		})
 	}
 }
+
+// plainSysNet dials without binding to an interface.
+type plainSysNet struct{ TUNSystemNetwork }
+
+func (plainSysNet) BindDialer(*net.Dialer, string, net.IP) error { return nil }
+
+// A client that sends nothing first, as in a protocol where the server
+// speaks first such as SSH, is relayed as plain TCP once the wait for its
+// first byte ends: the banner of the server reaches it, and then its
+// reply reaches the server.
+func TestTCPHandler_Handle_ServerSpeaksFirst(t *testing.T) {
+	const banner = "SSH-2.0-test\r\n"
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		if _, err := conn.Write([]byte(banner)); err != nil {
+			return
+		}
+		_, _ = io.Copy(conn, conn)
+	}()
+
+	h := NewTCPHandler(
+		zerolog.Nop(),
+		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+		server.NewTLSAlertWatcher(),
+		rule.NewRuleSet(),
+		&config.RuntimeConfig{},
+	)
+	h.firstByteWait = 50 * time.Millisecond
+
+	lConn, peer := net.Pipe()
+	require.NoError(t, peer.SetDeadline(time.Now().Add(5*time.Second)))
+	addr := ln.Addr().(*net.TCPAddr)
+	dst := &netutil.Destination{Addrs: []net.IP{addr.IP}, Port: addr.Port}
+
+	done := make(chan struct{})
+	go func() {
+		h.Handle(context.Background(), lConn, dst, plainSysNet{})
+		close(done)
+	}()
+
+	got := make([]byte, len(banner))
+	_, err = io.ReadFull(peer, got)
+	require.NoError(t, err)
+	assert.Equal(t, banner, string(got))
+
+	_, err = peer.Write([]byte("ping"))
+	require.NoError(t, err)
+	got = make([]byte, 4)
+	_, err = io.ReadFull(peer, got)
+	require.NoError(t, err)
+	assert.Equal(t, "ping", string(got))
+
+	_ = peer.Close()
+	<-done
+}
+
+// A client that closes before it sends anything is not relayed.
+func TestTCPHandler_Handle_ClosedBeforeData(t *testing.T) {
+	h := NewTCPHandler(
+		zerolog.Nop(),
+		desync.NewTLSDesyncer(zerolog.Nop(), nil, nil, nil, nil),
+		server.NewTLSAlertWatcher(),
+		rule.NewRuleSet(),
+		&config.RuntimeConfig{},
+	)
+	lConn, peer := net.Pipe()
+	_ = peer.Close()
+
+	sysNet := &deadlineRecordingSysNet{}
+	dst := &netutil.Destination{Addrs: []net.IP{net.ParseIP("203.0.113.7")}, Port: 22}
+	done := make(chan struct{})
+	go func() {
+		h.Handle(context.Background(), lConn, dst, sysNet)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Handle did not return")
+	}
+	assert.Zero(t, sysNet.dials.Load())
+}

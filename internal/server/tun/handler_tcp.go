@@ -2,8 +2,10 @@ package tun
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"github.com/rs/zerolog"
@@ -22,7 +24,16 @@ type TCPHandler struct {
 	cfg      *config.RuntimeConfig
 	desyncer *desync.TLSDesyncer
 	alerts   *server.TLSAlertWatcher
+	// firstByteWait is how long Handle waits for the first byte of the
+	// client to tell TLS from other TCP.
+	firstByteWait time.Duration
 }
+
+// firstByteWait is the default of TCPHandler.firstByteWait. A client on
+// the TUN sends its ClientHello as soon as the local stack accepts the
+// connection, so a second is ample; a client of a protocol where the
+// server speaks first is relayed after it.
+const firstByteWait = time.Second
 
 func NewTCPHandler(
 	logger zerolog.Logger,
@@ -37,6 +48,8 @@ func NewTCPHandler(
 		cfg:      cfg,
 		desyncer: desyncer,
 		alerts:   alerts,
+
+		firstByteWait: firstByteWait,
 	}
 }
 
@@ -50,20 +63,19 @@ func (h *TCPHandler) Handle(
 
 	logger := logging.WithLocalScope(ctx, h.logger, "tcp")
 
-	// Set a read deadline for the first byte to avoid hanging indefinitely
-	_ = lConn.SetReadDeadline(time.Now().Add(1 * time.Second))
-
+	// Wait a while for the first byte, to tell TLS from other TCP. A
+	// client that sends nothing by then may be waiting for the server to
+	// speak first, as in SSH, and is relayed as other TCP.
+	_ = lConn.SetReadDeadline(time.Now().Add(h.firstByteWait))
 	lBufferedConn := netutil.NewBufferedConn(lConn)
 	buf, err := lBufferedConn.Peek(1)
-	if err != nil {
+	_ = lConn.SetReadDeadline(time.Time{})
+	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
 		return
 	}
 
-	// Reset deadline
-	_ = lConn.SetReadDeadline(time.Time{})
-
 	// Check if it's a TLS Handshake (Content Type 0x16)
-	if buf[0] == 0x16 {
+	if err == nil && buf[0] == 0x16 {
 		logger.Debug().Msg("detected tls handshake")
 		if err := h.handleTLS(
 			ctx,
