@@ -223,3 +223,50 @@ func TestRule_IPv4Only(t *testing.T) {
 		})
 	}
 }
+
+func TestDNSQueryType_followsIPv6(t *testing.T) {
+	const rules = `
+[[rules]]
+name = "unset"
+match = { domains = ["a.example"] }
+
+[[rules]]
+name = "on"
+match = { domains = ["b.example"] }
+ipv6 = true
+
+[[rules]]
+name = "off"
+match = { domains = ["c.example"] }
+ipv6 = false
+`
+
+	tcs := []struct {
+		name      string
+		args      []string
+		wantBase  DNSQueryType
+		wantRules []DNSQueryType // unset, on, off
+	}{
+		{
+			name:      "ipv6 off",
+			wantBase:  DNSQueryIPv4,
+			wantRules: []DNSQueryType{DNSQueryIPv4, DNSQueryAll, DNSQueryIPv4},
+		},
+		{
+			name:      "ipv6 on",
+			args:      []string{"--ipv6"},
+			wantBase:  DNSQueryAll,
+			wantRules: []DNSQueryType{DNSQueryAll, DNSQueryAll, DNSQueryIPv4},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, _ := runWithTOML(t, rules, tc.args...)
+			assert.Equal(t, tc.wantBase, cfg.DNS.QType)
+			require.Len(t, cfg.Rules, len(tc.wantRules))
+			for i, want := range tc.wantRules {
+				assert.Equal(t, want, cfg.Rules[i].Config.DNS.QType, cfg.Rules[i].Name)
+			}
+		})
+	}
+}

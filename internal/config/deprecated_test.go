@@ -9,6 +9,86 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The removed 'cache' option is still accepted, with a warning, and has no
+// effect: DNS answers are always cached.
+func TestDNSCacheDeprecated(t *testing.T) {
+	const warnTOML = "'dns.cache' is deprecated and ignored; DNS answers are always cached"
+
+	t.Run("dns section", func(t *testing.T) {
+		cfg, warns := runWithTOML(t, "[dns]\ncache = true\nmode = \"system\"\n")
+		assert.Equal(t, DNSModeSystem, cfg.DNS.Mode)
+		assert.Contains(t, warns, warnTOML)
+	})
+
+	t.Run("rule dns section", func(t *testing.T) {
+		cfg, warns := runWithTOML(t, `
+[[rules]]
+name = "r"
+match = { domains = ["example.com"] }
+dns = { cache = false, mode = "https" }
+`)
+		require.Len(t, cfg.Rules, 1)
+		assert.Equal(t, DNSModeHTTPS, cfg.Rules[0].Config.DNS.Mode)
+		assert.Contains(t, warns, "rule 0: "+warnTOML)
+	})
+
+	t.Run("flag", func(t *testing.T) {
+		_, warns := runWithTOML(t, "", "--dns-cache")
+		assert.Contains(
+			t,
+			warns,
+			"'--dns-cache' is deprecated and ignored; DNS answers are always cached",
+		)
+	})
+
+	t.Run("no warning without the option", func(t *testing.T) {
+		_, warns := runWithTOML(t, "[dns]\nmode = \"system\"\n")
+		assert.Empty(t, warns)
+	})
+}
+
+// The removed 'qtype' option is still accepted, with a warning, and has no
+// effect: the record types follow the ipv6 option.
+func TestDNSQTypeDeprecated(t *testing.T) {
+	const warnTOML = "'dns.qtype' is deprecated and ignored; " +
+		"set 'ipv6 = true' in [app], or in the rule, to resolve IPv6 addresses"
+
+	t.Run("dns section", func(t *testing.T) {
+		cfg, warns := runWithTOML(t, "[dns]\nqtype = \"ipv6\"\n")
+		assert.Equal(t, DNSQueryIPv4, cfg.DNS.QType)
+		assert.Contains(t, warns, warnTOML)
+	})
+
+	t.Run("rule dns section", func(t *testing.T) {
+		cfg, warns := runWithTOML(t, `
+[[rules]]
+name = "r"
+match = { domains = ["example.com"] }
+dns = { qtype = "all" }
+`)
+		require.Len(t, cfg.Rules, 1)
+		assert.Equal(t, DNSQueryIPv4, cfg.Rules[0].Config.DNS.QType)
+		assert.Contains(t, warns, "rule 0: "+warnTOML)
+	})
+
+	t.Run("flag", func(t *testing.T) {
+		cfg, warns := runWithTOML(t, "", "--dns-qtype", "all")
+		assert.Equal(t, DNSQueryIPv4, cfg.DNS.QType)
+		assert.Contains(
+			t,
+			warns,
+			"'--dns-qtype' is deprecated and ignored; use '--ipv6' to resolve IPv6 addresses",
+		)
+	})
+
+	t.Run("flag is hidden", func(t *testing.T) {
+		cmd := CreateCommand(nil, "v0.0.0", "commit", "build")
+		for _, f := range cmd.VisibleFlags() {
+			assert.NotContains(t, f.Names(), "dns-qtype")
+		}
+	})
+}
+
 func TestFakePreflightRename(t *testing.T) {
 	t.Run("new flags", func(t *testing.T) {
 		cfg, warns := runWithTOML(
@@ -258,4 +338,100 @@ func TestRenamedFlagsHiddenFromHelp(t *testing.T) {
 		assert.NotContains(t, out.String(), name+" ")
 	}
 	assert.Contains(t, out.String(), "chunk:N")
+}
+
+func TestHopCountDefaultRename(t *testing.T) {
+	t.Run("new flag", func(t *testing.T) {
+		cfg, warns := runWithTOML(t, "", "--hop-count-default", "12")
+		assert.Equal(t, uint8(12), cfg.Conn.HopCountDefault)
+		assert.Empty(t, warns)
+	})
+
+	t.Run("deprecated flag still works and warns", func(t *testing.T) {
+		cfg, warns := runWithTOML(t, "", "--default-fake-ttl", "12")
+		assert.Equal(t, uint8(12), cfg.Conn.HopCountDefault)
+		assert.Contains(
+			t,
+			warns,
+			"'--default-fake-ttl' is deprecated; use '--hop-count-default'",
+		)
+	})
+
+	// urfave/cli runs flag actions in map order, so check both orders.
+	for _, args := range [][]string{
+		{"--hop-count-default", "12", "--default-fake-ttl", "20"},
+		{"--default-fake-ttl", "20", "--hop-count-default", "12"},
+	} {
+		t.Run("new flag wins over deprecated flag", func(t *testing.T) {
+			cfg, _ := runWithTOML(t, "", args...)
+			assert.Equal(t, uint8(12), cfg.Conn.HopCountDefault)
+		})
+	}
+
+	t.Run("deprecated flag overrides TOML", func(t *testing.T) {
+		cfg, _ := runWithTOML(
+			t,
+			"[connection]\nhop-count-default = 12\n",
+			"--default-fake-ttl",
+			"20",
+		)
+		assert.Equal(t, uint8(20), cfg.Conn.HopCountDefault)
+	})
+
+	t.Run("new TOML key", func(t *testing.T) {
+		cfg, warns := runWithTOML(t, "[connection]\nhop-count-default = 12\n")
+		assert.Equal(t, uint8(12), cfg.Conn.HopCountDefault)
+		assert.Empty(t, warns)
+	})
+
+	t.Run("deprecated TOML key still works and warns", func(t *testing.T) {
+		cfg, warns := runWithTOML(t, "[connection]\ndefault-fake-ttl = 12\n")
+		assert.Equal(t, uint8(12), cfg.Conn.HopCountDefault)
+		assert.Contains(
+			t,
+			warns,
+			"'default-fake-ttl' is deprecated; rename to 'hop-count-default'",
+		)
+	})
+
+	t.Run("deprecated TOML key is ignored when the new one is set", func(t *testing.T) {
+		cfg, warns := runWithTOML(
+			t,
+			"[connection]\nhop-count-default = 12\ndefault-fake-ttl = 20\n",
+		)
+		assert.Equal(t, uint8(12), cfg.Conn.HopCountDefault)
+		assert.Contains(
+			t,
+			warns,
+			"'default-fake-ttl' is ignored because 'hop-count-default' is set",
+		)
+	})
+
+	t.Run("rule connection section", func(t *testing.T) {
+		cfg, warns := runWithTOML(t, `
+[[rules]]
+name = "r"
+match = { domains = ["example.com"] }
+connection = { default-fake-ttl = 20 }
+`)
+		require.Len(t, cfg.Rules, 1)
+		assert.Equal(t, uint8(20), cfg.Rules[0].Config.Conn.HopCountDefault)
+		assert.Contains(
+			t,
+			warns,
+			"rule 0: 'default-fake-ttl' is deprecated; rename to 'hop-count-default'",
+		)
+	})
+
+	t.Run("help lists the new flag only", func(t *testing.T) {
+		var out bytes.Buffer
+		cmd := CreateCommand(
+			func(context.Context, string, *Config) error { return nil },
+			"v0.0.0", "commit", "build",
+		)
+		cmd.Writer = &out
+		require.NoError(t, cmd.Run(context.Background(), []string{"spoofdpi", "--help"}))
+		assert.Contains(t, out.String(), "--hop-count-default")
+		assert.NotContains(t, out.String(), "--default-fake-ttl")
+	})
 }
