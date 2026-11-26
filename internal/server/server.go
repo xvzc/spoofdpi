@@ -33,10 +33,12 @@ type Server interface {
 	// conn and UDP flow of the TUN device.
 	ActiveConns() int64
 
-	// SetupNetworkJobs builds the job list, saves it to the state file, and
-	// returns the state file path. On darwin, HTTP/SOCKS5 also start the PAC
-	// server, tied to ctx so it shuts down automatically when ctx is cancelled.
-	// The returned path may be empty when the platform has nothing to configure.
+	// SetupNetworkJobs builds the job list, saves it to the server's state
+	// file, and returns the state file path. The TUN server does so on every
+	// platform. The HTTP and SOCKS5 proxies have jobs only on darwin, where
+	// they also start the PAC server the system proxy points at, which shuts
+	// down when ctx is cancelled; elsewhere they save nothing but still
+	// return the path.
 	SetupNetworkJobs(ctx context.Context) (string, error)
 }
 

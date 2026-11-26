@@ -279,11 +279,7 @@ func setupNetworkStack(
 		Str("name", rt.Iface.Name).
 		Msg(" interface")
 
-	sender, sErr := desync.OpenIPv4Sender(
-		ctx,
-		logger,
-		fakeSenderOptions(cfg, rt),
-	)
+	sender, sErr := desync.OpenIPv4Sender(fakeSenderOptions(cfg, rt))
 	if sErr != nil {
 		err = fakeSenderError(sErr)
 		return

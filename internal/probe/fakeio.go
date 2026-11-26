@@ -77,7 +77,7 @@ func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error)
 	if err != nil {
 		return nil, err
 	}
-	sender, err := desync.OpenIPv4Sender(ctx, zerolog.Nop(), inject.Options{})
+	sender, err := desync.OpenIPv4Sender(inject.Options{})
 	if errors.Is(err, inject.ErrNeedsRoot) {
 		return nil, fmt.Errorf("%w: %w", errFakeCapture, err)
 	}
