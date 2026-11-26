@@ -76,6 +76,77 @@ func TestApplyJobs_OptionalFailureKeepsEarlierJobs(t *testing.T) {
 		"a failed optional job must not be reset")
 }
 
+func TestApplyJobs_GroupFailureSkipsLaterGroupJobs(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "state")
+	groupBefore := fileJob(dir, "group-before", true)
+	groupBefore.Group = "g"
+	failed := failingJob(dir, "group-failed", true)
+	failed.Group = "g"
+	groupAfter := fileJob(dir, "group-after", true)
+	groupAfter.Group = "g"
+	groupAfter.Warning = "group-after applied"
+	other := fileJob(dir, "other", true)
+	other.Group = "h"
+	ungrouped := fileJob(dir, "ungrouped", false)
+	require.NoError(t, SaveJobs(state, []NetworkJob{
+		groupBefore,
+		failed,
+		groupAfter,
+		other,
+		ungrouped,
+	}))
+
+	var logs bytes.Buffer
+	require.NoError(t, ApplyJobs(zerolog.New(&logs), state))
+
+	assert.True(t, fileExists(dir, "group-before"),
+		"a group job before the failure stays applied")
+	assert.False(t, fileExists(dir, "group-after"),
+		"a group job after the failure must be skipped")
+	assert.True(t, fileExists(dir, "other"), "another group is not affected")
+	assert.True(t, fileExists(dir, "ungrouped"), "a job without a group is applied")
+	assert.Contains(t, logs.String(), "an earlier job of its group failed")
+	assert.Contains(t, logs.String(), `"job":"group-after"`)
+	assert.NotContains(t, logs.String(), "group-after applied",
+		"a skipped job's warning must not be logged")
+
+	jobs, ok, err := LoadJobs(state)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Equal(t, []NetworkJob{groupBefore, other, ungrouped}, jobs,
+		"the failed and the skipped jobs must be dropped from the state")
+
+	ResetJobs(zerolog.Nop(), state)
+	assert.False(t, fileExists(dir, "group-before"))
+	assert.False(t, fileExists(dir, "other"))
+	assert.False(t, fileExists(dir, "ungrouped"))
+	assert.False(t, fileExists(dir, "group-failed.reset"))
+}
+
+func TestApplyJobs_GroupSkipsJobWithoutApply(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "state")
+	failed := failingJob(dir, "failed", true)
+	failed.Group = "g"
+	resetOnly := NetworkJob{
+		Description: "reset only",
+		Reset:       "touch " + executil.Quote(filepath.Join(dir, "reset-only.reset")),
+		Group:       "g",
+	}
+	require.NoError(t, SaveJobs(state, []NetworkJob{failed, resetOnly}))
+
+	require.NoError(t, ApplyJobs(zerolog.Nop(), state))
+
+	jobs, ok, err := LoadJobs(state)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Empty(t, jobs)
+	ResetJobs(zerolog.Nop(), state)
+	assert.False(t, fileExists(dir, "reset-only.reset"),
+		"a skipped job must not be reset")
+}
+
 func TestApplyJobs_RequiredFailureRollsBack(t *testing.T) {
 	dir := t.TempDir()
 	state := filepath.Join(dir, "state")
@@ -101,6 +172,7 @@ func TestSaveJobs_RoundTrip(t *testing.T) {
 	jobs := []NetworkJob{
 		{Description: "required", Apply: "a", Reset: "r"},
 		{Description: "optional", Apply: "a", Reset: "r", Optional: true, Warning: "w"},
+		{Description: "grouped", Apply: "a", Reset: "r", Optional: true, Group: "g"},
 	}
 	require.NoError(t, SaveJobs(state, jobs))
 
@@ -111,6 +183,8 @@ func TestSaveJobs_RoundTrip(t *testing.T) {
 
 	raw, err := os.ReadFile(state)
 	require.NoError(t, err)
-	assert.Equal(t, 1, bytes.Count(raw, []byte(`"optional": true`)),
+	assert.Equal(t, 2, bytes.Count(raw, []byte(`"optional": true`)),
 		"a required job must not write the optional field")
+	assert.Equal(t, 1, bytes.Count(raw, []byte(`"group"`)),
+		"a job without a group must not write the group field")
 }

@@ -27,7 +27,7 @@ With `ipv6` off (the default), spoofdpi routes no IPv6 traffic into the TUN inte
 
 With `ipv6` on but IPv6 disabled at startup, because no usable IPv6 route was found or a full-tunnel VPN carries IPv6 (see [`ipv6`](#ipv6)), spoofdpi runs as with `ipv6` off. When the system still has an IPv6 route to the internet, spoofdpi logs a warning that IPv6 was disabled and that IPv6 traffic bypasses spoofdpi.
 
-With `ipv6` on, when [`auto-configure-network`](#auto-configure-network) sets up the TUN routes and the system has an IPv6 route to the internet, spoofdpi also routes global IPv6 addresses (`2000::/3`) into the TUN interface and refuses every connection to them: TCP connections are reset, and UDP datagrams get an ICMPv6 "port unreachable". Applications that support both IP versions, such as browsers and curl, then fall back to IPv4, which spoofdpi proxies. spoofdpi logs a warning at startup when it adds this route.
+With `ipv6` on, when [`auto-configure-network`](#auto-configure-network) sets up the TUN routes and the system has an IPv6 route to the internet, spoofdpi also routes global IPv6 addresses (`2000::/3`) into the TUN interface and refuses every connection to them: TCP connections are reset, and UDP datagrams get an ICMPv6 "port unreachable". Applications that support both IP versions, such as browsers and curl, then fall back to IPv4, which spoofdpi proxies. spoofdpi logs a warning at startup when it starts routing IPv6 into the TUN interface.
 
 With `ipv6` on:
 
@@ -36,11 +36,19 @@ With `ipv6` on:
 - Link-local, unique local (`fc00::/7`) and multicast IPv6 addresses keep their normal routes.
 - Pings to global IPv6 addresses get replies, but spoofdpi sends them itself; a reply does not mean IPv6 works.
 - When the system has no IPv6 route to the internet, spoofdpi adds no IPv6 route. On Linux it also adds none when IPv6 is disabled on the TUN interface.
-- If the system refuses the IPv6 route, spoofdpi logs a warning and keeps running with IPv4 only; IPv6 traffic then bypasses spoofdpi.
+- If the system refuses the IPv6 route or, on Linux, one of the IPv6 policy rules, or spoofdpi cannot list the IPv6 policy rules or find room for its own, spoofdpi logs a warning and keeps running with IPv4 only; IPv6 traffic then bypasses spoofdpi.
 
 TUN mode needs no gateway when the default route goes through a point-to-point interface such as PPP: spoofdpi then routes its own traffic out of that interface directly. TUN mode does not start while a full-tunnel VPN carries the traffic (see [Full-Tunnel VPNs](#full-tunnel-vpns)).
 
 In TUN mode, the operating system and the applications resolve names and choose the IP version, so the [`ipv6`](rules.md#rule-fields) of rules and all [DNS settings](dns.md), global and in rules, are ignored. spoofdpi logs this at startup when a rule sets `ipv6` or the DNS settings differ from the defaults.
+
+### TUN Mode Routing on Linux
+
+On Linux, TUN mode leaves the main routing table untouched. It adds its routes to two tables of its own, one into the TUN interface and one out of the physical interface, and policy rules (`ip rule`) that send unmarked traffic into the TUN. spoofdpi marks its own sockets, so its traffic leaves through the physical interface. Routes in the main table more specific than the default route, such as those of the local network, keep working.
+
+- Policy rules that other programs installed before spoofdpi started take precedence. spoofdpi places its rules after the existing ones; when there is no room, it places them before or among them and logs a warning naming those rules.
+- A VPN started after spoofdpi takes precedence when it adds policy rules, or routes in the main table more specific than the default route, such as `0.0.0.0/1` and `128.0.0.0/1`. A VPN that only replaces the main table's default route is still routed into the TUN.
+- It needs `ip rule` support for `suppress_prefixlength` and `not`: iproute2 and Linux 3.12 or later.
 
 ### IPv6 Link-Local Destinations
 
@@ -280,7 +288,7 @@ The IPv4 address selects the interface that packet capture runs on and TUN mode'
 Fake packets go out through a raw IP socket on every OS, and where they go depends on the mode:
 
 - In the HTTP and SOCKS5 modes, fake packets follow the system's routing table, like any other packet, so the option does not change where they go.
-- In TUN mode, fake packets are pinned to the selected interface, like TUN mode's own connections: on Linux and macOS they are bound to it, and on FreeBSD they use the FIB ([`freebsd-fib`](#freebsd-fib)) whose default route goes through it.
+- In TUN mode, fake packets are pinned to the selected interface, like TUN mode's own connections: on Linux they are bound to it and marked, on macOS they are bound to it, and on FreeBSD they use the FIB ([`freebsd-fib`](#freebsd-fib)) whose default route goes through it.
 
 A full-tunnel VPN overrides the option: while one carries the traffic, TUN mode does not start and fake packets are off, whatever the gateway (see [Full-Tunnel VPNs](#full-tunnel-vpns)).
 

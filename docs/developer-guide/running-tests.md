@@ -89,7 +89,7 @@ $ sudo -v
 $ go test -exec sudo -tags e2e -count=1 -v -run RequireRoot ./test/e2e/ -args -bin="$PWD/out/e2e/spoofdpi"
 ```
 
-TUN mode replaces the default route for a few seconds. On a remote host, make sure the session survives that, or run it from the console.
+TUN mode routes the host's traffic into the TUN for a few seconds. On a remote host, make sure the session survives that, or run it from the console.
 
 Options, passed after `-args`:
 

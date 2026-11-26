@@ -58,7 +58,8 @@ func gatewayIP(rt *route.Route) string {
 // link-local, unique local and multicast traffic keeps its on-link routes.
 const ipv6CaptureCIDR = "2000::/3"
 
-// ipv6RejectWarning is logged once the IPv6 capture route has been added.
+// ipv6RejectWarning is logged once the IPv6 capture route or rule has been
+// added.
 const ipv6RejectWarning = "IPv6 traffic is routed into the TUN and refused so " +
 	"applications fall back to IPv4; IPv6-only destinations are unreachable " +
 	"in TUN mode"

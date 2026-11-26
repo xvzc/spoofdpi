@@ -23,6 +23,10 @@ type NetworkJob struct {
 	Optional bool `json:"optional,omitempty"`
 	// Warning is logged at WARN level once Apply has succeeded.
 	Warning string `json:"warning,omitempty"`
+	// Group ties jobs that only work together: once an optional job of a
+	// group has failed, the later jobs of that group are skipped. Jobs
+	// without a group are applied on their own.
+	Group string `json:"group,omitempty"`
 }
 
 type jobState struct {
@@ -65,7 +69,8 @@ func LoadJobs(path string) ([]NetworkJob, bool, error) {
 // ApplyJobs reads the state file at path and executes each Apply command in
 // order. When a required job fails it calls ResetJobs to roll back before
 // returning the error. When an optional job fails it logs the failure, drops
-// the job from the state file and goes on with the next job.
+// the job from the state file and goes on with the next job; the later jobs
+// of its Group are skipped and dropped the same way.
 // No-op when path is empty or the file does not exist.
 func ApplyJobs(logger zerolog.Logger, path string) error {
 	if path == "" {
@@ -78,8 +83,30 @@ func ApplyJobs(logger zerolog.Logger, path string) error {
 	if !exists {
 		return nil
 	}
+	// dropJob removes the job at i, which changed nothing, from jobs and the
+	// state file, rolling back on a save failure.
+	dropJob := func(i int) error {
+		jobs = slices.Delete(jobs, i, i+1)
+		if err := SaveJobs(path, jobs); err != nil {
+			ResetJobs(logger, path)
+			return fmt.Errorf("failed to save state: %w", err)
+		}
+		return nil
+	}
+	failedGroups := make(map[string]bool)
 	for i := 0; i < len(jobs); i++ {
 		job := jobs[i]
+		if job.Group != "" && failedGroups[job.Group] {
+			logger.Warn().
+				Str("job", job.Description).
+				Str("group", job.Group).
+				Msg("network job skipped: an earlier job of its group failed")
+			if err := dropJob(i); err != nil {
+				return err
+			}
+			i--
+			continue
+		}
 		if job.Apply == "" {
 			continue
 		}
@@ -104,15 +131,16 @@ func ApplyJobs(logger zerolog.Logger, path string) error {
 			Str("job", job.Description).
 			Str("out", strings.TrimSpace(out)).
 			Msg("optional network job failed; skipped")
+		if job.Group != "" {
+			failedGroups[job.Group] = true
+		}
 		// The failed job changed nothing, so it must not be reset: its Reset
 		// could undo a matching configuration that it does not own, such as
 		// the existing route that made it fail.
-		jobs = slices.Delete(jobs, i, i+1)
-		i--
-		if err := SaveJobs(path, jobs); err != nil {
-			ResetJobs(logger, path)
-			return fmt.Errorf("failed to save state: %w", err)
+		if err := dropJob(i); err != nil {
+			return err
 		}
+		i--
 	}
 	return nil
 }
