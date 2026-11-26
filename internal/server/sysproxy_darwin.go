@@ -38,7 +38,7 @@ func SetupSystemProxy(
 		_ = pac.Close()
 		return err
 	}
-	if err := SaveJobs(stateFile, jobs); err != nil {
+	if err := SaveJobs(stateFile, jobs, SurvivesReboot); err != nil {
 		_ = pac.Close()
 		return fmt.Errorf("failed to save state: %w", err)
 	}

@@ -499,5 +499,5 @@ func (s *TunServer) SetupNetworkJobs(_ context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return StateFile, server.SaveJobs(StateFile, jobs)
+	return StateFile, server.SaveJobs(StateFile, jobs, server.ClearedByReboot)
 }
