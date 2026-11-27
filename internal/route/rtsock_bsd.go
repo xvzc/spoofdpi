@@ -182,9 +182,11 @@ func routeMessage(
 	switch {
 	case !withGateway:
 	case r.Gateway.IsValid():
-		// The kernel expects the scope of a link-local gateway in a form
-		// that differs between darwin and FreeBSD; no caller needs one.
-		if r.Gateway.Zone() != "" || r.Gateway.IsLinkLocalUnicast() {
+		// The kernel expects the scope of an IPv6 link-local gateway in a
+		// form that differs between darwin and FreeBSD; no caller needs
+		// one. An IPv4 link-local gateway has no scope and goes as is.
+		if r.Gateway.Is6() &&
+			(r.Gateway.Zone() != "" || r.Gateway.IsLinkLocalUnicast()) {
 			return nil, errors.New("link-local gateway is not supported")
 		}
 		flags |= unix.RTF_GATEWAY

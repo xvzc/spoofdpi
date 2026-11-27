@@ -93,6 +93,18 @@ func TestRouteMessage(t *testing.T) {
 			)[:unix.RTAX_NETMASK+1],
 		},
 		{
+			name: "default route via ipv4 link-local gateway",
+			typ:  unix.RTM_ADD,
+			r: TableRoute{
+				Dst:     netip.MustParsePrefix("0.0.0.0/0"),
+				Gateway: netip.MustParseAddr("169.254.1.1"),
+			},
+			wantFlags: upStatic | unix.RTF_GATEWAY,
+			wantAddrs: rtmAddrs(
+				inet4("0.0.0.0"), inet4("169.254.1.1"), inet4("0.0.0.0"), nil, nil,
+			)[:unix.RTAX_NETMASK+1],
+		},
+		{
 			name: "ipv6 network route via interface, destination masked",
 			typ:  unix.RTM_ADD,
 			r: TableRoute{
