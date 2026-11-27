@@ -213,22 +213,18 @@ func logCannotFake(logger zerolog.Logger, ip net.IP, err error) {
 	if errors.As(err, &off) {
 		reason = off.Reason
 		event = event.Str("family", off.Family.String())
-		if off.Interface != "" {
-			event = event.Str("interface", off.Interface)
-		}
 	}
 	event.Str("reason", reason).Msg("skipping fake packets")
 }
 
 // cannotFakeKey returns the key of the cause of err for warning once per
 // cause. The reason of a FakesOffError may name the destination, so its
-// key is its family, kind and interface instead: two VPNs each get a
-// warning, and the keys stay few as interfaces are. Other errors are fixed
-// texts.
+// key is its family and kind instead, and the keys stay few. Other errors
+// are fixed texts.
 func cannotFakeKey(err error) string {
 	var off *FakesOffError
 	if errors.As(err, &off) {
-		return off.Family.String() + "/" + off.Kind + "/" + off.Interface
+		return off.Family.String() + "/" + off.Kind
 	}
 	return err.Error()
 }

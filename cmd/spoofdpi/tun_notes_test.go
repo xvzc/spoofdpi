@@ -19,8 +19,6 @@ func TestLogTUNNotes(t *testing.T) {
 		noRouteOff = "IPv6 was disabled because no usable IPv6 route was found; " +
 			"IPv6 traffic bypasses spoofdpi in TUN mode; " +
 			"disable IPv6 on the system to keep it from leaking"
-		vpnOff = "IPv6 was disabled because a full-tunnel VPN carries IPv6; " +
-			"IPv6 traffic goes through the VPN and bypasses spoofdpi"
 		ignoredInfo = "the rules' ipv6 and the dns settings are ignored in TUN mode"
 	)
 
@@ -47,7 +45,7 @@ func TestLogTUNNotes(t *testing.T) {
 			hasIPv6Egress: true,
 			ipv6Off:       ipv6OffNoRoute,
 			want:          []string{noRouteOff},
-			notWant:       []string{enableHint, vpnOff},
+			notWant:       []string{enableHint},
 		},
 		{
 			name:    "ipv6 disabled for no route, without IPv6 egress",
@@ -56,25 +54,11 @@ func TestLogTUNNotes(t *testing.T) {
 			notWant: []string{noRouteOff, bypassWarn},
 		},
 		{
-			name:          "ipv6 disabled for a VPN",
-			cfg:           tunConfig(nil),
-			hasIPv6Egress: true,
-			ipv6Off:       ipv6OffVPN,
-			want:          []string{vpnOff},
-			notWant:       []string{enableHint, noRouteOff},
-		},
-		{
-			name:    "ipv6 disabled for a VPN, whatever the IPv6 egress lookup says",
-			cfg:     tunConfig(nil),
-			ipv6Off: ipv6OffVPN,
-			want:    []string{vpnOff},
-		},
-		{
 			name:          "ipv6 off with IPv6 egress",
 			cfg:           tunConfig(nil),
 			hasIPv6Egress: true,
 			want:          []string{bypassWarn, enableHint},
-			notWant:       []string{ignoredInfo, noRouteOff, vpnOff},
+			notWant:       []string{ignoredInfo, noRouteOff},
 		},
 		{
 			name:          "ipv6 off without IPv6 egress",

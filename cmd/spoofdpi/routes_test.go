@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/netip"
 	"syscall"
 	"testing"
 
@@ -60,7 +59,8 @@ func logLines(t *testing.T, buf *bytes.Buffer) []string {
 	return lines
 }
 
-// Egresses of each class, as route.ClassifyEgress explains them.
+// Egresses through an interface with a gateway, a point-to-point
+// interface without one, and the tunnel interface of a VPN.
 var (
 	directEgress = &route.Egress{
 		Route: route.Route{
@@ -69,56 +69,20 @@ var (
 			LocalIP: net.IPv4(192, 168, 1, 11).To4(),
 			Gateway: net.IPv4(192, 168, 1, 1).To4(),
 		},
-		Link: route.LinkInfo{
-			Index:  4,
-			Name:   "en0",
-			Kind:   route.LinkPhysical,
-			Detail: "IFT_ETHER",
-		},
-		Class:  route.EgressDirect,
-		Reason: "physical link en0 (IFT_ETHER)",
 	}
-	uplinkEgress = &route.Egress{
+	pppEgress = &route.Egress{
 		Route: route.Route{
 			Family:  netutil.FamilyV4,
 			Iface:   net.Interface{Index: 9, Name: "ppp0"},
 			LocalIP: net.IPv4(100, 64, 0, 2).To4(),
 		},
-		Link: route.LinkInfo{
-			Index:  9,
-			Name:   "ppp0",
-			Kind:   route.LinkPPP,
-			Detail: "IFT_PPP",
-		},
-		Class:  route.EgressUplink,
-		Reason: "ppp link ppp0 (IFT_PPP) is the only default route",
 	}
-	vpnEgress = &route.Egress{
+	tunnelEgress = &route.Egress{
 		Route: route.Route{
 			Family:  netutil.FamilyV4,
 			Iface:   net.Interface{Index: 12, Name: "utun4"},
 			LocalIP: net.IPv4(10, 8, 0, 2).To4(),
 		},
-		Link: route.LinkInfo{
-			Index:  12,
-			Name:   "utun4",
-			Kind:   route.LinkVPN,
-			Detail: "utun",
-		},
-		Class:  route.EgressVPN,
-		Reason: "VPN link utun4 (utun)",
-	}
-	unknownEgress = &route.Egress{
-		Route: route.Route{
-			Family:  netutil.FamilyV4,
-			Iface:   net.Interface{Index: 13, Name: "tun0"},
-			LocalIP: net.IPv4(10, 9, 0, 2).To4(),
-		},
-		Link: route.LinkInfo{
-			Index: 13, Name: "tun0", Kind: route.LinkUnknown, Detail: "IFT_OTHER p2p",
-		},
-		Class:  route.EgressUnknown,
-		Reason: "cannot tell whether tun0 (IFT_OTHER p2p) is a VPN",
 	}
 )
 
@@ -136,14 +100,8 @@ func egress6(e *route.Egress) *route.Egress {
 
 const (
 	egressInfo    = "info: egress"
-	unknownWarn   = "warn: cannot tell whether tun0 (IFT_OTHER p2p) is a VPN; proceeding as if it were not; fake packets and TUN mode do not work through a full-tunnel VPN, so if it is one, disconnect it, or disable fake packets and use HTTP or SOCKS5 mode"
-	vpnFakesWarn  = "warn: a full-tunnel VPN (VPN link utun4 (utun)) carries the traffic; fake packets are disabled"
-	vpnFakesOff   = "fake packets are off for ipv4: a full-tunnel VPN (VPN link utun4 (utun)) carries the traffic"
-	vpnTUNErr     = "TUN mode cannot run while a full-tunnel VPN carries the traffic (VPN link utun4 (utun)); disconnect the VPN or use the HTTP or SOCKS5 mode"
 	fakesV6Off    = "fake packets are off for ipv6: IPv6 fakes are not supported yet"
 	fallback6Warn = "warn: IPv6 is enabled but no usable IPv6 route was found; running with IPv6 disabled"
-	vpnTUN6Warn   = "warn: a full-tunnel VPN (VPN link utun4 (utun)) carries IPv6; running with IPv6 disabled"
-	vpnProxy6Info = "info: IPv6 goes through a full-tunnel VPN (VPN link utun4 (utun))"
 	callV4        = "ipv4"
 	callV6        = "ipv6"
 )
@@ -176,84 +134,39 @@ func startupConfig(mode startupMode, ipv6 bool) *config.Config {
 
 func TestDiscoverEgresses_IPv4Matrix(t *testing.T) {
 	type tc struct {
-		name        string
-		egress      *route.Egress
-		mode        startupMode
-		wantErr     string
-		wantV4      bool
-		wantFakesV4 string
-		wantLogs    []string
-		wantCalls   []string
+		name      string
+		egress    *route.Egress
+		mode      startupMode
+		wantV4    bool
+		wantLogs  []string
+		wantCalls []string
 	}
 	var tcs []tc
 
 	// Without fake packets or TUN mode, no IPv4 egress is discovered.
-	for _, e := range []*route.Egress{directEgress, uplinkEgress, vpnEgress, unknownEgress} {
-		tcs = append(tcs, tc{
-			name:   e.Class.String() + "/" + string(proxyNoFakes),
-			egress: e,
-			mode:   proxyNoFakes,
-		})
+	// With them, the egress is used whatever its interface is.
+	for _, e := range []*route.Egress{directEgress, pppEgress, tunnelEgress} {
+		name := e.Route.Iface.Name
+		tcs = append(tcs,
+			tc{name: name + "/" + string(proxyNoFakes), egress: e, mode: proxyNoFakes},
+			tc{
+				name:      name + "/" + string(proxyFakes),
+				egress:    e,
+				mode:      proxyFakes,
+				wantV4:    true,
+				wantLogs:  []string{egressInfo},
+				wantCalls: []string{callV4},
+			},
+			tc{
+				name:      name + "/" + string(tunMode),
+				egress:    e,
+				mode:      tunMode,
+				wantV4:    true,
+				wantLogs:  []string{egressInfo},
+				wantCalls: []string{callV4},
+			},
+		)
 	}
-
-	tcs = append(tcs,
-		// direct
-		tc{
-			name:      "direct/proxy with fakes",
-			egress:    directEgress,
-			mode:      proxyFakes,
-			wantV4:    true,
-			wantLogs:  []string{egressInfo},
-			wantCalls: []string{callV4},
-		},
-		tc{
-			name: "direct/tun", egress: directEgress, mode: tunMode,
-			wantV4: true, wantLogs: []string{egressInfo}, wantCalls: []string{callV4},
-		},
-		// uplink: a point-to-point default route without a gateway works
-		tc{
-			name:      "uplink/proxy with fakes",
-			egress:    uplinkEgress,
-			mode:      proxyFakes,
-			wantV4:    true,
-			wantLogs:  []string{egressInfo},
-			wantCalls: []string{callV4},
-		},
-		tc{
-			name: "uplink/tun", egress: uplinkEgress, mode: tunMode,
-			wantV4: true, wantLogs: []string{egressInfo}, wantCalls: []string{callV4},
-		},
-		// vpn
-		tc{
-			name: "vpn/proxy with fakes", egress: vpnEgress, mode: proxyFakes,
-			wantV4: true, wantFakesV4: vpnFakesOff,
-			wantLogs:  []string{egressInfo, vpnFakesWarn},
-			wantCalls: []string{callV4},
-		},
-		tc{
-			name: "vpn/tun", egress: vpnEgress, mode: tunMode,
-			wantErr:   vpnTUNErr,
-			wantLogs:  []string{egressInfo},
-			wantCalls: []string{callV4},
-		},
-		// unknown: warn and proceed
-		tc{
-			name:      "unknown/proxy with fakes",
-			egress:    unknownEgress,
-			mode:      proxyFakes,
-			wantV4:    true,
-			wantLogs:  []string{egressInfo, unknownWarn},
-			wantCalls: []string{callV4},
-		},
-		tc{
-			name:      "unknown/tun",
-			egress:    unknownEgress,
-			mode:      tunMode,
-			wantV4:    true,
-			wantLogs:  []string{egressInfo, unknownWarn},
-			wantCalls: []string{callV4},
-		},
-	)
 
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -263,34 +176,18 @@ func TestDiscoverEgresses_IPv4Matrix(t *testing.T) {
 
 			got, err := discoverEgresses(zerolog.New(&buf), cfg, finder.finder())
 
-			if tc.wantErr != "" {
-				require.Error(t, err)
-				assert.Equal(t, tc.wantErr, err.Error())
+			require.NoError(t, err)
+			if tc.wantV4 {
+				assert.Same(t, tc.egress, got.V4)
 			} else {
-				require.NoError(t, err)
-				if tc.wantV4 {
-					assert.Same(t, tc.egress, got.V4)
-				} else {
-					assert.Nil(t, got.V4)
-				}
-				if tc.wantFakesV4 == "" {
-					assert.NoError(t, got.FakesV4)
-				} else {
-					assert.EqualError(t, got.FakesV4, tc.wantFakesV4)
-					assert.Equal(t, &desync.FakesOffError{
-						Family:    netutil.FamilyV4,
-						Kind:      desync.FakesOffVPNAtStartup,
-						Interface: "utun4",
-						Reason:    "a full-tunnel VPN (VPN link utun4 (utun)) carries the traffic",
-					}, got.FakesV4)
-				}
-				assert.EqualError(t, got.FakesV6, fakesV6Off)
-				var off6 *desync.FakesOffError
-				require.ErrorAs(t, got.FakesV6, &off6)
-				assert.Equal(t, desync.FakesOffIPv6Unsupported, off6.Kind)
-				assert.Nil(t, got.V6)
-				assert.Equal(t, ipv6StayedOn, got.IPv6Off)
+				assert.Nil(t, got.V4)
 			}
+			assert.EqualError(t, got.FakesV6, fakesV6Off)
+			var off6 *desync.FakesOffError
+			require.ErrorAs(t, got.FakesV6, &off6)
+			assert.Equal(t, desync.FakesOffIPv6Unsupported, off6.Kind)
+			assert.Nil(t, got.V6)
+			assert.Equal(t, ipv6StayedOn, got.IPv6Off)
 			assert.Equal(t, tc.wantLogs, logLines(t, &buf))
 			assert.Equal(t, tc.wantCalls, finder.calls)
 		})
@@ -354,8 +251,6 @@ func TestDiscoverEgresses_EgressLine(t *testing.T) {
 			want: map[string]string{
 				"family":    "ipv4",
 				"interface": "en0",
-				"class":     "direct",
-				"link":      "physical (IFT_ETHER)",
 				"gateway":   "192.168.1.1",
 				"src":       "192.168.1.11",
 				"message":   "egress",
@@ -363,12 +258,10 @@ func TestDiscoverEgresses_EgressLine(t *testing.T) {
 		},
 		{
 			name:   "no gateway",
-			egress: uplinkEgress,
+			egress: pppEgress,
 			want: map[string]string{
 				"family":    "ipv4",
 				"interface": "ppp0",
-				"class":     "uplink",
-				"link":      "ppp (IFT_PPP)",
 				"gateway":   "-",
 				"src":       "100.64.0.2",
 				"message":   "egress",
@@ -410,7 +303,6 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 		ipv6      bool
 		egress6   *route.Egress
 		err6      error
-		wantErr   string
 		wantV6    bool
 		wantOff   ipv6OffCause
 		wantLogs  []string
@@ -444,37 +336,19 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 			wantCalls: []string{callV4, callV6},
 		},
 		{
-			name:      "vpn in tun",
+			name:      "tunnel in tun",
 			mode:      tunMode,
 			ipv6:      true,
-			egress6:   egress6(vpnEgress),
-			wantOff:   ipv6OffVPN,
-			wantLogs:  []string{egressInfo, vpnTUN6Warn},
-			wantCalls: []string{callV4, callV6},
-		},
-		{
-			name:      "vpn in proxy",
-			mode:      proxyFakes,
-			ipv6:      true,
-			egress6:   egress6(vpnEgress),
+			egress6:   egress6(tunnelEgress),
 			wantV6:    true,
-			wantLogs:  []string{egressInfo, vpnProxy6Info},
+			wantLogs:  []string{egressInfo, egressInfo},
 			wantCalls: []string{callV4, callV6},
 		},
 		{
-			name:      "unknown in tun",
-			mode:      tunMode,
-			ipv6:      true,
-			egress6:   egress6(unknownEgress),
-			wantV6:    true,
-			wantLogs:  []string{egressInfo, egressInfo, unknownWarn},
-			wantCalls: []string{callV4, callV6},
-		},
-		{
-			name:      "unknown in proxy",
+			name:      "tunnel in proxy",
 			mode:      proxyNoFakes,
 			ipv6:      true,
-			egress6:   egress6(unknownEgress),
+			egress6:   egress6(tunnelEgress),
 			wantV6:    true,
 			wantLogs:  []string{egressInfo},
 			wantCalls: []string{callV6},
@@ -494,11 +368,6 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 
 			assert.Equal(t, tc.wantLogs, logLines(t, &buf))
 			assert.Equal(t, tc.wantCalls, finder.calls)
-			if tc.wantErr != "" {
-				require.Error(t, err)
-				assert.Equal(t, tc.wantErr, err.Error())
-				return
-			}
 			require.NoError(t, err)
 			if tc.wantV6 {
 				assert.Same(t, tc.egress6, got.V6)
@@ -544,112 +413,4 @@ func TestDiscoverEgresses_RuleEnablesIPv6(t *testing.T) {
 		assert.Equal(t, config.DNSQueryIPv4, r.Config.DNS.QType, r.Name)
 	}
 	assert.True(t, cfg.Rules[1].IPv4Only(), "a rule with ipv6 = false keeps to IPv4")
-}
-
-// pathVia returns the IPv4 path to dst through the interface of e.
-func pathVia(dst netip.Addr, e *route.Egress) *route.Path {
-	return &route.Path{Family: netutil.FamilyV4, Dst: dst, Iface: e.Route.Iface}
-}
-
-func TestDstFakeCheck(t *testing.T) {
-	dst := netip.MustParseAddr("10.20.0.5")
-	tcs := []struct {
-		name         string
-		path         *route.Path
-		routeErr     error
-		class        *route.Egress
-		classErr     error
-		wantErr      *desync.FakesOffError
-		noStart      bool
-		wantClassify bool
-		wantLog      string
-	}{
-		{
-			name: "same interface as at startup",
-			path: pathVia(dst, directEgress),
-		},
-		{
-			name:         "no startup egress",
-			noStart:      true,
-			path:         pathVia(dst, directEgress),
-			class:        directEgress,
-			wantClassify: true,
-		},
-		{
-			name:         "split-tunnel VPN",
-			path:         pathVia(dst, vpnEgress),
-			class:        vpnEgress,
-			wantClassify: true,
-			wantErr: &desync.FakesOffError{
-				Family:    netutil.FamilyV4,
-				Kind:      desync.FakesOffDstViaVPN,
-				Interface: "utun4",
-				Reason:    "the route to 10.20.0.5 goes through a VPN (utun4)",
-			},
-		},
-		{
-			name:         "another uplink",
-			path:         pathVia(dst, uplinkEgress),
-			class:        uplinkEgress,
-			wantClassify: true,
-		},
-		{
-			name:         "unknown link",
-			path:         pathVia(dst, unknownEgress),
-			class:        unknownEgress,
-			wantClassify: true,
-		},
-		{
-			name:     "route lookup fails",
-			routeErr: errors.New("no route"),
-			wantLog:  "debug: route lookup failed; allowing fake packets",
-		},
-		{
-			name:         "classification fails",
-			path:         pathVia(dst, unknownEgress),
-			classErr:     errors.New("loopback"),
-			wantClassify: true,
-			wantLog:      "debug: route classification failed; allowing fake packets",
-		},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			var buf bytes.Buffer
-			var routed []netip.Addr
-			var classified bool
-			start := directEgress
-			if tc.noStart {
-				start = nil
-			}
-			check := dstFakeCheck(
-				zerolog.New(&buf).Level(zerolog.DebugLevel),
-				start,
-				func(a netip.Addr) (*route.Path, error) {
-					routed = append(routed, a)
-					return tc.path, tc.routeErr
-				},
-				func(p *route.Path) (*route.Egress, error) {
-					classified = true
-					assert.Same(t, tc.path, p)
-					return tc.class, tc.classErr
-				},
-			)
-
-			err := check(dst)
-
-			if tc.wantErr == nil {
-				assert.NoError(t, err)
-			} else {
-				assert.Equal(t, tc.wantErr, err)
-			}
-			assert.Equal(t, []netip.Addr{dst}, routed)
-			assert.Equal(t, tc.wantClassify, classified)
-			var wantLogs []string
-			if tc.wantLog != "" {
-				wantLogs = []string{tc.wantLog}
-			}
-			assert.Equal(t, wantLogs, logLines(t, &buf))
-		})
-	}
 }

@@ -141,6 +141,17 @@ func choosePrimaryLink(
 	return primary, false, nil
 }
 
+// otherPhysical returns the first physical link among others that is not
+// link itself.
+func otherPhysical(link LinkInfo, others []LinkInfo) (LinkInfo, bool) {
+	for _, o := range others {
+		if o.Kind == LinkPhysical && o.Index != link.Index {
+			return o, true
+		}
+	}
+	return LinkInfo{}, false
+}
+
 // rtmGet sends one RTM_GET request with flags and addrs over a routing
 // socket of address family af and returns the kernel's reply to it. The
 // whole exchange is bounded by rtmReplyTimeout.

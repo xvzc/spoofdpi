@@ -261,9 +261,15 @@ func TestCleanLeftovers_Darwin(t *testing.T) {
 			},
 		},
 		{
-			name: "tagged scoped default of a utun is a live instance",
+			name:        "tagged scoped default of a utun egress removed",
+			routes:      []route.TableRoute{tailscaleRoute, taggedTailscaleDefault},
+			wantDeleted: []route.TableRoute{taggedTailscaleDefault},
+			wantLogs:    []string{`"level":"info"`},
+		},
+		{
+			name: "live instance with a utun egress skips the cleanup",
 			routes: []route.TableRoute{
-				taggedTailscaleDefault, ownScopedDefault,
+				tailscaleRoute, taggedTailscaleDefault, liveUTUNRoute,
 			},
 			wantLogs: []string{`another spoofdpi instance is running`},
 		},

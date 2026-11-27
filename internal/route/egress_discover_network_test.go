@@ -25,12 +25,7 @@ func TestDiscoverEgress_MatchesLookup(t *testing.T) {
 				t.Skipf("route is not an egress: %v", err)
 			}
 			assert.Equal(t, path.Iface.Index, egress.Route.Iface.Index)
-			assert.Equal(t, path.Iface.Index, egress.Link.Index)
-			t.Logf(
-				"%s egress: iface=%s class=%s link=%s reason=%q",
-				fam, egress.Route.Iface.Name, egress.Class, egress.Link.Kind,
-				egress.Reason,
-			)
+			t.Logf("%s egress: iface=%s", fam, egress.Route.Iface.Name)
 		})
 	}
 }

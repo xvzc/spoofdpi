@@ -2,7 +2,6 @@ package route
 
 import (
 	"encoding/binary"
-	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -266,76 +265,4 @@ func TestLinkInfoFromNetlink_Errors(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.wantMsg)
 		})
 	}
-}
-
-// nlNexthop encodes an rtnexthop entry for oif with RTNH_F_* flags and a
-// gateway attribute.
-func nlNexthop(oif int, flags uint8, gateway string) []byte {
-	gw := nlAttr(rtaGateway, nlAddr(gateway))
-	b := binary.NativeEndian.AppendUint16(nil, uint16(8+len(gw)))
-	b = append(b, flags, 0)
-	b = binary.NativeEndian.AppendUint32(b, uint32(int32(oif)))
-	return append(b, gw...)
-}
-
-func TestDefaultRouteOifs(t *testing.T) {
-	route := func(family, dstLen, table, typ uint8, attrs ...[]byte) netlinkMessage {
-		return netlinkMessage{
-			typ:  rtmNewRoute,
-			data: nlRoute(family, dstLen, table, typ, attrs...),
-		}
-	}
-	oif := func(i uint32) []byte { return nlAttr(rtaOif, nlU32(i)) }
-	deadRoute := func(i uint32, flags uint32) netlinkMessage {
-		m := route(linuxAFInet, 0, 254, rtnUnicast, oif(i))
-		binary.NativeEndian.PutUint32(m.data[8:12], flags)
-		return m
-	}
-
-	reply := []netlinkMessage{
-		// wg-quick: the default in table 51820 and the one in main.
-		route(linuxAFInet, 0, 252, rtnUnicast, nlAttr(rtaTable, nlU32(51820)), oif(7)),
-		route(linuxAFInet, 0, 254, rtnUnicast,
-			nlAttr(rtaGateway, nlAddr("10.0.2.2")), oif(2)),
-		// A duplicate in another table.
-		route(linuxAFInet, 0, 100, rtnUnicast, oif(2)),
-		// A multipath default with a dead and a link-down next hop.
-		route(linuxAFInet, 0, 254, rtnUnicast, nlAttr(rtaMultipath, slices.Concat(
-			nlNexthop(3, 0, "10.0.3.1"),
-			nlNexthop(11, rtnhFDead, "10.0.11.1"),
-			nlNexthop(4, 0, "10.0.4.1"),
-			nlNexthop(12, rtnhFLinkdown, "10.0.12.1"),
-		))),
-		// Single-path defaults that are dead or link-down.
-		deadRoute(13, rtnhFDead),
-		deadRoute(14, rtnhFLinkdown|rtnhFDead),
-		// Not defaults.
-		route(linuxAFInet, 24, 254, rtnUnicast, oif(5)),
-		route(linuxAFInet, 0, 254, rtnUnreachable, oif(1)),
-		route(linuxAFInet, 0, 254, rtnUnicast),
-		{typ: nlmsgDone},
-		// IPv6.
-		route(
-			linuxAFInet6,
-			0,
-			254,
-			rtnUnicast,
-			nlAttr(rtaGateway, nlAddr("fe80::1")),
-			oif(2),
-		),
-	}
-
-	got, err := defaultRouteOifs(reply, netutil.FamilyV4)
-	require.NoError(t, err)
-	assert.Equal(t, []int{7, 2, 3, 4}, got)
-
-	got, err = defaultRouteOifs(reply, netutil.FamilyV6)
-	require.NoError(t, err)
-	assert.Equal(t, []int{2}, got)
-
-	_, err = defaultRouteOifs(
-		[]netlinkMessage{{typ: rtmNewRoute, data: []byte{1}}},
-		netutil.FamilyV4,
-	)
-	assert.Error(t, err)
 }

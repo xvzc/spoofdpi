@@ -1,4 +1,4 @@
-//go:build darwin || freebsd || linux
+//go:build darwin || freebsd
 
 package route
 

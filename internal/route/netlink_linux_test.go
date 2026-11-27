@@ -38,8 +38,6 @@ func TestNetlinkConstants_MatchOS(t *testing.T) {
 	assert.Equal(t, unix.RTN_UNREACHABLE, rtnUnreachable)
 	assert.Equal(t, unix.RTN_PROHIBIT, rtnProhibit)
 	assert.Equal(t, unix.RTN_THROW, rtnThrow)
-	assert.Equal(t, unix.RTNH_F_DEAD, rtnhFDead)
-	assert.Equal(t, unix.RTNH_F_LINKDOWN, rtnhFLinkdown)
 
 	assert.Equal(t, unix.AF_INET, linuxAFInet)
 	assert.Equal(t, unix.AF_INET6, linuxAFInet6)

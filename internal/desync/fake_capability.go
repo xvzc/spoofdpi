@@ -20,25 +20,17 @@ type FakeCapability interface {
 const (
 	// FakesOffIPv6Unsupported: fake packets are not sent over IPv6.
 	FakesOffIPv6Unsupported = "ipv6-unsupported"
-	// FakesOffVPNAtStartup: a full-tunnel VPN carried the traffic at
-	// startup.
-	FakesOffVPNAtStartup = "vpn-at-startup"
-	// FakesOffDstViaVPN: the route to the destination goes through a VPN.
-	FakesOffDstViaVPN = "dst-via-vpn"
 )
 
 // FakesOffError says that fake packets are off for an address family, or
 // for a destination of it, and why.
 type FakesOffError struct {
 	Family netutil.Family
-	// Kind names the cause, such as FakesOffDstViaVPN. Unlike Reason, it
-	// does not depend on the destination, so it is, with Family and
-	// Interface, a key for logging each cause once.
-	Kind string
-	// Interface is the name of the interface the cause is found on, or
-	// empty when there is none.
-	Interface string
-	Reason    string
+	// Kind names the cause, such as FakesOffIPv6Unsupported. Unlike
+	// Reason, it does not depend on the destination, so it is, with
+	// Family, a key for logging each cause once.
+	Kind   string
+	Reason string
 }
 
 func (e *FakesOffError) Error() string {

@@ -124,11 +124,15 @@ func isOwnScopedDefaultShape(r route.TableRoute) bool {
 
 // isLiveTUNRoute reports whether r is a route that a running TUN mode
 // instance holds: a static, tagged route, not cloned by the kernel, through
-// a utun. The utun and its routes go away with the process that opened it,
-// so such a route outlives no crash. names maps interface indexes to names.
+// a utun, other than a scoped default route. The utun and its routes go
+// away with the process that opened it, so such a route outlives no crash.
+// A scoped default route does not count: TUN mode adds one for its egress,
+// which may be another program's utun, such as a VPN's, that outlives a
+// crash; a running instance also holds its routes through its own utun.
+// names maps interface indexes to names.
 func isLiveTUNRoute(r route.TableRoute, names map[int]string) bool {
-	if r.Flags&routeTag == 0 || r.Flags&unix.RTF_STATIC == 0 ||
-		r.Flags&unix.RTF_WASCLONED != 0 {
+	if isScopedDefault4(r) || r.Flags&routeTag == 0 ||
+		r.Flags&unix.RTF_STATIC == 0 || r.Flags&unix.RTF_WASCLONED != 0 {
 		return false
 	}
 	return isUTUN(names[r.GatewayLink]) || isUTUN(names[r.Index]) ||

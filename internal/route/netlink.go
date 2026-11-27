@@ -43,9 +43,6 @@ const (
 	rtnProhibit    = 8
 	rtnThrow       = 9
 
-	rtnhFDead     = 0x1
-	rtnhFLinkdown = 0x10
-
 	linuxAFInet  = 2
 	linuxAFInet6 = 10
 
@@ -252,20 +249,14 @@ type netlinkRoute struct {
 	protocol uint8
 	scope    uint8
 	typ      uint8
-	// flags is rtm_flags, which carries the RTNH_F_* flags of a route
-	// with a single next hop.
-	flags   uint32
-	table   int
-	oif     int
-	dst     netip.Addr
-	gateway netip.Addr
-	prefsrc netip.Addr
+	table    int
+	oif      int
+	dst      netip.Addr
+	gateway  netip.Addr
+	prefsrc  netip.Addr
 	// via reports an RTA_VIA next hop, a gateway of another family
 	// (RFC 5549).
 	via bool
-	// nexthopOifs are the output interfaces of the live next hops of an
-	// RTA_MULTIPATH route.
-	nexthopOifs []int
 }
 
 // parseNetlinkRoute decodes data, the payload of an RTM_NEWROUTE message.
@@ -281,7 +272,6 @@ func parseNetlinkRoute(data []byte) (netlinkRoute, error) {
 		protocol: data[5],
 		scope:    data[6],
 		typ:      data[7],
-		flags:    binary.NativeEndian.Uint32(data[8:12]),
 	}
 	err := walkAttrs(data[rtmsgLen:], func(typ uint16, val []byte) {
 		switch typ {
@@ -301,36 +291,9 @@ func parseNetlinkRoute(data []byte) (netlinkRoute, error) {
 			}
 		case rtaVia:
 			r.via = true
-		case rtaMultipath:
-			r.nexthopOifs = parseNexthopOifs(val)
 		}
 	})
 	return r, err
-}
-
-// parseNexthopOifs returns the interface indexes of the rtnexthop entries
-// in b, the value of RTA_MULTIPATH, that are neither dead nor link-down.
-// Each entry is a 2-byte length, flags, hops, a 4-byte ifindex and the
-// entry's own attributes.
-func parseNexthopOifs(b []byte) []int {
-	var oifs []int
-	for len(b) >= 8 {
-		l := int(binary.NativeEndian.Uint16(b[0:2]))
-		if l < 8 || l > len(b) {
-			break
-		}
-		if !isDeadNexthop(uint32(b[2])) {
-			oifs = append(oifs, int(int32(binary.NativeEndian.Uint32(b[4:8]))))
-		}
-		b = b[min(nlAlign(l), len(b)):]
-	}
-	return oifs
-}
-
-// isDeadNexthop reports whether the RTNH_F_* flags mark a next hop as dead
-// or its link as down, so that the kernel does not route through it.
-func isDeadNexthop(flags uint32) bool {
-	return flags&(rtnhFDead|rtnhFLinkdown) != 0
 }
 
 // kernelRouteFromNetlink reads the route to dst from reply, the answer to
@@ -380,39 +343,6 @@ func kernelRouteFromNetlink(
 		src:     r.prefsrc,
 		table:   r.table,
 	}, nil
-}
-
-// defaultRouteOifs returns the output interfaces of the unicast default
-// routes of fam in reply, a route dump, in dump order and without
-// duplicates. The dump covers every table, so a default that a VPN left
-// in the main table while it routes through its own table counts. Dead
-// and link-down routes and next hops are skipped.
-func defaultRouteOifs(reply []netlinkMessage, fam netutil.Family) ([]int, error) {
-	var oifs []int
-	add := func(oif int) {
-		if oif > 0 && !slices.Contains(oifs, oif) {
-			oifs = append(oifs, oif)
-		}
-	}
-	for _, m := range reply {
-		if m.typ != rtmNewRoute {
-			continue
-		}
-		r, err := parseNetlinkRoute(m.data)
-		if err != nil {
-			return nil, err
-		}
-		if r.family != linuxFamily(fam) || r.dstLen != 0 || r.typ != rtnUnicast {
-			continue
-		}
-		if !isDeadNexthop(r.flags) {
-			add(r.oif)
-		}
-		for _, oif := range r.nexthopOifs {
-			add(oif)
-		}
-	}
-	return oifs, nil
 }
 
 // rtmFFibMatch is RTM_F_FIB_MATCH (Linux 4.13+): a lookup with it reports

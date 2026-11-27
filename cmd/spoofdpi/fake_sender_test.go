@@ -57,7 +57,6 @@ func TestFakeSenderError(t *testing.T) {
 
 func TestFakesPinning(t *testing.T) {
 	rt := &route.Route{Iface: net.Interface{Index: 4, Name: "en0"}}
-	off := &desync.FakesOffError{Family: netutil.FamilyV4, Reason: "a VPN"}
 	withMode := func(mode config.AppModeType) *config.Config {
 		cfg := config.DefaultConfig()
 		cfg.App.Mode = mode
@@ -66,22 +65,20 @@ func TestFakesPinning(t *testing.T) {
 	}
 
 	tcs := []struct {
-		name    string
-		goos    string
-		cfg     *config.Config
-		fakesV4 error
-		want    string
+		name string
+		goos string
+		cfg  *config.Config
+		want string
 	}{
-		{"http", "darwin", withMode(config.AppModeHTTP), nil, "none"},
-		{"socks5", "linux", withMode(config.AppModeSOCKS5), nil, "none"},
-		{"tun on darwin", "darwin", withMode(config.AppModeTUN), nil, "en0"},
-		{"tun on linux", "linux", withMode(config.AppModeTUN), nil, "en0"},
-		{"tun on freebsd", "freebsd", withMode(config.AppModeTUN), nil, "fib 3"},
-		{"fakes off", "darwin", withMode(config.AppModeTUN), off, "none"},
+		{"http", "darwin", withMode(config.AppModeHTTP), "none"},
+		{"socks5", "linux", withMode(config.AppModeSOCKS5), "none"},
+		{"tun on darwin", "darwin", withMode(config.AppModeTUN), "en0"},
+		{"tun on linux", "linux", withMode(config.AppModeTUN), "en0"},
+		{"tun on freebsd", "freebsd", withMode(config.AppModeTUN), "fib 3"},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, fakesPinning(tc.goos, tc.cfg, rt, tc.fakesV4))
+			assert.Equal(t, tc.want, fakesPinning(tc.goos, tc.cfg, rt))
 		})
 	}
 }

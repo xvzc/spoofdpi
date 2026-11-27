@@ -386,14 +386,9 @@ func fakeSenderOptions(cfg *config.Config, rt *route.Route) inject.Options {
 
 // fakesPinning describes where fakeSenderOptions pins fake packets on goos,
 // for the startup log: an interface name, "fib N" on FreeBSD, or "none"
-// when the kernel routes them or fakesV4 turned them off.
-func fakesPinning(
-	goos string,
-	cfg *config.Config,
-	rt *route.Route,
-	fakesV4 error,
-) string {
-	if fakesV4 != nil || cfg.App.Mode != config.AppModeTUN || rt == nil {
+// when the kernel routes them.
+func fakesPinning(goos string, cfg *config.Config, rt *route.Route) string {
+	if cfg.App.Mode != config.AppModeTUN || rt == nil {
 		return "none"
 	}
 	if goos == "freebsd" {
@@ -450,7 +445,7 @@ func noIPv4RouteError(err error, hasIPv6 bool) error {
 // hasIPv6Egress tells whether the host has an IPv6 route to the internet,
 // and ipv6Off why IPv6 was turned off at startup, if it was. IPv6 traffic
 // bypasses spoofdpi in TUN mode whenever IPv6 is off and the host has an
-// IPv6 route; a VPN that carries IPv6 is such a route by itself.
+// IPv6 route.
 func logTUNNotes(
 	logger zerolog.Logger,
 	cfg *config.Config,
@@ -459,11 +454,6 @@ func logTUNNotes(
 ) {
 	switch {
 	case cfg.IPv6Enabled():
-	case ipv6Off == ipv6OffVPN:
-		logger.Warn().Msg(
-			"IPv6 was disabled because a full-tunnel VPN carries IPv6; " +
-				"IPv6 traffic goes through the VPN and bypasses spoofdpi",
-		)
 	case !hasIPv6Egress:
 	case ipv6Off == ipv6OffNoRoute:
 		logger.Warn().Msg(
@@ -543,22 +533,20 @@ func createServer(
 		udpStack *desync.UDPStack
 		hops     *desync.HopStore
 	)
-	if startup.FakesV4 == nil {
-		tcpStack, udpStack, hops, err = setupNetworkStack(
-			appctx,
-			logger,
-			defaultRoute,
-			cfg,
-		)
-		if err != nil {
-			return nil, err
-		}
+	tcpStack, udpStack, hops, err = setupNetworkStack(
+		appctx,
+		logger,
+		defaultRoute,
+		cfg,
+	)
+	if err != nil {
+		return nil, err
 	}
 	if cfg.NeedsNetworkStack() {
 		logger.Info().
-			Str("v4", fakesState(startup.FakesV4)).
+			Str("v4", "on").
 			Str("v6", fakesState(startup.FakesV6)).
-			Str("pinned", fakesPinning(runtime.GOOS, cfg, defaultRoute, startup.FakesV4)).
+			Str("pinned", fakesPinning(runtime.GOOS, cfg, defaultRoute)).
 			Msg("fake packets")
 	}
 
@@ -574,22 +562,7 @@ func createServer(
 		udpWriter desync.Writer
 		udpCaps   desync.FakeCapability
 	)
-	staticGate := desync.NewStaticGate(startup.FakesV4, startup.FakesV6)
-	var fakeGate desync.FakeCapability = staticGate
-	// The proxy modes check each server's route too. TUN mode routes the
-	// whole traffic itself, and a full-tunnel VPN stops it at startup.
-	if (tcpStack != nil || udpStack != nil) && cfg.App.Mode != config.AppModeTUN {
-		fakeGate = desync.NewRouteGate(
-			staticGate,
-			dstFakeCheck(
-				logger,
-				startup.V4,
-				route.Lookup,
-				route.ClassifyPath,
-			),
-			desync.RouteGateOptions{},
-		)
-	}
+	fakeGate := desync.NewStaticGate(nil, startup.FakesV6)
 	if tcpStack != nil {
 		tcpHops, tcpWriter, seqs = hops, tcpStack.Writer, tcpStack.Seqs
 		tcpCaps = fakeGate
