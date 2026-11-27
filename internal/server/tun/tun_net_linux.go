@@ -66,7 +66,7 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 		return nil, fmt.Errorf("failed to allocate routing table ID: %w", err)
 	}
 
-	physIfaceName := sysNet.defaultRoute.Iface.Name
+	physIfaceName := sysNet.egress4.Iface.Name
 
 	physIfaceIP, err := getInterfaceIP(physIfaceName)
 	if err != nil {
@@ -107,7 +107,7 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 	)
 
 	var ipv6Prefs []uint32
-	if sysNet.ipv6Enabled && hasIPv6Egress && !tunIPv6Disabled {
+	if sysNet.egress6 != nil && hasIPv6Egress && !tunIPv6Disabled {
 		ipv6Prefs = ipv6RulePrefs(sysNet.logger)
 	}
 	prefs := assignRulePrefs(ipv4Prefs, ipv6Prefs)
@@ -124,7 +124,7 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 		CaptureRulePref:     prefs.capture,
 		IPv6MainRulePref:    prefs.ipv6Main,
 		IPv6CaptureRulePref: prefs.ipv6Capture,
-		IPv6Enabled:         sysNet.ipv6Enabled,
+		IPv6Enabled:         sysNet.egress6 != nil,
 		HasIPv6Egress:       hasIPv6Egress,
 		TunIPv6Disabled:     tunIPv6Disabled,
 	}, nil
@@ -376,20 +376,21 @@ func routeJob(description string, e route.RouteEntry, dev string) server.Network
 
 // tunSystemNetworkLinux implements TUNSystemNetwork for Linux
 type tunSystemNetworkLinux struct {
-	logger       zerolog.Logger
-	tunDevice    tun.Device
-	defaultRoute *route.Route
-	ipv6Enabled  bool
+	logger    zerolog.Logger
+	tunDevice tun.Device
+	egress4   *route.Route
+	// egress6 is nil when IPv6 is off.
+	egress6 *route.Route
 }
 
 // NewTUNSystemNetwork creates a new TUNSystemNetwork for TUN mode on Linux
-// fibID is ignored on Linux (FreeBSD-specific). IPv6 is routed into the TUN
-// only when ipv6Enabled is set.
+// with the IPv4 and IPv6 egresses. fibID is ignored on Linux
+// (FreeBSD-specific). egress6 is nil when IPv6 is off; IPv6 is routed into
+// the TUN only when it is not.
 func NewTUNSystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *route.Route,
+	egress4, egress6 *route.Route,
 	fibID int,
-	ipv6Enabled bool,
 ) (TUNSystemNetwork, error) {
 	dev, err := createTunDevice()
 	if err != nil {
@@ -397,10 +398,10 @@ func NewTUNSystemNetwork(
 	}
 
 	return &tunSystemNetworkLinux{
-		logger:       logger,
-		tunDevice:    dev,
-		defaultRoute: defaultRoute,
-		ipv6Enabled:  ipv6Enabled,
+		logger:    logger,
+		tunDevice: dev,
+		egress4:   egress4,
+		egress6:   egress6,
 	}, nil
 }
 
@@ -416,7 +417,8 @@ func (n *tunSystemNetworkLinux) FIBID() int {
 // physical interface of rt with SO_BINDTODEVICE and marks it with
 // egressFwmark through SO_MARK, as TUN mode needs: its capture rule would
 // otherwise carry the traffic into the TUN, and any mark lets the socket
-// pass that rule. fibID is not used on Linux. It returns nil when
+// pass that rule. Both options are socket-level, so the control is the
+// same for IPv4 and IPv6 sockets. fibID is not used on Linux. It returns nil when
 // rt has no interface. BindDialer pins the dialed connections with it, and
 // TUN mode pins the raw sockets of fake packets with it too, so the two
 // cannot diverge.
@@ -465,49 +467,11 @@ func (n *tunSystemNetworkLinux) BindDialer(
 	network string,
 	targetIP net.IP,
 ) error {
-	if n.defaultRoute == nil || n.defaultRoute.Iface.Name == "" {
-		return nil
-	}
-
-	iface := n.defaultRoute.Iface
-
-	addrs, err := iface.Addrs()
+	rt, err := egressFor(n.egress4, n.egress6, targetIP)
 	if err != nil {
-		return fmt.Errorf("failed to get interface addresses: %w", err)
+		return err
 	}
-
-	var sourceIP net.IP
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok {
-			if targetIP.To4() != nil && ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
-				sourceIP = ipnet.IP
-				break
-			} else if targetIP.To4() == nil && ipnet.IP.To4() == nil && !ipnet.IP.IsLoopback() {
-				sourceIP = ipnet.IP
-				break
-			}
-		}
-	}
-
-	if sourceIP == nil {
-		return fmt.Errorf(
-			"no suitable IP address found on interface %s for target %s",
-			n.defaultRoute.Iface.Name,
-			targetIP,
-		)
-	}
-
-	if strings.HasPrefix(network, "tcp") {
-		dialer.LocalAddr = &net.TCPAddr{IP: sourceIP}
-	} else if strings.HasPrefix(network, "udp") {
-		dialer.LocalAddr = &net.UDPAddr{IP: sourceIP}
-	} else {
-		dialer.LocalAddr = &net.IPAddr{IP: sourceIP}
-	}
-
-	dialer.Control = EgressControl(n.defaultRoute, 0)
-
-	return nil
+	return bindEgress(dialer, network, targetIP, rt, EgressControl(rt, 0))
 }
 
 // ipv6Disabled reports whether the disable_ipv6 sysctl file at path reads 1.

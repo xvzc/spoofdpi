@@ -74,10 +74,10 @@ func collectNetworkInfo(sysNet *tunSystemNetworkDarwin) (*tunNetworkInfoDarwin, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to read routes: %w", err)
 	}
-	physIface := sysNet.defaultRoute.Iface
+	physIface := sysNet.egress4.Iface
 
 	return &tunNetworkInfoDarwin{ //exhaustruct:enforce
-		Gateway:             gateway4(sysNet.defaultRoute),
+		Gateway:             gateway4(sysNet.egress4),
 		PhysIfaceName:       physIface.Name,
 		PhysIfaceIndex:      physIface.Index,
 		TUNName:             tunName,
@@ -85,7 +85,7 @@ func collectNetworkInfo(sysNet *tunSystemNetworkDarwin) (*tunNetworkInfoDarwin, 
 		TunLocal:            netip.PrefixFrom(tunLocalIP, tunCIDR.Bits()),
 		TunRemote:           tunRemoteIP,
 		RouteTargetCIDRs:    routeTargetCIDRs,
-		IPv6Enabled:         sysNet.ipv6Enabled,
+		IPv6Enabled:         sysNet.egress6 != nil,
 		HasIPv6Egress:       hasIPv6Egress,
 		SystemScopedDefault: systemScopedDefault(routes, physIface.Index),
 	}, nil
@@ -227,20 +227,21 @@ func addedRoutes(jobs []server.NetworkJob) []route.TableRoute {
 
 // tunSystemNetworkDarwin implements TUNSystemNetwork for Darwin
 type tunSystemNetworkDarwin struct {
-	logger       zerolog.Logger
-	tunDevice    tun.Device
-	defaultRoute *route.Route
-	ipv6Enabled  bool
+	logger    zerolog.Logger
+	tunDevice tun.Device
+	egress4   *route.Route
+	// egress6 is nil when IPv6 is off.
+	egress6 *route.Route
 }
 
 // NewTUNSystemNetwork creates a new TUNSystemNetwork for TUN mode on Darwin
-// fibID is ignored on Darwin (FreeBSD-specific). IPv6 is routed into the TUN
-// only when ipv6Enabled is set.
+// with the IPv4 and IPv6 egresses. fibID is ignored on Darwin
+// (FreeBSD-specific). egress6 is nil when IPv6 is off; IPv6 is routed into
+// the TUN only when it is not.
 func NewTUNSystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *route.Route,
+	egress4, egress6 *route.Route,
 	fibID int,
-	ipv6Enabled bool,
 ) (TUNSystemNetwork, error) {
 	dev, err := createTunDevice()
 	if err != nil {
@@ -248,10 +249,10 @@ func NewTUNSystemNetwork(
 	}
 
 	return &tunSystemNetworkDarwin{
-		logger:       logger,
-		tunDevice:    dev,
-		defaultRoute: defaultRoute,
-		ipv6Enabled:  ipv6Enabled,
+		logger:    logger,
+		tunDevice: dev,
+		egress4:   egress4,
+		egress6:   egress6,
 	}, nil
 }
 
@@ -263,12 +264,15 @@ func (n *tunSystemNetworkDarwin) FIBID() int {
 	return 1
 }
 
-// EgressControl returns the socket control that pins a socket's IPv4
-// traffic to the physical interface of rt with IP_BOUND_IF, as TUN mode
-// needs: its routes would otherwise carry the traffic into the TUN. fibID
-// is not used on darwin. It returns nil when rt has no interface.
-// BindDialer pins the dialed connections with it, and TUN mode pins the
-// raw sockets of fake packets with it too, so the two cannot diverge.
+// EgressControl returns the socket control that pins a socket to the
+// physical interface of rt, as TUN mode needs: its routes would otherwise
+// carry the traffic into the TUN. An IPv6 socket is pinned with
+// IPV6_BOUND_IF and an IPv4 one with IP_BOUND_IF. The socket's family
+// comes from the network that the control is called with, such as "tcp4"
+// or "ip6", and from rt's family when the network names none. fibID is not
+// used on darwin. It returns nil when rt has no interface. BindDialer pins
+// the dialed connections with it, and TUN mode pins the raw sockets of
+// fake packets with it too, so the two cannot diverge.
 func EgressControl(
 	rt *route.Route,
 	fibID int,
@@ -277,23 +281,37 @@ func EgressControl(
 		return nil
 	}
 	index := rt.Iface.Index
-	return func(_, _ string, c syscall.RawConn) error {
+	return func(network, _ string, c syscall.RawConn) error {
+		level, opt, optName := unix.IPPROTO_IP, unix.IP_BOUND_IF, "IP_BOUND_IF"
+		if socketFamily(network, rt.Family) == netutil.FamilyV6 {
+			level, opt, optName = unix.IPPROTO_IPV6, unix.IPV6_BOUND_IF, "IPV6_BOUND_IF"
+		}
 		var sockErr error
 		err := c.Control(func(fd uintptr) {
-			sockErr = syscall.SetsockoptInt(
-				int(fd),
-				syscall.IPPROTO_IP,
-				syscall.IP_BOUND_IF,
-				index,
-			)
+			sockErr = unix.SetsockoptInt(int(fd), level, opt, index)
 		})
 		if err != nil {
 			return fmt.Errorf("failed to control socket: %w", err)
 		}
 		if sockErr != nil {
-			return fmt.Errorf("failed to set IP_BOUND_IF: %w", sockErr)
+			return fmt.Errorf("failed to set %s: %w", optName, sockErr)
 		}
 		return nil
+	}
+}
+
+// socketFamily returns the family of a socket of network, as a socket
+// control gets it, such as "tcp6", "udp4" or "ip6:tcp", or fallback when
+// network names no family.
+func socketFamily(network string, fallback netutil.Family) netutil.Family {
+	network, _, _ = strings.Cut(network, ":")
+	switch {
+	case strings.HasSuffix(network, "4"):
+		return netutil.FamilyV4
+	case strings.HasSuffix(network, "6"):
+		return netutil.FamilyV6
+	default:
+		return fallback
 	}
 }
 
@@ -302,47 +320,9 @@ func (n *tunSystemNetworkDarwin) BindDialer(
 	network string,
 	targetIP net.IP,
 ) error {
-	if n.defaultRoute == nil || n.defaultRoute.Iface.Name == "" {
-		return nil
-	}
-
-	iface := n.defaultRoute.Iface
-
-	addrs, err := iface.Addrs()
+	rt, err := egressFor(n.egress4, n.egress6, targetIP)
 	if err != nil {
-		return fmt.Errorf("failed to get interface addresses: %w", err)
+		return err
 	}
-
-	var sourceIP net.IP
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok {
-			if targetIP.To4() != nil && ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
-				sourceIP = ipnet.IP
-				break
-			} else if targetIP.To4() == nil && ipnet.IP.To4() == nil && !ipnet.IP.IsLoopback() {
-				sourceIP = ipnet.IP
-				break
-			}
-		}
-	}
-
-	if sourceIP == nil {
-		return fmt.Errorf(
-			"no suitable IP address found on interface %s for target %s",
-			n.defaultRoute.Iface.Name,
-			targetIP,
-		)
-	}
-
-	if strings.HasPrefix(network, "tcp") {
-		dialer.LocalAddr = &net.TCPAddr{IP: sourceIP}
-	} else if strings.HasPrefix(network, "udp") {
-		dialer.LocalAddr = &net.UDPAddr{IP: sourceIP}
-	} else {
-		dialer.LocalAddr = &net.IPAddr{IP: sourceIP}
-	}
-
-	dialer.Control = EgressControl(n.defaultRoute, 0)
-
-	return nil
+	return bindEgress(dialer, network, targetIP, rt, EgressControl(rt, 0))
 }

@@ -28,9 +28,8 @@ type tunSystemNetworkStub struct {
 // NewTUNSystemNetwork creates a new TUNSystemNetwork for TUN mode on unsupported platforms
 func NewTUNSystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *route.Route,
+	egress4, egress6 *route.Route,
 	fibID int,
-	ipv6Enabled bool,
 ) (TUNSystemNetwork, error) {
 	return &tunSystemNetworkStub{logger: logger}, nil
 }

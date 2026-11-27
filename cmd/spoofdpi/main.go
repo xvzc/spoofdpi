@@ -372,11 +372,11 @@ func setupNetworkStack(
 	return
 }
 
-// fakeSenderOptions returns the options of the raw sockets that fake
-// packets leave through. In TUN mode they are pinned to the physical
-// interface like the dialed connections, so that the TUN's routes cannot
-// carry the fakes into the TUN. The proxy modes leave the route to the
-// kernel.
+// fakeSenderOptions returns the options of the raw sockets of rt's family
+// that fake packets leave through. In TUN mode they are pinned to rt, the
+// egress of that family, like the dialed connections, so that the TUN's
+// routes cannot carry the fakes into the TUN. The proxy modes leave the
+// route to the kernel.
 func fakeSenderOptions(cfg *config.Config, rt *route.Route) inject.Options {
 	if cfg.App.Mode != config.AppModeTUN {
 		return inject.Options{}
@@ -509,9 +509,12 @@ func createServer(
 	if err != nil {
 		return nil, err
 	}
-	var defaultRoute *route.Route
+	var defaultRoute, egress6 *route.Route
 	if startup.V4 != nil {
 		defaultRoute = &startup.V4.Route
+	}
+	if startup.V6 != nil {
+		egress6 = &startup.V6.Route
 	}
 
 	// --- Rule set ---
@@ -637,11 +640,12 @@ func createServer(
 
 	case config.AppModeTUN:
 		logTUNNotes(logger, cfg, osRouteFinder.hasIPv6Egress(), startup.IPv6Off)
+		// startup.V6 is there only when IPv6 is enabled and has an egress.
 		sysNet, err := tun.NewTUNSystemNetwork(
 			logger,
 			defaultRoute,
+			egress6,
 			cfg.App.FreebsdFIB,
-			cfg.IPv6Enabled(),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create sysnet: %w", err)

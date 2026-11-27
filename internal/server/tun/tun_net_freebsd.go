@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/netip"
 	"slices"
-	"strings"
 	"syscall"
 
 	"github.com/rs/zerolog"
@@ -77,17 +76,17 @@ func collectNetworkInfo(
 		)
 	}
 	var gateway netip.Addr
-	if gw := gatewayIP(sysNet.defaultRoute); gw != "" {
+	if gw := gatewayIP(sysNet.egress4); gw != "" {
 		gateway, err = netip.ParseAddr(gw)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse gateway %s: %w", gw, err)
 		}
 		gateway = gateway.Unmap()
 	}
-	physIfaceP2P := sysNet.defaultRoute.Iface.Flags&net.FlagPointToPoint != 0
+	physIfaceP2P := sysNet.egress4.Iface.Flags&net.FlagPointToPoint != 0
 	var physIfaceSubnet netip.Prefix
 	if needsFIBSubnetRoute(physIfaceP2P, gateway) {
-		physIfaceSubnet, err = getInterfaceSubnet(sysNet.defaultRoute.Iface.Name)
+		physIfaceSubnet, err = getInterfaceSubnet(sysNet.egress4.Iface.Name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get interface subnet: %w", err)
 		}
@@ -98,7 +97,7 @@ func collectNetworkInfo(
 	fibHasSubnetRoute := hasKernelSubnetRoute(
 		fibRoutes,
 		physIfaceSubnet,
-		sysNet.defaultRoute.Iface.Index,
+		sysNet.egress4.Iface.Index,
 	)
 
 	cidr, err := route.FindSafeCIDR()
@@ -128,8 +127,8 @@ func collectNetworkInfo(
 	return &tunNetworkInfoFreeBSD{ //exhaustruct:enforce
 		FIBID:             sysNet.FIBID(),
 		Gateway:           gateway,
-		PhysIfaceName:     sysNet.defaultRoute.Iface.Name,
-		PhysIfaceIndex:    sysNet.defaultRoute.Iface.Index,
+		PhysIfaceName:     sysNet.egress4.Iface.Name,
+		PhysIfaceIndex:    sysNet.egress4.Iface.Index,
 		PhysIfaceSubnet:   physIfaceSubnet,
 		PhysIfaceP2P:      physIfaceP2P,
 		FIBHasSubnetRoute: fibHasSubnetRoute,
@@ -137,7 +136,7 @@ func collectNetworkInfo(
 		TUNIndex:          tunIface.Index,
 		TunAddr:           netip.PrefixFrom(tunLocalAddr, tunSubnet.Bits()),
 		RouteTargets:      routeTargets,
-		IPv6Enabled:       sysNet.ipv6Enabled,
+		IPv6Enabled:       sysNet.egress6 != nil,
 		HasIPv6Egress:     hasIPv6Egress,
 	}, nil
 }
@@ -386,22 +385,23 @@ func needsFIBSubnetRoute(physIfaceP2P bool, gateway netip.Addr) bool {
 }
 
 type tunSystemNetworkFreeBSD struct {
-	logger       zerolog.Logger
-	tunDevice    tun.Device
-	defaultRoute *route.Route
-	fibID        int
-	ipv6Enabled  bool
+	logger    zerolog.Logger
+	tunDevice tun.Device
+	egress4   *route.Route
+	// egress6 is nil when IPv6 is off.
+	egress6 *route.Route
+	fibID   int
 }
 
 // NewTUNSystemNetwork creates a new TUNSystemNetwork for TUN mode on
-// FreeBSD, which routes spoofdpi's own traffic through FIB fibID. It fails
-// when the kernel has no such FIB. IPv6 is routed into the TUN only when
-// ipv6Enabled is set.
+// FreeBSD with the IPv4 and IPv6 egresses, which routes spoofdpi's own
+// traffic through FIB fibID. It fails when the kernel has no such FIB.
+// egress6 is nil when IPv6 is off; IPv6 is routed into the TUN only when
+// it is not.
 func NewTUNSystemNetwork(
 	logger zerolog.Logger,
-	defaultRoute *route.Route,
+	egress4, egress6 *route.Route,
 	fibID int,
-	ipv6Enabled bool,
 ) (TUNSystemNetwork, error) {
 	fibs, err := unix.SysctlUint32("net.fibs")
 	if err != nil {
@@ -417,11 +417,11 @@ func NewTUNSystemNetwork(
 	}
 
 	return &tunSystemNetworkFreeBSD{
-		logger:       logger,
-		tunDevice:    dev,
-		defaultRoute: defaultRoute,
-		fibID:        fibID,
-		ipv6Enabled:  ipv6Enabled,
+		logger:    logger,
+		tunDevice: dev,
+		egress4:   egress4,
+		egress6:   egress6,
+		fibID:     fibID,
 	}, nil
 }
 
@@ -451,10 +451,12 @@ func (n *tunSystemNetworkFreeBSD) FIBID() int {
 // EgressControl returns the socket control that puts a socket in FIB
 // fibID with SO_SETFIB, whose default route is the physical one, as TUN
 // mode needs: the main FIB's routes would otherwise carry the traffic into
-// the TUN. rt is not used on FreeBSD. It returns nil when fibID is not
-// positive. BindDialer pins the dialed connections with it, and TUN mode
-// pins the raw sockets of fake packets with it too, so the two cannot
-// diverge.
+// the TUN. The FIB applies to IPv4 and IPv6 sockets alike, so rt, of
+// either family, is not used on FreeBSD. The FIB has only an IPv4 default
+// route for now; its IPv6 default route is added in a later step (B2).
+// It returns nil when fibID is not positive. BindDialer pins the dialed
+// connections with it, and TUN mode pins the raw sockets of fake packets
+// with it too, so the two cannot diverge.
 func EgressControl(
 	rt *route.Route,
 	fibID int,
@@ -487,49 +489,14 @@ func (n *tunSystemNetworkFreeBSD) BindDialer(
 	network string,
 	targetIP net.IP,
 ) error {
-	if n.fibID <= 0 || n.defaultRoute == nil || n.defaultRoute.Iface.Name == "" {
+	if n.fibID <= 0 {
 		return nil
 	}
-
-	iface := n.defaultRoute.Iface
-
-	addrs, err := iface.Addrs()
+	rt, err := egressFor(n.egress4, n.egress6, targetIP)
 	if err != nil {
-		return fmt.Errorf("failed to get interface addresses: %w", err)
+		return err
 	}
-
-	var sourceIP net.IP
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok {
-			if targetIP.To4() != nil && ipnet.IP.To4() != nil && !ipnet.IP.IsLoopback() {
-				sourceIP = ipnet.IP
-				break
-			} else if targetIP.To4() == nil && ipnet.IP.To4() == nil && !ipnet.IP.IsLoopback() {
-				sourceIP = ipnet.IP
-				break
-			}
-		}
-	}
-
-	if sourceIP == nil {
-		return fmt.Errorf(
-			"no suitable IP address found on interface %s for target %s",
-			n.defaultRoute.Iface.Name,
-			targetIP,
-		)
-	}
-
-	if strings.HasPrefix(network, "tcp") {
-		dialer.LocalAddr = &net.TCPAddr{IP: sourceIP}
-	} else if strings.HasPrefix(network, "udp") {
-		dialer.LocalAddr = &net.UDPAddr{IP: sourceIP}
-	} else {
-		dialer.LocalAddr = &net.IPAddr{IP: sourceIP}
-	}
-
-	dialer.Control = EgressControl(n.defaultRoute, n.fibID)
-
-	return nil
+	return bindEgress(dialer, network, targetIP, rt, EgressControl(rt, n.fibID))
 }
 
 // getInterfaceSubnet returns the subnet of the first IPv4 address of the

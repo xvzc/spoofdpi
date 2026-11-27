@@ -19,6 +19,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"github.com/xvzc/spoofdpi/internal/testutil"
+	"golang.org/x/sys/unix"
 )
 
 // TestEgressControlLive_Mark_RequireRoot opens a socket with EgressControl
@@ -46,6 +47,42 @@ func TestEgressControlLive_Mark_RequireRoot(t *testing.T) {
 		mark, sockErr = syscall.GetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_MARK)
 	}))
 	require.NoError(t, sockErr)
+	assert.Equal(t, egressFwmark, mark, "SO_MARK of the socket")
+}
+
+// TestEgressControlLive_IPv6_RequireRoot opens an IPv6 socket with
+// EgressControl pinned to lo and checks that its SO_BINDTODEVICE and
+// SO_MARK, read back, are lo and egressFwmark.
+func TestEgressControlLive_IPv6_RequireRoot(t *testing.T) {
+	testutil.RequireRoot(t)
+	lo, err := net.InterfaceByName("lo")
+	require.NoError(t, err)
+	control := EgressControl(&route.Route{Family: netutil.FamilyV6, Iface: *lo}, 0)
+	require.NotNil(t, control)
+
+	lc := net.ListenConfig{Control: control}
+	conn, err := lc.ListenPacket(context.Background(), "udp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("no IPv6 on lo: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	raw, err := conn.(syscall.Conn).SyscallConn()
+	require.NoError(t, err)
+	var device string
+	var mark int
+	var devErr, markErr error
+	require.NoError(t, raw.Control(func(fd uintptr) {
+		device, devErr = unix.GetsockoptString(
+			int(fd),
+			unix.SOL_SOCKET,
+			unix.SO_BINDTODEVICE,
+		)
+		mark, markErr = unix.GetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_MARK)
+	}))
+	require.NoError(t, devErr)
+	require.NoError(t, markErr)
+	assert.Equal(t, "lo", device, "SO_BINDTODEVICE of the socket")
 	assert.Equal(t, egressFwmark, mark, "SO_MARK of the socket")
 }
 

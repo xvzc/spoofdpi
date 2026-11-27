@@ -33,6 +33,12 @@ func TestFakeSenderOptions(t *testing.T) {
 		cfg.App.FreebsdFIB = 2
 		assert.NotNil(t, fakeSenderOptions(cfg, rt).Control,
 			"TUN mode pins the raw sockets like the dialed connections")
+		rt6 := &route.Route{
+			Family: netutil.FamilyV6,
+			Iface:  net.Interface{Index: 1, Name: "lo0"},
+		}
+		assert.NotNil(t, fakeSenderOptions(cfg, rt6).Control,
+			"TUN mode returns a control for an IPv6 route as well")
 	})
 }
 
