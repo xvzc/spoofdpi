@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -16,8 +17,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
-
-const StateFile = "/tmp/spoofdpi.linux.tun.state"
 
 // egressFwmark marks every socket TUN mode sends through the physical
 // interface, so the capture rule, which matches only unmarked packets, passes
@@ -186,59 +185,52 @@ func (n *tunSystemNetworkLinux) BuildJobs() ([]server.NetworkJob, error) {
 // and the tunnel packets of a VPN such as wg-quick, which marks its own.
 func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 	var jobs []server.NetworkJob
+	table := strconv.Itoa(info.CaptureTableID)
 
 	jobs = append(jobs, server.NetworkJob{
 		Description: "remove TUN interface",
-		Reset:       fmt.Sprintf("ip link delete %s", info.TUNName),
+		Reset:       server.CommandAction{"ip", "link", "delete", info.TUNName},
 	})
 
 	jobs = append(jobs, server.NetworkJob{
 		Description: "configure TUN interface address",
-		Apply: fmt.Sprintf(
-			"ip addr add %s peer %s dev %s",
-			info.TunLocalIP,
-			info.TunRemoteIP,
-			info.TUNName,
-		),
-		Reset: fmt.Sprintf(
-			"ip addr del %s peer %s dev %s",
-			info.TunLocalIP,
-			info.TunRemoteIP,
-			info.TUNName,
-		),
+		Apply: server.CommandAction{
+			"ip", "addr", "add", info.TunLocalIP,
+			"peer", info.TunRemoteIP, "dev", info.TUNName,
+		},
+		Reset: server.CommandAction{
+			"ip", "addr", "del", info.TunLocalIP,
+			"peer", info.TunRemoteIP, "dev", info.TUNName,
+		},
 	})
 
 	jobs = append(jobs, server.NetworkJob{
 		Description: "bring TUN interface up",
-		Apply:       fmt.Sprintf("ip link set dev %s up", info.TUNName),
-		Reset:       fmt.Sprintf("ip link set dev %s down", info.TUNName),
+		Apply:       server.CommandAction{"ip", "link", "set", "dev", info.TUNName, "up"},
+		Reset:       server.CommandAction{"ip", "link", "set", "dev", info.TUNName, "down"},
 	})
 
 	jobs = append(jobs, server.NetworkJob{
 		Description: "add default route to capture table",
-		Apply: fmt.Sprintf(
-			"ip route add default dev %s table %d",
-			info.TUNName,
-			info.CaptureTableID,
-		),
-		Reset: fmt.Sprintf(
-			"ip route del default dev %s table %d",
-			info.TUNName,
-			info.CaptureTableID,
-		),
+		Apply: server.CommandAction{
+			"ip", "route", "add", "default", "dev", info.TUNName, "table", table,
+		},
+		Reset: server.CommandAction{
+			"ip", "route", "del", "default", "dev", info.TUNName, "table", table,
+		},
 	})
 
 	jobs = append(jobs, server.NetworkJob{
 		Description: "add rule for the main table without its default route " +
 			"(needs suppress_prefixlength: iproute2 and Linux 3.12+)",
-		Apply: fmt.Sprintf(
-			"ip rule add pref %d lookup main suppress_prefixlength 0",
-			info.MainRulePref,
-		),
-		Reset: fmt.Sprintf(
-			"ip rule del pref %d lookup main suppress_prefixlength 0",
-			info.MainRulePref,
-		),
+		Apply: server.CommandAction{
+			"ip", "rule", "add", "pref", strconv.Itoa(info.MainRulePref),
+			"lookup", "main", "suppress_prefixlength", "0",
+		},
+		Reset: server.CommandAction{
+			"ip", "rule", "del", "pref", strconv.Itoa(info.MainRulePref),
+			"lookup", "main", "suppress_prefixlength", "0",
+		},
 	})
 
 	// Traffic from the physical interface's address looks up main in full,
@@ -250,31 +242,27 @@ func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 	// otherwise resolve to the TUN, and the replies would be dropped.
 	jobs = append(jobs, server.NetworkJob{
 		Description: "add policy routing rule",
-		Apply: fmt.Sprintf(
-			"ip rule add pref %d from %s lookup main",
-			info.FromRulePref,
-			info.PhysIfaceIP,
-		),
-		Reset: fmt.Sprintf(
-			"ip rule del pref %d from %s lookup main",
-			info.FromRulePref,
-			info.PhysIfaceIP,
-		),
+		Apply: server.CommandAction{
+			"ip", "rule", "add", "pref", strconv.Itoa(info.FromRulePref),
+			"from", info.PhysIfaceIP, "lookup", "main",
+		},
+		Reset: server.CommandAction{
+			"ip", "rule", "del", "pref", strconv.Itoa(info.FromRulePref),
+			"from", info.PhysIfaceIP, "lookup", "main",
+		},
 	})
 
 	// Capture starts with this rule, so it goes last.
 	jobs = append(jobs, server.NetworkJob{
 		Description: "add capture rule for unmarked traffic",
-		Apply: fmt.Sprintf(
-			"ip rule add pref %d fwmark 0/0xffffffff lookup %d",
-			info.CaptureRulePref,
-			info.CaptureTableID,
-		),
-		Reset: fmt.Sprintf(
-			"ip rule del pref %d fwmark 0/0xffffffff lookup %d",
-			info.CaptureRulePref,
-			info.CaptureTableID,
-		),
+		Apply: server.CommandAction{
+			"ip", "rule", "add", "pref", strconv.Itoa(info.CaptureRulePref),
+			"fwmark", "0/0xffffffff", "lookup", table,
+		},
+		Reset: server.CommandAction{
+			"ip", "rule", "del", "pref", strconv.Itoa(info.CaptureRulePref),
+			"fwmark", "0/0xffffffff", "lookup", table,
+		},
 	})
 
 	// Without --ipv6, IPv6 is left to the system's routes. With it, the TUN
@@ -291,18 +279,14 @@ func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 				"add IPv6 route %s to capture table",
 				ipv6CaptureCIDR,
 			),
-			Apply: fmt.Sprintf(
-				"ip -6 route add %s dev %s table %d",
-				ipv6CaptureCIDR,
-				info.TUNName,
-				info.CaptureTableID,
-			),
-			Reset: fmt.Sprintf(
-				"ip -6 route del %s dev %s table %d",
-				ipv6CaptureCIDR,
-				info.TUNName,
-				info.CaptureTableID,
-			),
+			Apply: server.CommandAction{
+				"ip", "-6", "route", "add", ipv6CaptureCIDR,
+				"dev", info.TUNName, "table", table,
+			},
+			Reset: server.CommandAction{
+				"ip", "-6", "route", "del", ipv6CaptureCIDR,
+				"dev", info.TUNName, "table", table,
+			},
 			Optional: true,
 			Group:    ipv6CaptureGroup,
 		})
@@ -310,30 +294,28 @@ func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 		jobs = append(jobs, server.NetworkJob{
 			Description: "add IPv6 rule for the main table without its default " +
 				"route (needs suppress_prefixlength: iproute2 and Linux 3.12+)",
-			Apply: fmt.Sprintf(
-				"ip -6 rule add pref %d lookup main suppress_prefixlength 0",
-				info.IPv6MainRulePref,
-			),
-			Reset: fmt.Sprintf(
-				"ip -6 rule del pref %d lookup main suppress_prefixlength 0",
-				info.IPv6MainRulePref,
-			),
+			Apply: server.CommandAction{
+				"ip", "-6", "rule", "add", "pref", strconv.Itoa(info.IPv6MainRulePref),
+				"lookup", "main", "suppress_prefixlength", "0",
+			},
+			Reset: server.CommandAction{
+				"ip", "-6", "rule", "del", "pref", strconv.Itoa(info.IPv6MainRulePref),
+				"lookup", "main", "suppress_prefixlength", "0",
+			},
 			Optional: true,
 			Group:    ipv6CaptureGroup,
 		})
 
 		jobs = append(jobs, server.NetworkJob{
 			Description: "add IPv6 capture rule for unmarked traffic",
-			Apply: fmt.Sprintf(
-				"ip -6 rule add pref %d fwmark 0/0xffffffff lookup %d",
-				info.IPv6CaptureRulePref,
-				info.CaptureTableID,
-			),
-			Reset: fmt.Sprintf(
-				"ip -6 rule del pref %d fwmark 0/0xffffffff lookup %d",
-				info.IPv6CaptureRulePref,
-				info.CaptureTableID,
-			),
+			Apply: server.CommandAction{
+				"ip", "-6", "rule", "add", "pref", strconv.Itoa(info.IPv6CaptureRulePref),
+				"fwmark", "0/0xffffffff", "lookup", table,
+			},
+			Reset: server.CommandAction{
+				"ip", "-6", "rule", "del", "pref", strconv.Itoa(info.IPv6CaptureRulePref),
+				"fwmark", "0/0xffffffff", "lookup", table,
+			},
 			Optional: true,
 			Group:    ipv6CaptureGroup,
 			Warning:  ipv6RejectWarning,

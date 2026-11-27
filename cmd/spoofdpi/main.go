@@ -151,6 +151,14 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 
 	logger.Info().Str("mode", cfg.App.Mode.String()).Msgf("app")
 
+	// Clean up what a run that crashed left behind before createServer
+	// discovers the routes, so its routes do not obscure the real default
+	// route, and before the TUN's table and rule prefs are chosen. Until the
+	// cleanup entry points find anything, nothing recovers from a crash.
+	server.WarnLegacyStateFiles(logger)
+	tun.CleanLeftovers(logger)
+	server.CleanSystemProxyLeftovers(logger)
+
 	srv, err := createServer(appctx, logger, cfg)
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
@@ -207,10 +215,11 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	context.AfterFunc(appctx, beginShutdown)
 	serveCtx := shutdownCtx
 	if cfg.App.AutoConfigureNetwork {
-		stateFile, acErr := srv.SetupNetworkJobs(appctx)
+		var applied []server.NetworkJob
+		jobs, acErr := srv.SetupNetworkJobs(appctx)
 		if acErr != nil {
 			acErr = fmt.Errorf("set system network config: %w", acErr)
-		} else if acErr = server.ApplyJobs(logger, stateFile); acErr != nil {
+		} else if applied, acErr = server.ApplyJobs(logger, jobs); acErr != nil {
 			acErr = fmt.Errorf("apply network config: %w", acErr)
 		}
 		switch {
@@ -220,7 +229,8 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 			// its routes, which would make their reset commands fail.
 			var restore func()
 			serveCtx, restore = shutdownAfter(shutdownCtx, func() {
-				server.ResetJobs(logger, stateFile)
+				server.ResetJobs(logger, applied)
+				checkLeftoversAfterReset(logger, cfg.App.Mode)
 			})
 			defer restore()
 		case isNetworkSetupFatal(cfg.App.Mode):
@@ -250,6 +260,16 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 // the HTTP and SOCKS5 proxies still work when only the system proxy fails.
 func isNetworkSetupFatal(mode config.AppModeType) bool {
 	return mode == config.AppModeTUN
+}
+
+// checkLeftoversAfterReset warns about the network configuration of this run
+// in mode that ResetJobs left in place.
+func checkLeftoversAfterReset(logger zerolog.Logger, mode config.AppModeType) {
+	if mode == config.AppModeTUN {
+		tun.CheckLeftoversAfterReset(logger)
+		return
+	}
+	server.CheckSystemProxyLeftoversAfterReset(logger)
 }
 
 // shutdownAfterLimit bounds how long shutdownAfter holds the server up while
@@ -493,13 +513,6 @@ func createServer(
 	logger zerolog.Logger,
 	cfg *config.Config,
 ) (server.Server, error) {
-	// Clean up stale network state before route discovery so a crashed TUN
-	// session does not leave the routing table in a state that obscures the
-	// real default route.
-	server.ResetStaleJobs(logger, tun.StateFile)
-	server.ResetStaleJobs(logger, http.StateFile)
-	server.ResetStaleJobs(logger, socks5.StateFile)
-
 	// Egress discovery may turn IPv6 off in cfg, so it runs before anything
 	// reads the ipv6 option or the DNS record types.
 	startup, err := discoverEgresses(logger, cfg, osRouteFinder)

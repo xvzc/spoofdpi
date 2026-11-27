@@ -483,10 +483,6 @@ func (s *TunServer) stackToTun(
 	}
 }
 
-func (s *TunServer) SetupNetworkJobs(_ context.Context) (string, error) {
-	jobs, err := s.sysNet.BuildJobs()
-	if err != nil {
-		return "", err
-	}
-	return StateFile, server.SaveJobs(StateFile, jobs, server.ClearedByReboot)
+func (s *TunServer) SetupNetworkJobs(_ context.Context) ([]server.NetworkJob, error) {
+	return s.sysNet.BuildJobs()
 }

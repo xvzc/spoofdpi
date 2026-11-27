@@ -94,16 +94,12 @@ func (p *HTTPProxy) Serve(ctx context.Context) error {
 	return nil
 }
 
-func (p *HTTPProxy) SetupNetworkJobs(ctx context.Context) (string, error) {
-	if err := server.SetupSystemProxy(
+func (p *HTTPProxy) SetupNetworkJobs(ctx context.Context) ([]server.NetworkJob, error) {
+	return server.SetupSystemProxy(
 		ctx,
 		p.logger,
 		"PROXY "+server.PACProxyHostPort(p.listenAddr),
-		StateFile,
-	); err != nil {
-		return "", err
-	}
-	return StateFile, nil
+	)
 }
 
 func (p *HTTPProxy) Addr() string {

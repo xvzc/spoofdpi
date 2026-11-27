@@ -5,6 +5,8 @@ package tun
 import (
 	"fmt"
 	"net"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -14,8 +16,6 @@ import (
 	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
-
-const StateFile = "/tmp/spoofdpi.freebsd.tun.state"
 
 type tunNetworkInfoFreeBSD struct {
 	FIBID int
@@ -122,58 +122,53 @@ func buildJobs(info *tunNetworkInfoFreeBSD) []server.NetworkJob {
 	// explicitly instead.
 	jobs = append(jobs, server.NetworkJob{
 		Description: "configure TUN interface address",
-		Apply: fmt.Sprintf(
-			"ifconfig %s inet %s/%d up",
-			info.TUNName,
-			info.TunLocalIP,
-			info.TunPrefixLen,
-		),
-		Reset: fmt.Sprintf("ifconfig %s destroy", info.TUNName),
+		Apply: server.CommandAction{
+			"ifconfig", info.TUNName, "inet",
+			fmt.Sprintf("%s/%d", info.TunLocalIP, info.TunPrefixLen), "up",
+		},
+		Reset: server.CommandAction{"ifconfig", info.TUNName, "destroy"},
 	})
 
+	fib := strconv.Itoa(info.FIBID)
 	if needsFIBSubnetRoute(info.PhysIfaceP2P, info.GatewayIP) {
 		jobs = append(jobs, server.NetworkJob{
 			Description: "add FIB subnet route",
-			Apply: fmt.Sprintf(
-				"route add -net %s -iface %s -fib %d",
-				info.PhysIfaceCIDR,
-				info.PhysIfaceName,
-				info.FIBID,
-			),
-			Reset: fmt.Sprintf(
-				"route delete -net %s -iface %s -fib %d",
-				info.PhysIfaceCIDR,
-				info.PhysIfaceName,
-				info.FIBID,
-			),
+			Apply: server.CommandAction{
+				"route", "add", "-net", info.PhysIfaceCIDR,
+				"-iface", info.PhysIfaceName, "-fib", fib,
+			},
+			Reset: server.CommandAction{
+				"route", "delete", "-net", info.PhysIfaceCIDR,
+				"-iface", info.PhysIfaceName, "-fib", fib,
+			},
 		})
 	}
 
 	// Without a gateway, the FIB default route leaves through the
 	// interface itself.
-	fibDefaultTarget := info.GatewayIP
+	fibDefaultTarget := []string{info.GatewayIP}
 	if info.GatewayIP == "" {
-		fibDefaultTarget = "-interface " + info.PhysIfaceName
+		fibDefaultTarget = []string{"-interface", info.PhysIfaceName}
 	}
 	jobs = append(jobs, server.NetworkJob{
 		Description: "add FIB default route",
-		Apply: fmt.Sprintf(
-			"route add default %s -fib %d",
+		Apply: server.CommandAction(slices.Concat(
+			[]string{"route", "add", "default"},
 			fibDefaultTarget,
-			info.FIBID,
-		),
-		Reset: fmt.Sprintf("route delete default -fib %d", info.FIBID),
+			[]string{"-fib", fib},
+		)),
+		Reset: server.CommandAction{"route", "delete", "default", "-fib", fib},
 	})
 
 	for _, t := range info.RouteTargetCIDRs {
 		jobs = append(jobs, server.NetworkJob{
 			Description: fmt.Sprintf("add CIDR route %s via TUN", t),
-			Apply:       fmt.Sprintf("route -n add -net %s -interface %s", t, info.TUNName),
-			Reset: fmt.Sprintf(
-				"route -n delete -net %s -interface %s",
-				t,
-				info.TUNName,
-			),
+			Apply: server.CommandAction{
+				"route", "-n", "add", "-net", t, "-interface", info.TUNName,
+			},
+			Reset: server.CommandAction{
+				"route", "-n", "delete", "-net", t, "-interface", info.TUNName,
+			},
 		})
 	}
 
@@ -183,16 +178,14 @@ func buildJobs(info *tunNetworkInfoFreeBSD) []server.NetworkJob {
 	if info.IPv6Enabled && info.HasIPv6Egress {
 		jobs = append(jobs, server.NetworkJob{
 			Description: fmt.Sprintf("add IPv6 route %s via TUN", ipv6CaptureCIDR),
-			Apply: fmt.Sprintf(
-				"route -n add -inet6 -net %s -interface %s",
-				ipv6CaptureCIDR,
-				info.TUNName,
-			),
-			Reset: fmt.Sprintf(
-				"route -n delete -inet6 -net %s -interface %s",
-				ipv6CaptureCIDR,
-				info.TUNName,
-			),
+			Apply: server.CommandAction{
+				"route", "-n", "add", "-inet6", "-net", ipv6CaptureCIDR,
+				"-interface", info.TUNName,
+			},
+			Reset: server.CommandAction{
+				"route", "-n", "delete", "-inet6", "-net", ipv6CaptureCIDR,
+				"-interface", info.TUNName,
+			},
 			Optional: true,
 			Warning:  ipv6RejectWarning,
 		})

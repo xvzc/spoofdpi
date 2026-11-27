@@ -113,17 +113,10 @@ func runFakeEgress(t *testing.T, tun bool) {
 	// The TUN exists before the routes and rules are installed.
 	time.Sleep(2 * time.Second)
 
-	var stateFile string
 	if tun {
 		t.Logf("tun interface: %s", tunName)
-		stateFile = findStateFile(snapshotTime)
-		t.Run("state-file-created", func(t *testing.T) {
-			if stateFile == "" {
-				t.Fatal("no /tmp/spoofdpi.*.state written since the snapshot")
-			}
-			t.Log(stateFile)
-		})
 	}
+	t.Run("no-state-file", func(t *testing.T) { checkNoStateFile(t, snapshotTime) })
 
 	captures := []*capture{startCapture(t, phys)}
 	if tun {
@@ -155,6 +148,9 @@ func runFakeEgress(t *testing.T, tun bool) {
 		c.stop()
 	}
 	graceful := spoofdpi.stop(15 * time.Second)
+	t.Run("no-state-file-after-exit", func(t *testing.T) {
+		checkNoStateFile(t, snapshotTime)
+	})
 
 	for _, f := range fetches {
 		t.Run("fetch/"+f.host, func(t *testing.T) {
@@ -255,16 +251,6 @@ func runFakeEgress(t *testing.T, tun bool) {
 			strings.Join(lines[:min(len(lines), 20)], "\n"))
 	})
 
-	t.Run("state-file-removed", func(t *testing.T) {
-		if stateFile == "" {
-			t.Fatal("no state file was found while the TUN was up")
-		}
-		if _, err := os.Stat(stateFile); err == nil {
-			t.Fatalf("%s still exists", stateFile)
-		}
-		t.Logf("%s removed", stateFile)
-	})
-
 	t.Run("tun-removed", func(t *testing.T) {
 		if ifaceExists(tunName) {
 			t.Fatalf("%s still exists", tunName)
@@ -273,11 +259,9 @@ func runFakeEgress(t *testing.T, tun bool) {
 	})
 
 	// The test never changes routes itself.
-	if t.Failed() && stateFile != "" {
-		if _, err := os.Stat(stateFile); err == nil {
-			t.Logf("TUN state file still present: %s; the routes may need manual "+
-				"cleanup (compare %s with the current state)", stateFile, beforePath)
-		}
+	if t.Failed() {
+		t.Logf("compare %s with the current state; nothing restores a failed "+
+			"reset automatically", beforePath)
 	}
 }
 
@@ -304,16 +288,27 @@ func waitReady(t *testing.T, p *spoofdpiProc, tun bool, before string) string {
 	return ""
 }
 
-// findStateFile returns the /tmp/spoofdpi.*.state file written after since. It
-// matches by modification time instead of hardcoding the per-OS name, so that a
-// renamed file fails the check rather than passing unnoticed.
+// checkNoStateFile fails t when a /tmp/spoofdpi*.state file was written after
+// since.
+func checkNoStateFile(t *testing.T, since time.Time) {
+	t.Helper()
+	if stateFile := findStateFile(since); stateFile != "" {
+		t.Fatalf("%s written since the snapshot", stateFile)
+	}
+	t.Log("no /tmp/spoofdpi*.state written since the snapshot")
+}
+
+// findStateFile returns a /tmp/spoofdpi*.state file written after since, or
+// "" when there is none. spoofdpi writes no state file; the pattern covers
+// the names earlier versions used, and the modification time keeps a file
+// that one of them left from failing the check.
 func findStateFile(since time.Time) string {
 	// /tmp is a symlink on darwin.
 	tmp, err := filepath.EvalSymlinks("/tmp")
 	if err != nil {
 		return ""
 	}
-	matches, _ := filepath.Glob(filepath.Join(tmp, "spoofdpi.*.state"))
+	matches, _ := filepath.Glob(filepath.Join(tmp, "spoofdpi*.state"))
 	for _, m := range matches {
 		if st, err := os.Stat(m); err == nil && st.ModTime().After(since) {
 			return m

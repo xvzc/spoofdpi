@@ -14,8 +14,6 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-const StateFile = "/tmp/spoofdpi.darwin.tun.state"
-
 type tunNetworkInfoDarwin struct {
 	// GatewayIP is empty when the default route has no gateway.
 	GatewayIP        string
@@ -85,44 +83,45 @@ func buildJobs(info *tunNetworkInfoDarwin) []server.NetworkJob {
 
 	jobs = append(jobs, server.NetworkJob{
 		Description: "configure TUN interface address",
-		Apply: fmt.Sprintf(
-			"ifconfig %s %s %s up",
-			info.TUNName,
-			info.TunLocalIP,
-			info.TunRemoteIP,
-		),
-		Reset: fmt.Sprintf("ifconfig %s down", info.TUNName),
+		Apply: server.CommandAction{
+			"ifconfig", info.TUNName, info.TunLocalIP, info.TunRemoteIP, "up",
+		},
+		Reset: server.CommandAction{"ifconfig", info.TUNName, "down"},
 	})
 
 	// Without a gateway, the scoped default route leaves through the
 	// interface itself.
-	scopedDefaultTarget := info.GatewayIP
+	scopedDefaultTarget := []string{info.GatewayIP}
 	if info.GatewayIP == "" {
-		scopedDefaultTarget = "-interface " + info.PhysIfaceName
+		scopedDefaultTarget = []string{"-interface", info.PhysIfaceName}
 	}
 	jobs = append(jobs, server.NetworkJob{
 		Description: "add scoped default route via physical interface",
-		Apply: fmt.Sprintf(
-			"route add -ifscope %s default %s",
-			info.PhysIfaceName,
-			scopedDefaultTarget,
+		Apply: append(
+			server.CommandAction{"route", "add", "-ifscope", info.PhysIfaceName, "default"},
+			scopedDefaultTarget...,
 		),
-		Reset: fmt.Sprintf(
-			"route delete -ifscope %s default %s",
-			info.PhysIfaceName,
-			scopedDefaultTarget,
+		Reset: append(
+			server.CommandAction{
+				"route",
+				"delete",
+				"-ifscope",
+				info.PhysIfaceName,
+				"default",
+			},
+			scopedDefaultTarget...,
 		),
 	})
 
 	for _, t := range info.RouteTargetCIDRs {
 		jobs = append(jobs, server.NetworkJob{
 			Description: fmt.Sprintf("add CIDR route %s via TUN", t),
-			Apply:       fmt.Sprintf("route -n add -net %s -interface %s", t, info.TUNName),
-			Reset: fmt.Sprintf(
-				"route -n delete -net %s -interface %s",
-				t,
-				info.TUNName,
-			),
+			Apply: server.CommandAction{
+				"route", "-n", "add", "-net", t, "-interface", info.TUNName,
+			},
+			Reset: server.CommandAction{
+				"route", "-n", "delete", "-net", t, "-interface", info.TUNName,
+			},
 		})
 	}
 
@@ -132,16 +131,14 @@ func buildJobs(info *tunNetworkInfoDarwin) []server.NetworkJob {
 	if info.IPv6Enabled && info.HasIPv6Egress {
 		jobs = append(jobs, server.NetworkJob{
 			Description: fmt.Sprintf("add IPv6 route %s via TUN", ipv6CaptureCIDR),
-			Apply: fmt.Sprintf(
-				"route -n add -inet6 -net %s -interface %s",
-				ipv6CaptureCIDR,
-				info.TUNName,
-			),
-			Reset: fmt.Sprintf(
-				"route -n delete -inet6 -net %s -interface %s",
-				ipv6CaptureCIDR,
-				info.TUNName,
-			),
+			Apply: server.CommandAction{
+				"route", "-n", "add", "-inet6", "-net", ipv6CaptureCIDR,
+				"-interface", info.TUNName,
+			},
+			Reset: server.CommandAction{
+				"route", "-n", "delete", "-inet6", "-net", ipv6CaptureCIDR,
+				"-interface", info.TUNName,
+			},
 			Optional: true,
 			Warning:  ipv6RejectWarning,
 		})

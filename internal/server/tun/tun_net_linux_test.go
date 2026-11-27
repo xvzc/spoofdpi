@@ -16,60 +16,64 @@ func TestBuildJobs_Linux(t *testing.T) {
 	ipv4Jobs := []server.NetworkJob{
 		{
 			Description: "remove TUN interface",
-			Reset:       "ip link delete tun-spoofdpi",
+			Reset:       command("ip link delete tun-spoofdpi"),
 		},
 		{
 			Description: "configure TUN interface address",
-			Apply:       "ip addr add 10.200.0.1 peer 10.200.0.2 dev tun-spoofdpi",
-			Reset:       "ip addr del 10.200.0.1 peer 10.200.0.2 dev tun-spoofdpi",
+			Apply:       command("ip addr add 10.200.0.1 peer 10.200.0.2 dev tun-spoofdpi"),
+			Reset:       command("ip addr del 10.200.0.1 peer 10.200.0.2 dev tun-spoofdpi"),
 		},
 		{
 			Description: "bring TUN interface up",
-			Apply:       "ip link set dev tun-spoofdpi up",
-			Reset:       "ip link set dev tun-spoofdpi down",
+			Apply:       command("ip link set dev tun-spoofdpi up"),
+			Reset:       command("ip link set dev tun-spoofdpi down"),
 		},
 		{
 			Description: "add default route to capture table",
-			Apply:       "ip route add default dev tun-spoofdpi table 200",
-			Reset:       "ip route del default dev tun-spoofdpi table 200",
+			Apply:       command("ip route add default dev tun-spoofdpi table 200"),
+			Reset:       command("ip route del default dev tun-spoofdpi table 200"),
 		},
 		{
 			Description: "add rule for the main table without its default route " +
 				"(needs suppress_prefixlength: iproute2 and Linux 3.12+)",
-			Apply: "ip rule add pref 32763 lookup main suppress_prefixlength 0",
-			Reset: "ip rule del pref 32763 lookup main suppress_prefixlength 0",
+			Apply: command("ip rule add pref 32763 lookup main suppress_prefixlength 0"),
+			Reset: command("ip rule del pref 32763 lookup main suppress_prefixlength 0"),
 		},
 		{
 			Description: "add policy routing rule",
-			Apply:       "ip rule add pref 32764 from 192.168.1.10 lookup main",
-			Reset:       "ip rule del pref 32764 from 192.168.1.10 lookup main",
+			Apply:       command("ip rule add pref 32764 from 192.168.1.10 lookup main"),
+			Reset:       command("ip rule del pref 32764 from 192.168.1.10 lookup main"),
 		},
 		{
 			Description: "add capture rule for unmarked traffic",
-			Apply:       "ip rule add pref 32765 fwmark 0/0xffffffff lookup 200",
-			Reset:       "ip rule del pref 32765 fwmark 0/0xffffffff lookup 200",
+			Apply:       command("ip rule add pref 32765 fwmark 0/0xffffffff lookup 200"),
+			Reset:       command("ip rule del pref 32765 fwmark 0/0xffffffff lookup 200"),
 		},
 	}
 	ipv6Jobs := []server.NetworkJob{
 		{
 			Description: "add IPv6 route 2000::/3 to capture table",
-			Apply:       "ip -6 route add 2000::/3 dev tun-spoofdpi table 200",
-			Reset:       "ip -6 route del 2000::/3 dev tun-spoofdpi table 200",
+			Apply:       command("ip -6 route add 2000::/3 dev tun-spoofdpi table 200"),
+			Reset:       command("ip -6 route del 2000::/3 dev tun-spoofdpi table 200"),
 			Optional:    true,
 			Group:       ipv6CaptureGroup,
 		},
 		{
 			Description: "add IPv6 rule for the main table without its default " +
 				"route (needs suppress_prefixlength: iproute2 and Linux 3.12+)",
-			Apply:    "ip -6 rule add pref 32764 lookup main suppress_prefixlength 0",
-			Reset:    "ip -6 rule del pref 32764 lookup main suppress_prefixlength 0",
+			Apply: command(
+				"ip -6 rule add pref 32764 lookup main suppress_prefixlength 0",
+			),
+			Reset: command(
+				"ip -6 rule del pref 32764 lookup main suppress_prefixlength 0",
+			),
 			Optional: true,
 			Group:    ipv6CaptureGroup,
 		},
 		{
 			Description: "add IPv6 capture rule for unmarked traffic",
-			Apply:       "ip -6 rule add pref 32765 fwmark 0/0xffffffff lookup 200",
-			Reset:       "ip -6 rule del pref 32765 fwmark 0/0xffffffff lookup 200",
+			Apply:       command("ip -6 rule add pref 32765 fwmark 0/0xffffffff lookup 200"),
+			Reset:       command("ip -6 rule del pref 32765 fwmark 0/0xffffffff lookup 200"),
 			Optional:    true,
 			Group:       ipv6CaptureGroup,
 			Warning:     ipv6RejectWarning,
@@ -142,21 +146,25 @@ func assertMainUntouched(t *testing.T, jobs []server.NetworkJob, physIP string) 
 	fullLookup := "from " + physIP + " lookup main"
 	fullLookups := 0
 	for _, j := range jobs {
-		if strings.HasPrefix(j.Apply, "ip route add") ||
-			strings.HasPrefix(j.Apply, "ip -6 route add") {
-			assert.Contains(t, j.Apply, " table ", "route outside main: %q", j.Apply)
-		}
-		if !strings.Contains(j.Apply, "lookup main") {
+		if j.Apply == nil {
 			continue
 		}
-		if strings.HasPrefix(j.Apply, "ip rule add ") &&
-			strings.HasSuffix(j.Apply, " "+fullLookup) {
+		apply := j.Apply.String()
+		if strings.HasPrefix(apply, "ip route add") ||
+			strings.HasPrefix(apply, "ip -6 route add") {
+			assert.Contains(t, apply, " table ", "route outside main: %q", apply)
+		}
+		if !strings.Contains(apply, "lookup main") {
+			continue
+		}
+		if strings.HasPrefix(apply, "ip rule add ") &&
+			strings.HasSuffix(apply, " "+fullLookup) {
 			fullLookups++
 			continue
 		}
 		assert.True(t,
-			strings.HasSuffix(j.Apply, "lookup main suppress_prefixlength 0"),
-			"rule looking up main suppresses its default: %q", j.Apply,
+			strings.HasSuffix(apply, "lookup main suppress_prefixlength 0"),
+			"rule looking up main suppresses its default: %q", apply,
 		)
 	}
 	assert.Equal(t, 1, fullLookups, "rules looking up main in full: %q", fullLookup)

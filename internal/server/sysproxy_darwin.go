@@ -16,34 +16,29 @@ import (
 )
 
 // SetupSystemProxy serves a PAC file that routes traffic through pacDirective
-// (e.g. "PROXY 127.0.0.1:8080") and saves the jobs that point the network
-// service of the default interface at it to stateFile. The PAC server is
-// closed when ctx is done.
+// (e.g. "PROXY 127.0.0.1:8080") and returns the jobs that point the network
+// service of the default interface at it. The PAC server is closed when ctx
+// is done.
 func SetupSystemProxy(
 	ctx context.Context,
 	logger zerolog.Logger,
 	pacDirective string,
-	stateFile string,
-) error {
+) ([]NetworkJob, error) {
 	pacContent := fmt.Sprintf(
 		"function FindProxyForURL(url, host) {\n    return \"%s; DIRECT\";\n}",
 		pacDirective,
 	)
 	pacURL, pac, err := runPACServer(pacContent)
 	if err != nil {
-		return fmt.Errorf("error creating pac server: %w", err)
+		return nil, fmt.Errorf("error creating pac server: %w", err)
 	}
 	jobs, err := buildSysProxyJobs(logger, pacURL)
 	if err != nil {
 		_ = pac.Close()
-		return err
-	}
-	if err := SaveJobs(stateFile, jobs, SurvivesReboot); err != nil {
-		_ = pac.Close()
-		return fmt.Errorf("failed to save state: %w", err)
+		return nil, err
 	}
 	go func() { <-ctx.Done(); _ = pac.Close() }()
-	return nil
+	return jobs, nil
 }
 
 func runPACServer(content string) (string, *http.Server, error) {
@@ -117,32 +112,50 @@ func buildSysProxyJobs(logger zerolog.Logger, pacURL string) ([]NetworkJob, erro
 		return nil, fmt.Errorf("failed to get network service: %w", err)
 	}
 
+	return sysProxyJobs(service, pacURL), nil
+}
+
+// sysProxyJobs returns the jobs that point the network service named service
+// at the PAC file at pacURL.
+func sysProxyJobs(service, pacURL string) []NetworkJob {
 	var jobs []NetworkJob
 
 	jobs = append(jobs, NetworkJob{
 		Description: "set auto proxy URL",
-		Apply: fmt.Sprintf(
-			"networksetup -setautoproxyurl %s %s",
-			executil.Quote(service),
-			pacURL,
-		),
-		Reset: fmt.Sprintf(
-			"networksetup -setautoproxystate %s off",
-			executil.Quote(service),
-		),
+		Apply:       CommandAction{"networksetup", "-setautoproxyurl", service, pacURL},
+		Reset:       CommandAction{"networksetup", "-setautoproxystate", service, "off"},
 	})
 
 	jobs = append(jobs, NetworkJob{
 		Description: "enable proxy auto discovery",
-		Apply: fmt.Sprintf(
-			"networksetup -setproxyautodiscovery %s on",
-			executil.Quote(service),
-		),
-		Reset: fmt.Sprintf(
-			"networksetup -setproxyautodiscovery %s off",
-			executil.Quote(service),
-		),
+		Apply:       CommandAction{"networksetup", "-setproxyautodiscovery", service, "on"},
+		Reset: CommandAction{
+			"networksetup",
+			"-setproxyautodiscovery",
+			service,
+			"off",
+		},
 	})
 
-	return jobs, nil
+	return jobs
+}
+
+// CleanSystemProxyLeftovers turns off the auto proxy configuration that an
+// earlier run in a proxy mode left on when it ended without restoring it,
+// such as on a crash. It runs at startup in every mode and never fails the
+// start.
+//
+// It finds nothing yet, so nothing recovers from a crash: the system proxy
+// of such a run stays on until it is turned off by hand.
+func CleanSystemProxyLeftovers(logger zerolog.Logger) {
+	// TODO(S7): find the network services whose auto proxy URL points at a
+	// spoofdpi PAC server that no longer answers.
+}
+
+// CheckSystemProxyLeftoversAfterReset warns about the auto proxy
+// configuration of this run that is still on after ResetJobs restored the
+// network configuration, which points to a bug in a job's Reset. It turns
+// nothing off.
+func CheckSystemProxyLeftoversAfterReset(logger zerolog.Logger) {
+	// TODO(S7): look for what this run turned on.
 }

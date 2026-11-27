@@ -105,6 +105,7 @@ Each check is a subtest, such as `TestFakeEgress_TUN_RequireRoot/fakes-on-tun`, 
 
 | Check | Passes when |
 | --- | --- |
+| `no-state-file`, `no-state-file-after-exit` | spoofdpi wrote no `/tmp/spoofdpi*.state` file since the snapshot, while running and after exit. |
 | `fetch/<host>` | The site answers 2xx or 3xx through spoofdpi. |
 | `fakes-on-physical` | Low-TTL fakes leave through the physical interface. |
 | `fakes-ttl-above-1` | No captured fake has a TTL of 1 or less, which expires at the first hop. |
@@ -113,8 +114,6 @@ Each check is a subtest, such as `TestFakeEgress_TUN_RequireRoot/fakes-on-tun`, 
 | `fakes-on-tun` | TUN mode only: no fake loops into the TUN. |
 | `graceful-exit` | TUN mode only: spoofdpi exits 0 within 15 s of SIGINT. |
 | `reset-diff` | TUN mode only: routes, rules, and interfaces match the snapshot. |
-| `state-file-created` | TUN mode only: spoofdpi saved its reset commands in `/tmp`. |
-| `state-file-removed` | TUN mode only: that state file is gone after the reset. |
 | `tun-removed` | TUN mode only: the TUN interface is gone. |
 
 `TestFakeEgress_NonRoot` passes when startup without root exits non-zero and names the root requirement and the remedy.
@@ -128,5 +127,5 @@ Some failures come from the network, not from spoofdpi:
 
 - Do not change routes, rules, FIBs, or interfaces by hand, and do not edit a test to make a check pass. If a check fails, stop and keep the evidence; rerun once only for the network-caused failures above, and keep both results.
 - Never drop `-run RequireRoot` from a command that uses `-exec sudo`.
-- When a TUN run does not reset, keep the state file path and `reset.diff`, and report them before anyone touches the routes.
+- When a TUN run does not reset, keep `reset.diff`, and report it before anyone touches the routes.
 - Leave nothing running: check with `pgrep -lx spoofdpi` at the end.

@@ -16,7 +16,7 @@ stutter    https://example.com/  10/10  200x10    0     0
 ```
 
 !!! warning
-    Stop any other running spoofdpi before you start a live test. A starting spoofdpi resets the system network settings left by an earlier run, such as the system proxy, so each case of the test changes the network state of a spoofdpi that is already running.
+    Stop any other running spoofdpi before you start a live test, so that its traffic and network settings do not mix with the results of the test.
 
 ## How It Works
 

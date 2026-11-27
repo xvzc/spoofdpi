@@ -12,8 +12,6 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 )
 
-const StateFile = ""
-
 func (n *tunSystemNetworkStub) BuildJobs() ([]server.NetworkJob, error) {
 	return nil, nil
 }

@@ -13,34 +13,34 @@ func TestBuildJobs_Darwin(t *testing.T) {
 	ipv4Jobs := []server.NetworkJob{
 		{
 			Description: "configure TUN interface address",
-			Apply:       "ifconfig utun9 10.200.0.1 10.200.0.2 up",
-			Reset:       "ifconfig utun9 down",
+			Apply:       command("ifconfig utun9 10.200.0.1 10.200.0.2 up"),
+			Reset:       command("ifconfig utun9 down"),
 		},
 		{
 			Description: "add scoped default route via physical interface",
-			Apply:       "route add -ifscope en0 default 192.168.1.1",
-			Reset:       "route delete -ifscope en0 default 192.168.1.1",
+			Apply:       command("route add -ifscope en0 default 192.168.1.1"),
+			Reset:       command("route delete -ifscope en0 default 192.168.1.1"),
 		},
 		{
 			Description: "add CIDR route 10.200.0.0/30 via TUN",
-			Apply:       "route -n add -net 10.200.0.0/30 -interface utun9",
-			Reset:       "route -n delete -net 10.200.0.0/30 -interface utun9",
+			Apply:       command("route -n add -net 10.200.0.0/30 -interface utun9"),
+			Reset:       command("route -n delete -net 10.200.0.0/30 -interface utun9"),
 		},
 		{
 			Description: "add CIDR route 0.0.0.0/1 via TUN",
-			Apply:       "route -n add -net 0.0.0.0/1 -interface utun9",
-			Reset:       "route -n delete -net 0.0.0.0/1 -interface utun9",
+			Apply:       command("route -n add -net 0.0.0.0/1 -interface utun9"),
+			Reset:       command("route -n delete -net 0.0.0.0/1 -interface utun9"),
 		},
 		{
 			Description: "add CIDR route 128.0.0.0/1 via TUN",
-			Apply:       "route -n add -net 128.0.0.0/1 -interface utun9",
-			Reset:       "route -n delete -net 128.0.0.0/1 -interface utun9",
+			Apply:       command("route -n add -net 128.0.0.0/1 -interface utun9"),
+			Reset:       command("route -n delete -net 128.0.0.0/1 -interface utun9"),
 		},
 	}
 	ipv6Job := server.NetworkJob{
 		Description: "add IPv6 route 2000::/3 via TUN",
-		Apply:       "route -n add -inet6 -net 2000::/3 -interface utun9",
-		Reset:       "route -n delete -inet6 -net 2000::/3 -interface utun9",
+		Apply:       command("route -n add -inet6 -net 2000::/3 -interface utun9"),
+		Reset:       command("route -n delete -inet6 -net 2000::/3 -interface utun9"),
 		Optional:    true,
 		Warning:     ipv6RejectWarning,
 	}
@@ -99,8 +99,8 @@ func TestBuildJobs_Darwin_NoGateway(t *testing.T) {
 
 	assert.Equal(t, server.NetworkJob{
 		Description: "add scoped default route via physical interface",
-		Apply:       "route add -ifscope ppp0 default -interface ppp0",
-		Reset:       "route delete -ifscope ppp0 default -interface ppp0",
+		Apply:       command("route add -ifscope ppp0 default -interface ppp0"),
+		Reset:       command("route delete -ifscope ppp0 default -interface ppp0"),
 	}, jobs[1])
 	assert.Len(t, jobs, 5)
 }

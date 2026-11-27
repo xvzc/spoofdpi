@@ -100,16 +100,14 @@ func (p *SOCKS5Proxy) Serve(ctx context.Context) error {
 	return nil
 }
 
-func (p *SOCKS5Proxy) SetupNetworkJobs(ctx context.Context) (string, error) {
-	if err := server.SetupSystemProxy(
+func (p *SOCKS5Proxy) SetupNetworkJobs(
+	ctx context.Context,
+) ([]server.NetworkJob, error) {
+	return server.SetupSystemProxy(
 		ctx,
 		p.logger,
 		"SOCKS5 "+server.PACProxyHostPort(p.listenAddr),
-		StateFile,
-	); err != nil {
-		return "", err
-	}
-	return StateFile, nil
+	)
 }
 
 func (p *SOCKS5Proxy) Addr() string {

@@ -13,36 +13,38 @@ func TestBuildJobs_FreeBSD(t *testing.T) {
 	ipv4Jobs := []server.NetworkJob{
 		{
 			Description: "configure TUN interface address",
-			Apply:       "ifconfig tun-spoofdpi inet 10.200.0.1/30 up",
-			Reset:       "ifconfig tun-spoofdpi destroy",
+			Apply:       command("ifconfig tun-spoofdpi inet 10.200.0.1/30 up"),
+			Reset:       command("ifconfig tun-spoofdpi destroy"),
 		},
 		{
 			Description: "add FIB subnet route",
-			Apply:       "route add -net 192.168.1.0/24 -iface em0 -fib 3",
-			Reset:       "route delete -net 192.168.1.0/24 -iface em0 -fib 3",
+			Apply:       command("route add -net 192.168.1.0/24 -iface em0 -fib 3"),
+			Reset:       command("route delete -net 192.168.1.0/24 -iface em0 -fib 3"),
 		},
 		{
 			Description: "add FIB default route",
-			Apply:       "route add default 192.168.1.1 -fib 3",
-			Reset:       "route delete default -fib 3",
+			Apply:       command("route add default 192.168.1.1 -fib 3"),
+			Reset:       command("route delete default -fib 3"),
 		},
 		{
 			Description: "add CIDR route 0.0.0.0/1 via TUN",
-			Apply:       "route -n add -net 0.0.0.0/1 -interface tun-spoofdpi",
-			Reset:       "route -n delete -net 0.0.0.0/1 -interface tun-spoofdpi",
+			Apply:       command("route -n add -net 0.0.0.0/1 -interface tun-spoofdpi"),
+			Reset:       command("route -n delete -net 0.0.0.0/1 -interface tun-spoofdpi"),
 		},
 		{
 			Description: "add CIDR route 128.0.0.0/1 via TUN",
-			Apply:       "route -n add -net 128.0.0.0/1 -interface tun-spoofdpi",
-			Reset:       "route -n delete -net 128.0.0.0/1 -interface tun-spoofdpi",
+			Apply:       command("route -n add -net 128.0.0.0/1 -interface tun-spoofdpi"),
+			Reset:       command("route -n delete -net 128.0.0.0/1 -interface tun-spoofdpi"),
 		},
 	}
 	ipv6Job := server.NetworkJob{
 		Description: "add IPv6 route 2000::/3 via TUN",
-		Apply:       "route -n add -inet6 -net 2000::/3 -interface tun-spoofdpi",
-		Reset:       "route -n delete -inet6 -net 2000::/3 -interface tun-spoofdpi",
-		Optional:    true,
-		Warning:     ipv6RejectWarning,
+		Apply:       command("route -n add -inet6 -net 2000::/3 -interface tun-spoofdpi"),
+		Reset: command(
+			"route -n delete -inet6 -net 2000::/3 -interface tun-spoofdpi",
+		),
+		Optional: true,
+		Warning:  ipv6RejectWarning,
 	}
 
 	tcs := []struct {
@@ -88,25 +90,25 @@ func TestBuildJobs_FreeBSD_NoGateway(t *testing.T) {
 	routeTargets := []string{"0.0.0.0/1", "128.0.0.0/1"}
 	tunAddressJob := server.NetworkJob{
 		Description: "configure TUN interface address",
-		Apply:       "ifconfig tun-spoofdpi inet 10.200.0.1/30 up",
-		Reset:       "ifconfig tun-spoofdpi destroy",
+		Apply:       command("ifconfig tun-spoofdpi inet 10.200.0.1/30 up"),
+		Reset:       command("ifconfig tun-spoofdpi destroy"),
 	}
 	tunRouteJobs := []server.NetworkJob{
 		{
 			Description: "add CIDR route 0.0.0.0/1 via TUN",
-			Apply:       "route -n add -net 0.0.0.0/1 -interface tun-spoofdpi",
-			Reset:       "route -n delete -net 0.0.0.0/1 -interface tun-spoofdpi",
+			Apply:       command("route -n add -net 0.0.0.0/1 -interface tun-spoofdpi"),
+			Reset:       command("route -n delete -net 0.0.0.0/1 -interface tun-spoofdpi"),
 		},
 		{
 			Description: "add CIDR route 128.0.0.0/1 via TUN",
-			Apply:       "route -n add -net 128.0.0.0/1 -interface tun-spoofdpi",
-			Reset:       "route -n delete -net 128.0.0.0/1 -interface tun-spoofdpi",
+			Apply:       command("route -n add -net 128.0.0.0/1 -interface tun-spoofdpi"),
+			Reset:       command("route -n delete -net 128.0.0.0/1 -interface tun-spoofdpi"),
 		},
 	}
 	fibDefaultJob := server.NetworkJob{
 		Description: "add FIB default route",
-		Apply:       "route add default -interface ppp0 -fib 3",
-		Reset:       "route delete default -fib 3",
+		Apply:       command("route add default -interface ppp0 -fib 3"),
+		Reset:       command("route delete default -fib 3"),
 	}
 
 	tcs := []struct {
@@ -132,8 +134,8 @@ func TestBuildJobs_FreeBSD_NoGateway(t *testing.T) {
 					tunAddressJob,
 					{
 						Description: "add FIB subnet route",
-						Apply:       "route add -net 100.64.0.0/24 -iface ppp0 -fib 3",
-						Reset:       "route delete -net 100.64.0.0/24 -iface ppp0 -fib 3",
+						Apply:       command("route add -net 100.64.0.0/24 -iface ppp0 -fib 3"),
+						Reset:       command("route delete -net 100.64.0.0/24 -iface ppp0 -fib 3"),
 					},
 					fibDefaultJob,
 				},
@@ -182,28 +184,28 @@ func TestBuildJobs_FreeBSD_PointToPointGateway(t *testing.T) {
 	want := []server.NetworkJob{
 		{
 			Description: "configure TUN interface address",
-			Apply:       "ifconfig tun-spoofdpi inet 10.200.0.1/30 up",
-			Reset:       "ifconfig tun-spoofdpi destroy",
+			Apply:       command("ifconfig tun-spoofdpi inet 10.200.0.1/30 up"),
+			Reset:       command("ifconfig tun-spoofdpi destroy"),
 		},
 		{
 			Description: "add FIB subnet route",
-			Apply:       "route add -net 100.64.0.1/32 -iface ppp0 -fib 3",
-			Reset:       "route delete -net 100.64.0.1/32 -iface ppp0 -fib 3",
+			Apply:       command("route add -net 100.64.0.1/32 -iface ppp0 -fib 3"),
+			Reset:       command("route delete -net 100.64.0.1/32 -iface ppp0 -fib 3"),
 		},
 		{
 			Description: "add FIB default route",
-			Apply:       "route add default 100.64.0.254 -fib 3",
-			Reset:       "route delete default -fib 3",
+			Apply:       command("route add default 100.64.0.254 -fib 3"),
+			Reset:       command("route delete default -fib 3"),
 		},
 		{
 			Description: "add CIDR route 0.0.0.0/1 via TUN",
-			Apply:       "route -n add -net 0.0.0.0/1 -interface tun-spoofdpi",
-			Reset:       "route -n delete -net 0.0.0.0/1 -interface tun-spoofdpi",
+			Apply:       command("route -n add -net 0.0.0.0/1 -interface tun-spoofdpi"),
+			Reset:       command("route -n delete -net 0.0.0.0/1 -interface tun-spoofdpi"),
 		},
 		{
 			Description: "add CIDR route 128.0.0.0/1 via TUN",
-			Apply:       "route -n add -net 128.0.0.0/1 -interface tun-spoofdpi",
-			Reset:       "route -n delete -net 128.0.0.0/1 -interface tun-spoofdpi",
+			Apply:       command("route -n add -net 128.0.0.0/1 -interface tun-spoofdpi"),
+			Reset:       command("route -n delete -net 128.0.0.0/1 -interface tun-spoofdpi"),
 		},
 	}
 	assert.Equal(t, want, buildJobs(info))
