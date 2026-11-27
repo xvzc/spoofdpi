@@ -11,7 +11,7 @@ import "github.com/rs/zerolog"
 //
 // It finds nothing yet, so nothing recovers from a crash: what such a run
 // added stays until it is removed by hand or the host reboots.
-func CleanLeftovers(logger zerolog.Logger) {
+func CleanLeftovers(logger zerolog.Logger, opts CleanupOptions) {
 	// TODO(S4): find the capture rules tagged with protocol 213 and what is tied to
 	// them.
 }

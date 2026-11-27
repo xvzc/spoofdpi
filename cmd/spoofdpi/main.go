@@ -156,7 +156,7 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	// route, and before the TUN's table and rule prefs are chosen. Until the
 	// cleanup entry points find anything, nothing recovers from a crash.
 	server.WarnLegacyStateFiles(logger)
-	tun.CleanLeftovers(logger)
+	tun.CleanLeftovers(logger, tun.CleanupOptions{FreeBSDFIB: cfg.App.FreebsdFIB})
 	server.CleanSystemProxyLeftovers(logger)
 
 	srv, err := createServer(appctx, logger, cfg)

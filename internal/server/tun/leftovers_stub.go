@@ -5,7 +5,7 @@ package tun
 import "github.com/rs/zerolog"
 
 // CleanLeftovers does nothing: TUN mode is not supported here.
-func CleanLeftovers(zerolog.Logger) {}
+func CleanLeftovers(zerolog.Logger, CleanupOptions) {}
 
 // CheckLeftoversAfterReset does nothing: TUN mode is not supported here.
 func CheckLeftoversAfterReset(zerolog.Logger) {}
