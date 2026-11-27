@@ -32,7 +32,6 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 			AutoConfigureNetwork: false,
 			Mode:                 AppModeHTTP,
 			ListenAddr:           net.TCPAddr{},
-			Gateway:              Gateways{},
 			FreebsdFIB:           1,
 			IPv6:                 false,
 		},
@@ -401,28 +400,18 @@ func CreateCommand(
 					},
 				},
 
+				// Deprecated and ignored: spoofdpi uses the system's route.
+				// Any value is accepted, so that an old one does not fail.
+				//
+				// TODO(deprecated): removed after v1.6.0; remove with the
+				// 'gateway' key of AppOptions (types.go).
 				&cli.StringSliceFlag{
-					Name: "gateway",
-					Usage: `
-				Default gateway, skipping automatic discovery: an IPv4 address,
-				an IPv6 address (a link-local one may take a %<interface> zone),
-				or one of each. Repeat the flag or separate the addresses with
-				commas; an empty value means auto-detect. Replaces the gateway
-				of the config file. The IPv4 gateway is only used with fake
-				packets or tun mode; the IPv6 one is not used yet
-				(default: auto-detect)`,
-					Validator: func(v []string) error {
-						_, err := parseGateways(v)
-						return err
-					},
+					Name:   "gateway",
+					Hidden: true,
 					Action: func(ctx context.Context, cmd *cli.Command, v []string) error {
-						gateways, err := parseGateways(v)
-						if err != nil {
-							return err
-						}
-						cliOverrides = append(cliOverrides, func(cfg *Config) {
-							cfg.App.Gateway = gateways
-						})
+						AddWarnMsg(
+							"'--gateway' is deprecated and ignored; spoofdpi uses the system's route",
+						)
 						return nil
 					},
 				},

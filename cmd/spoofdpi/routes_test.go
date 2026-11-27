@@ -28,13 +28,13 @@ type fakeRouteFinder struct {
 	egress6    *route.Egress
 	err6       error
 	ipv6Egress bool
-	calls      []string // family gateway%zone
+	calls      []string // family
 }
 
 func (f *fakeRouteFinder) finder() routeFinder {
 	return routeFinder{
-		egress: func(fam netutil.Family, gateway net.IP, zone string) (*route.Egress, error) {
-			f.calls = append(f.calls, fmt.Sprintf("%s %v%%%s", fam, gateway, zone))
+		egress: func(fam netutil.Family) (*route.Egress, error) {
+			f.calls = append(f.calls, fam.String())
 			if fam == netutil.FamilyV6 {
 				return f.egress6, f.err6
 			}
@@ -43,12 +43,6 @@ func (f *fakeRouteFinder) finder() routeFinder {
 		hasIPv6Egress: func() bool { return f.ipv6Egress },
 	}
 }
-
-// badGatewayErr is an error that route.DiscoverEgress reports for a
-// gateway it cannot use.
-type badGatewayErr struct{ error }
-
-func (e badGatewayErr) Is(target error) bool { return target == route.ErrBadGateway }
 
 // logLines returns the logs in buf as "level: message" lines.
 func logLines(t *testing.T, buf *bytes.Buffer) []string {
@@ -142,24 +136,16 @@ func egress6(e *route.Egress) *route.Egress {
 
 const (
 	egressInfo    = "info: egress"
-	ignoredWarn   = "warn: gateway is ignored; only fake packets and tun mode use it"
 	unknownWarn   = "warn: cannot tell whether tun0 (IFT_OTHER p2p) is a VPN; proceeding as if it were not; fake packets and TUN mode do not work through a full-tunnel VPN, so if it is one, disconnect it, or disable fake packets and use HTTP or SOCKS5 mode"
 	vpnFakesWarn  = "warn: a full-tunnel VPN (VPN link utun4 (utun)) carries the traffic; fake packets are disabled"
 	vpnFakesOff   = "fake packets are off for ipv4: a full-tunnel VPN (VPN link utun4 (utun)) carries the traffic"
 	vpnTUNErr     = "TUN mode cannot run while a full-tunnel VPN carries the traffic (VPN link utun4 (utun)); disconnect the VPN or use the HTTP or SOCKS5 mode"
-	gatewayNote   = "; the gateway option does not override this"
 	fakesV6Off    = "fake packets are off for ipv6: IPv6 fakes are not supported yet"
-	ignored6Warn  = "warn: IPv6 gateway fe80::1%en0 is ignored; it is used only when ipv6 is enabled"
 	fallback6Warn = "warn: IPv6 is enabled but no usable IPv6 route was found; running with IPv6 disabled"
 	vpnTUN6Warn   = "warn: a full-tunnel VPN (VPN link utun4 (utun)) carries IPv6; running with IPv6 disabled"
 	vpnProxy6Info = "info: IPv6 goes through a full-tunnel VPN (VPN link utun4 (utun))"
-	gatewayV4     = "10.0.0.1"
-	gatewayV6     = "fe80::1"
-	gatewayV6Zone = "en0"
-	callV4NoGW    = "ipv4 <nil>%"
-	callV4GW      = "ipv4 10.0.0.1%"
-	callV6NoGW    = "ipv6 <nil>%"
-	callV6GW      = "ipv6 fe80::1%en0"
+	callV4        = "ipv4"
+	callV6        = "ipv6"
 )
 
 type startupMode string
@@ -170,22 +156,15 @@ const (
 	tunMode      startupMode = "tun"
 )
 
-// startupConfig returns the default config in mode, with the gateways
-// that are set.
-func startupConfig(mode startupMode, gw4 bool, ipv6 bool, gw6 bool) *config.Config {
+// startupConfig returns the default config in mode, with IPv6 enabled
+// when ipv6 is set.
+func startupConfig(mode startupMode, ipv6 bool) *config.Config {
 	cfg := config.DefaultConfig()
 	switch mode {
 	case proxyFakes:
 		cfg.HTTPS.FakePreflight = 1
 	case tunMode:
 		cfg.App.Mode = config.AppModeTUN
-	}
-	if gw4 {
-		cfg.App.Gateway.V4 = net.ParseIP(gatewayV4).To4()
-	}
-	if gw6 {
-		cfg.App.Gateway.V6 = net.ParseIP(gatewayV6)
-		cfg.App.Gateway.V6Zone = gatewayV6Zone
 	}
 	if ipv6 {
 		cfg.App.IPv6 = true
@@ -200,7 +179,6 @@ func TestDiscoverEgresses_IPv4Matrix(t *testing.T) {
 		name        string
 		egress      *route.Egress
 		mode        startupMode
-		gateway     bool
 		wantErr     string
 		wantV4      bool
 		wantFakesV4 string
@@ -211,141 +189,69 @@ func TestDiscoverEgresses_IPv4Matrix(t *testing.T) {
 
 	// Without fake packets or TUN mode, no IPv4 egress is discovered.
 	for _, e := range []*route.Egress{directEgress, uplinkEgress, vpnEgress, unknownEgress} {
-		tcs = append(tcs,
-			tc{
-				name:   e.Class.String() + "/" + string(proxyNoFakes) + "/no gateway",
-				egress: e,
-				mode:   proxyNoFakes,
-			},
-			tc{
-				name:     e.Class.String() + "/" + string(proxyNoFakes) + "/gateway",
-				egress:   e,
-				mode:     proxyNoFakes,
-				gateway:  true,
-				wantLogs: []string{ignoredWarn},
-			},
-		)
+		tcs = append(tcs, tc{
+			name:   e.Class.String() + "/" + string(proxyNoFakes),
+			egress: e,
+			mode:   proxyNoFakes,
+		})
 	}
 
 	tcs = append(tcs,
 		// direct
 		tc{
-			name:      "direct/proxy with fakes/no gateway",
+			name:      "direct/proxy with fakes",
 			egress:    directEgress,
 			mode:      proxyFakes,
 			wantV4:    true,
 			wantLogs:  []string{egressInfo},
-			wantCalls: []string{callV4NoGW},
+			wantCalls: []string{callV4},
 		},
 		tc{
-			name:      "direct/proxy with fakes/gateway",
-			egress:    directEgress,
-			mode:      proxyFakes,
-			gateway:   true,
-			wantV4:    true,
-			wantLogs:  []string{egressInfo},
-			wantCalls: []string{callV4GW},
-		},
-		tc{
-			name: "direct/tun/no gateway", egress: directEgress, mode: tunMode,
-			wantV4: true, wantLogs: []string{egressInfo}, wantCalls: []string{callV4NoGW},
-		},
-		tc{
-			name: "direct/tun/gateway", egress: directEgress, mode: tunMode, gateway: true,
-			wantV4: true, wantLogs: []string{egressInfo}, wantCalls: []string{callV4GW},
+			name: "direct/tun", egress: directEgress, mode: tunMode,
+			wantV4: true, wantLogs: []string{egressInfo}, wantCalls: []string{callV4},
 		},
 		// uplink: a point-to-point default route without a gateway works
 		tc{
-			name:      "uplink/proxy with fakes/no gateway",
+			name:      "uplink/proxy with fakes",
 			egress:    uplinkEgress,
 			mode:      proxyFakes,
 			wantV4:    true,
 			wantLogs:  []string{egressInfo},
-			wantCalls: []string{callV4NoGW},
+			wantCalls: []string{callV4},
 		},
 		tc{
-			name:      "uplink/proxy with fakes/gateway",
-			egress:    uplinkEgress,
-			mode:      proxyFakes,
-			gateway:   true,
-			wantV4:    true,
-			wantLogs:  []string{egressInfo},
-			wantCalls: []string{callV4GW},
-		},
-		tc{
-			name: "uplink/tun/no gateway", egress: uplinkEgress, mode: tunMode,
-			wantV4: true, wantLogs: []string{egressInfo}, wantCalls: []string{callV4NoGW},
-		},
-		tc{
-			name: "uplink/tun/gateway", egress: uplinkEgress, mode: tunMode, gateway: true,
-			wantV4: true, wantLogs: []string{egressInfo}, wantCalls: []string{callV4GW},
+			name: "uplink/tun", egress: uplinkEgress, mode: tunMode,
+			wantV4: true, wantLogs: []string{egressInfo}, wantCalls: []string{callV4},
 		},
 		// vpn
 		tc{
-			name: "vpn/proxy with fakes/no gateway", egress: vpnEgress, mode: proxyFakes,
+			name: "vpn/proxy with fakes", egress: vpnEgress, mode: proxyFakes,
 			wantV4: true, wantFakesV4: vpnFakesOff,
 			wantLogs:  []string{egressInfo, vpnFakesWarn},
-			wantCalls: []string{callV4NoGW},
+			wantCalls: []string{callV4},
 		},
 		tc{
-			name:        "vpn/proxy with fakes/gateway",
-			egress:      vpnEgress,
-			mode:        proxyFakes,
-			gateway:     true,
-			wantV4:      true,
-			wantFakesV4: vpnFakesOff,
-			wantLogs: []string{
-				egressInfo,
-				vpnFakesWarn + " (gateway 10.0.0.1 is ignored)",
-			},
-			wantCalls: []string{callV4GW},
-		},
-		tc{
-			name: "vpn/tun/no gateway", egress: vpnEgress, mode: tunMode,
+			name: "vpn/tun", egress: vpnEgress, mode: tunMode,
 			wantErr:   vpnTUNErr,
 			wantLogs:  []string{egressInfo},
-			wantCalls: []string{callV4NoGW},
-		},
-		tc{
-			name: "vpn/tun/gateway", egress: vpnEgress, mode: tunMode, gateway: true,
-			wantErr:   vpnTUNErr + gatewayNote,
-			wantLogs:  []string{egressInfo},
-			wantCalls: []string{callV4GW},
+			wantCalls: []string{callV4},
 		},
 		// unknown: warn and proceed
 		tc{
-			name:      "unknown/proxy with fakes/no gateway",
+			name:      "unknown/proxy with fakes",
 			egress:    unknownEgress,
 			mode:      proxyFakes,
 			wantV4:    true,
 			wantLogs:  []string{egressInfo, unknownWarn},
-			wantCalls: []string{callV4NoGW},
+			wantCalls: []string{callV4},
 		},
 		tc{
-			name:      "unknown/proxy with fakes/gateway",
-			egress:    unknownEgress,
-			mode:      proxyFakes,
-			gateway:   true,
-			wantV4:    true,
-			wantLogs:  []string{egressInfo, unknownWarn},
-			wantCalls: []string{callV4GW},
-		},
-		tc{
-			name:      "unknown/tun/no gateway",
+			name:      "unknown/tun",
 			egress:    unknownEgress,
 			mode:      tunMode,
 			wantV4:    true,
 			wantLogs:  []string{egressInfo, unknownWarn},
-			wantCalls: []string{callV4NoGW},
-		},
-		tc{
-			name:      "unknown/tun/gateway",
-			egress:    unknownEgress,
-			mode:      tunMode,
-			gateway:   true,
-			wantV4:    true,
-			wantLogs:  []string{egressInfo, unknownWarn},
-			wantCalls: []string{callV4GW},
+			wantCalls: []string{callV4},
 		},
 	)
 
@@ -353,7 +259,7 @@ func TestDiscoverEgresses_IPv4Matrix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
 			finder := fakeRouteFinder{egress4: tc.egress}
-			cfg := startupConfig(tc.mode, tc.gateway, false, false)
+			cfg := startupConfig(tc.mode, false)
 
 			got, err := discoverEgresses(zerolog.New(&buf), cfg, finder.finder())
 
@@ -398,7 +304,6 @@ func TestDiscoverEgresses_IPv4Errors(t *testing.T) {
 	)
 	tcs := []struct {
 		name       string
-		gateway    bool
 		err        error
 		ipv6Egress bool
 		wantErr    string
@@ -410,7 +315,7 @@ func TestDiscoverEgresses_IPv4Errors(t *testing.T) {
 			ipv6Egress: true,
 			wantErr: "fake packets and TUN mode need an IPv4 default route; none found " +
 				"(IPv6 route: present). IPv6-only networks are not supported yet; disable " +
-				"fake packets, use HTTP or SOCKS5 mode, or set --gateway: discover egress: " +
+				"fake packets and use HTTP or SOCKS5 mode: discover egress: " +
 				"route lookup 192.0.2.1: no IPv4 default route",
 			wantNoV4: true,
 		},
@@ -420,27 +325,11 @@ func TestDiscoverEgresses_IPv4Errors(t *testing.T) {
 			wantErr: "failed to find default route: discover egress: route lookup 192.0.2.1: " +
 				"permission denied; disable fake packets and use HTTP or SOCKS5 mode to run without it",
 		},
-		{
-			name:    "explicit gateway and system lookup fails",
-			gateway: true,
-			err:     errors.New("discover egress: route lookup 192.0.2.1: permission denied"),
-			wantErr: "failed to find default route: discover egress: route lookup 192.0.2.1: " +
-				"permission denied; disable fake packets and use HTTP or SOCKS5 mode to run without it",
-		},
-		{
-			name:    "explicit gateway fails",
-			gateway: true,
-			err: badGatewayErr{
-				errors.New("no interface is on the same subnet as gateway 10.0.0.1"),
-			},
-			wantErr: "failed to find default route: no interface is on the same subnet as " +
-				"gateway 10.0.0.1; check --gateway, or remove it to use the system's default route",
-		},
 	}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
 			finder := fakeRouteFinder{err4: tc.err, ipv6Egress: tc.ipv6Egress}
-			cfg := startupConfig(tunMode, tc.gateway, false, false)
+			cfg := startupConfig(tunMode, false)
 
 			_, err := discoverEgresses(zerolog.Nop(), cfg, finder.finder())
 
@@ -493,7 +382,7 @@ func TestDiscoverEgresses_EgressLine(t *testing.T) {
 
 			_, err := discoverEgresses(
 				zerolog.New(&buf),
-				startupConfig(tunMode, false, false, false),
+				startupConfig(tunMode, false),
 				finder.finder(),
 			)
 
@@ -519,7 +408,6 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 		name      string
 		mode      startupMode
 		ipv6      bool
-		gw6       bool
 		egress6   *route.Egress
 		err6      error
 		wantErr   string
@@ -529,29 +417,13 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 		wantCalls []string
 	}{
 		{
-			name:     "ipv6 off with an ipv6 gateway",
-			mode:     proxyNoFakes,
-			gw6:      true,
-			wantLogs: []string{ignored6Warn},
-		},
-		{
 			name:      "direct",
 			mode:      proxyNoFakes,
 			ipv6:      true,
 			egress6:   egress6(directEgress),
 			wantV6:    true,
 			wantLogs:  []string{egressInfo},
-			wantCalls: []string{callV6NoGW},
-		},
-		{
-			name:      "explicit ipv6 gateway",
-			mode:      proxyNoFakes,
-			ipv6:      true,
-			gw6:       true,
-			egress6:   egress6(directEgress),
-			wantV6:    true,
-			wantLogs:  []string{egressInfo},
-			wantCalls: []string{callV6GW},
+			wantCalls: []string{callV6},
 		},
 		{
 			name:      "no route",
@@ -560,7 +432,7 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 			err6:      noRoute6,
 			wantOff:   ipv6OffNoRoute,
 			wantLogs:  []string{fallback6Warn},
-			wantCalls: []string{callV6NoGW},
+			wantCalls: []string{callV6},
 		},
 		{
 			name:      "address family not supported",
@@ -569,7 +441,7 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 			err6:      eafnosupport,
 			wantOff:   ipv6OffNoRoute,
 			wantLogs:  []string{egressInfo, fallback6Warn},
-			wantCalls: []string{callV4NoGW, callV6NoGW},
+			wantCalls: []string{callV4, callV6},
 		},
 		{
 			name:      "vpn in tun",
@@ -578,20 +450,7 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 			egress6:   egress6(vpnEgress),
 			wantOff:   ipv6OffVPN,
 			wantLogs:  []string{egressInfo, vpnTUN6Warn},
-			wantCalls: []string{callV4NoGW, callV6NoGW},
-		},
-		{
-			name:    "vpn in tun with an ipv6 gateway",
-			mode:    tunMode,
-			ipv6:    true,
-			gw6:     true,
-			egress6: egress6(vpnEgress),
-			wantOff: ipv6OffVPN,
-			wantLogs: []string{
-				egressInfo,
-				vpnTUN6Warn + " (gateway fe80::1%en0 is ignored)",
-			},
-			wantCalls: []string{callV4NoGW, callV6GW},
+			wantCalls: []string{callV4, callV6},
 		},
 		{
 			name:      "vpn in proxy",
@@ -600,7 +459,7 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 			egress6:   egress6(vpnEgress),
 			wantV6:    true,
 			wantLogs:  []string{egressInfo, vpnProxy6Info},
-			wantCalls: []string{callV4NoGW, callV6NoGW},
+			wantCalls: []string{callV4, callV6},
 		},
 		{
 			name:      "unknown in tun",
@@ -609,7 +468,7 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 			egress6:   egress6(unknownEgress),
 			wantV6:    true,
 			wantLogs:  []string{egressInfo, egressInfo, unknownWarn},
-			wantCalls: []string{callV4NoGW, callV6NoGW},
+			wantCalls: []string{callV4, callV6},
 		},
 		{
 			name:      "unknown in proxy",
@@ -618,18 +477,7 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 			egress6:   egress6(unknownEgress),
 			wantV6:    true,
 			wantLogs:  []string{egressInfo},
-			wantCalls: []string{callV6NoGW},
-		},
-		{
-			name: "explicit ipv6 gateway fails",
-			mode: proxyNoFakes,
-			ipv6: true,
-			gw6:  true,
-			err6: errors.New(`gateway fe80::1: zone "en0": no such network interface`),
-			wantErr: `failed to use IPv6 gateway: gateway fe80::1: zone "en0": no such ` +
-				`network interface; check the IPv6 address of --gateway, or remove it ` +
-				`to use the system's IPv6 default route`,
-			wantCalls: []string{callV6GW},
+			wantCalls: []string{callV6},
 		},
 	}
 	for _, tc := range tcs {
@@ -640,7 +488,7 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 				egress6: tc.egress6,
 				err6:    tc.err6,
 			}
-			cfg := startupConfig(tc.mode, false, tc.ipv6, tc.gw6)
+			cfg := startupConfig(tc.mode, tc.ipv6)
 
 			got, err := discoverEgresses(zerolog.New(&buf), cfg, finder.finder())
 
@@ -689,7 +537,7 @@ func TestDiscoverEgresses_RuleEnablesIPv6(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, ipv6OffNoRoute, got.IPv6Off)
-	assert.Equal(t, []string{callV6NoGW}, finder.calls)
+	assert.Equal(t, []string{callV6}, finder.calls)
 	assert.False(t, cfg.IPv6Enabled())
 	for _, r := range cfg.Rules {
 		assert.False(t, r.Config.IPv6, r.Name)
@@ -705,12 +553,6 @@ func pathVia(dst netip.Addr, e *route.Egress) *route.Path {
 
 func TestDstFakeCheck(t *testing.T) {
 	dst := netip.MustParseAddr("10.20.0.5")
-	// An explicit gateway on another interface: the route is the gateway's,
-	// the link is the kernel route's.
-	gatewayOnOtherInterface := &route.Egress{
-		Route: route.Route{Iface: net.Interface{Index: 99, Name: "en9"}},
-		Link:  route.LinkInfo{Index: directEgress.Route.Iface.Index, Name: "en0"},
-	}
 	tcs := []struct {
 		name         string
 		path         *route.Path
@@ -718,7 +560,6 @@ func TestDstFakeCheck(t *testing.T) {
 		class        *route.Egress
 		classErr     error
 		wantErr      *desync.FakesOffError
-		start        *route.Egress // directEgress when nil
 		noStart      bool
 		wantClassify bool
 		wantLog      string
@@ -726,11 +567,6 @@ func TestDstFakeCheck(t *testing.T) {
 		{
 			name: "same interface as at startup",
 			path: pathVia(dst, directEgress),
-		},
-		{
-			name:  "same link as the kernel route at startup",
-			start: gatewayOnOtherInterface,
-			path:  pathVia(dst, directEgress),
 		},
 		{
 			name:         "no startup egress",
@@ -782,9 +618,9 @@ func TestDstFakeCheck(t *testing.T) {
 			var buf bytes.Buffer
 			var routed []netip.Addr
 			var classified bool
-			start := tc.start
-			if start == nil && !tc.noStart {
-				start = directEgress
+			start := directEgress
+			if tc.noStart {
+				start = nil
 			}
 			check := dstFakeCheck(
 				zerolog.New(&buf).Level(zerolog.DebugLevel),

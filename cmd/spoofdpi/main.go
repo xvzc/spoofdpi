@@ -400,7 +400,7 @@ func noIPv4RouteError(err error, hasIPv6 bool) error {
 	return fmt.Errorf(
 		"fake packets and TUN mode need an IPv4 default route; none found "+
 			"(IPv6 route: %s). IPv6-only networks are not supported yet; disable "+
-			"fake packets, use HTTP or SOCKS5 mode, or set --gateway: %w",
+			"fake packets and use HTTP or SOCKS5 mode: %w",
 		ipv6Route,
 		err,
 	)

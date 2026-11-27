@@ -56,8 +56,7 @@ func FindSafeCIDR() (string, error) {
 // full-tunnel VPN, is free. When the probe's prefix is a /32, as Linux
 // before 4.13 reports it because it ignores RTM_F_FIB_MATCH, no route can
 // be more specific, so only interface addresses are checked. So are they
-// when the probe has no route, as on a host without an IPv4 default route
-// whose TUN runs with an explicit gateway: no route can then be compared.
+// when the probe has no route: no route can then be compared.
 func findSafeCIDR(
 	addrs []net.Addr,
 	prefixOf func(netip.Addr) (netip.Prefix, error),

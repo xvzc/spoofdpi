@@ -10,8 +10,21 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/route"
 )
+
+// internetRoute returns the IPv4 route of the interface the kernel routes
+// the internet through, as TUN mode pins its sockets to, or skips the test
+// when there is none.
+func internetRoute(t *testing.T) *route.Route {
+	t.Helper()
+	iface, localIP, err := route.InternetInterface()
+	if err != nil {
+		t.Skipf("no IPv4 default route: %v", err)
+	}
+	return &route.Route{Family: netutil.FamilyV4, Iface: *iface, LocalIP: localIP}
+}
 
 // loopbackRoute returns a route through the loopback interface.
 func loopbackRoute(t *testing.T) *route.Route {
@@ -58,10 +71,7 @@ func TestEgressControl_Darwin(t *testing.T) {
 // pinned exactly as EgressControl pins the raw sockets of fake packets. A
 // UDP connect sends nothing.
 func TestBindDialer_UsesEgressControl(t *testing.T) {
-	rt, err := route.ResolveGateway(nil)
-	if err != nil {
-		t.Skipf("no IPv4 default route: %v", err)
-	}
+	rt := internetRoute(t)
 	n := &tunSystemNetworkDarwin{defaultRoute: rt}
 
 	var d net.Dialer

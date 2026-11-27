@@ -30,7 +30,6 @@ func TestCreateCommand_Flags(t *testing.T) {
 				assert.False(t, cfg.App.NoTUI)
 				assert.False(t, cfg.App.AutoConfigureNetwork)
 				assert.Equal(t, "127.0.0.1:8080", cfg.App.ListenAddr.String())
-				assert.True(t, cfg.App.Gateway.IsZero())
 				assert.Equal(t, uint8(8), cfg.Conn.HopCountDefault)
 				assert.Equal(t, int64(5000), cfg.DNS.Timeout.Milliseconds())
 				assert.Equal(t, int64(10000), cfg.Conn.TCPTimeout.Milliseconds())
@@ -84,7 +83,6 @@ func TestCreateCommand_Flags(t *testing.T) {
 
 				// Server
 				assert.Equal(t, "127.0.0.1:9090", cfg.App.ListenAddr.String())
-				assert.Equal(t, Gateways{V4: net.IPv4(192, 168, 1, 1).To4()}, cfg.App.Gateway)
 				assert.True(t, cfg.App.IPv6)
 				assert.Equal(t, uint8(128), cfg.Conn.HopCountDefault)
 				assert.Equal(t, 5000*time.Millisecond, cfg.Conn.TCPTimeout)
@@ -175,85 +173,6 @@ func TestCreateCommand_Flags(t *testing.T) {
 			require.NotNil(t, capturedCfg, "Run function was not called")
 
 			tc.assert(t, capturedCfg)
-		})
-	}
-}
-
-func TestCreateCommand_Gateway(t *testing.T) {
-	v4, v6 := net.IPv4(192, 168, 1, 1).To4(), net.ParseIP("fe80::1")
-	tcs := []struct {
-		name    string
-		toml    string
-		args    []string
-		want    Gateways
-		wantErr string
-	}{
-		{
-			name: "repeated flag",
-			args: []string{"--gateway", "192.168.1.1", "--gateway", "fe80::1%en0"},
-			want: Gateways{V4: v4, V6: v6, V6Zone: "en0"},
-		},
-		{
-			name: "comma-separated",
-			args: []string{"--gateway", "fe80::1%en0, 192.168.1.1"},
-			want: Gateways{V4: v4, V6: v6, V6Zone: "en0"},
-		},
-		{
-			name: "flag replaces the whole toml value",
-			toml: `gateway = ["10.0.0.1", "fe80::1%en0"]`,
-			args: []string{"--gateway", "192.168.1.1"},
-			want: Gateways{V4: v4},
-		},
-		{
-			name: "empty flag value means automatic discovery",
-			toml: `gateway = ["10.0.0.1"]`,
-			args: []string{"--gateway", ""},
-			want: Gateways{},
-		},
-		{
-			name: "toml array",
-			toml: `gateway = ["192.168.1.1", "fe80::1%en0"]`,
-			want: Gateways{V4: v4, V6: v6, V6Zone: "en0"},
-		},
-		{
-			name: "empty toml array means automatic discovery",
-			toml: `gateway = []`,
-			want: Gateways{},
-		},
-		{
-			name:    "two ipv4 gateways",
-			args:    []string{"--gateway", "192.168.1.1", "--gateway", "10.0.0.1"},
-			wantErr: "more than one IPv4 gateway",
-		},
-		{
-			name:    "zone on a global address",
-			args:    []string{"--gateway", "2001:db8::1%en0"},
-			wantErr: "only a link-local IPv6 address may have a zone",
-		},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			configPath := filepath.Join(t.TempDir(), "spoofdpi.toml")
-			require.NoError(t, os.WriteFile(configPath, []byte("[app]\n"+tc.toml), 0o644))
-
-			var capturedCfg *Config
-			runFunc := func(ctx context.Context, configDir string, cfg *Config) error {
-				capturedCfg = cfg
-				return nil
-			}
-			cmd := CreateCommand(runFunc, "v0.0.0", "commit", "build")
-			args := append([]string{"spoofdpi", "--config", configPath}, tc.args...)
-
-			err := cmd.Run(context.Background(), args)
-			if tc.wantErr != "" {
-				assert.ErrorContains(t, err, tc.wantErr)
-				assert.Nil(t, capturedCfg)
-				return
-			}
-			require.NoError(t, err)
-			require.NotNil(t, capturedCfg)
-			assert.Equal(t, tc.want, capturedCfg.App.Gateway)
 		})
 	}
 }

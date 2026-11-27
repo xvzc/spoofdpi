@@ -32,7 +32,6 @@ func TestAppOptions_UnmarshalTOML(t *testing.T) {
 				"no-tui":                 true,
 				"auto-configure-network": true,
 				"mode":                   "socks5",
-				"gateway":                "192.168.1.1",
 				"ipv6":                   true,
 			},
 			wantErr: false,
@@ -41,43 +40,12 @@ func TestAppOptions_UnmarshalTOML(t *testing.T) {
 				assert.True(t, o.NoTUI)
 				assert.True(t, o.AutoConfigureNetwork)
 				assert.Equal(t, AppModeSOCKS5, o.Mode)
-				assert.Equal(t, Gateways{V4: net.IPv4(192, 168, 1, 1).To4()}, o.Gateway)
 				assert.True(t, o.IPv6)
 			},
 		},
 		{
 			name:    "invalid type",
 			input:   "invalid",
-			wantErr: true,
-		},
-		{
-			name: "gateway array of both families",
-			input: map[string]any{
-				"gateway": []any{"192.168.1.1", "fe80::1%en0"},
-			},
-			assert: func(t *testing.T, o AppOptions) {
-				assert.Equal(t, Gateways{
-					V4:     net.IPv4(192, 168, 1, 1).To4(),
-					V6:     net.ParseIP("fe80::1"),
-					V6Zone: "en0",
-				}, o.Gateway)
-			},
-		},
-		{
-			name:  "empty gateway array means automatic discovery",
-			input: map[string]any{"gateway": []any{}},
-			assert: func(t *testing.T, o AppOptions) {
-				assert.True(t, o.Gateway.IsZero())
-			},
-		},
-		{
-			name:    "invalid gateway",
-			input:   map[string]any{"gateway": "224.0.0.1"},
-			wantErr: true,
-		},
-		{
-			name:    "two ipv4 gateways",
-			input:   map[string]any{"gateway": []any{"192.168.1.1", "10.0.0.1"}},
 			wantErr: true,
 		},
 		{
@@ -741,40 +709,4 @@ func TestHTTPSOptions_MarshalJSON_customSegmentsAsCount(t *testing.T) {
 	// Individual plan entries must NOT appear.
 	assert.NotContains(t, got, `"At":`)
 	assert.NotContains(t, got, `"From":`)
-}
-
-func TestGateways(t *testing.T) {
-	tcs := []struct {
-		name     string
-		gateways Gateways
-		wantZero bool
-		want     string
-	}{
-		{name: "none", gateways: Gateways{}, wantZero: true, want: ""},
-		{
-			name:     "ipv4",
-			gateways: Gateways{V4: net.IPv4(192, 168, 1, 1).To4()},
-			want:     "192.168.1.1",
-		},
-		{
-			name:     "ipv6 with a zone",
-			gateways: Gateways{V6: net.ParseIP("fe80::1"), V6Zone: "en0"},
-			want:     "fe80::1%en0",
-		},
-		{
-			name: "both",
-			gateways: Gateways{
-				V4: net.IPv4(192, 168, 1, 1).To4(),
-				V6: net.ParseIP("2001:db8::1"),
-			},
-			want: "192.168.1.1, 2001:db8::1",
-		},
-	}
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.wantZero, tc.gateways.IsZero())
-			assert.Equal(t, tc.want, tc.gateways.String())
-		})
-	}
 }

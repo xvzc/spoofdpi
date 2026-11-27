@@ -37,14 +37,6 @@ func fakeLinks(
 	return &calls
 }
 
-// fakeKernelRoute makes the kernel route lookup return answer.
-func fakeKernelRoute(t *testing.T, answer func(dst netip.Addr) (kernelRoute, error)) {
-	t.Helper()
-	orig := osRouteTo
-	t.Cleanup(func() { osRouteTo = orig })
-	osRouteTo = answer
-}
-
 func TestClassifyPath(t *testing.T) {
 	en0 := LinkInfo{Index: 4, Name: "en0", Kind: LinkPhysical, Detail: "IFT_ETHER"}
 	en1 := LinkInfo{Index: 5, Name: "en1", Kind: LinkPhysical, Detail: "IFT_ETHER"}
@@ -194,7 +186,7 @@ func TestClassifyPath(t *testing.T) {
 	}
 }
 
-func TestDiscoverEgress_NoGateway(t *testing.T) {
+func TestDiscoverEgress_KernelRoute(t *testing.T) {
 	en0 := net.Interface{Index: 4, Name: "en0", Flags: net.FlagUp}
 	link := LinkInfo{Index: 4, Name: "en0", Kind: LinkPhysical, Detail: "IFT_ETHER"}
 	fakeDiscovery(t, kernelRoute{
@@ -204,7 +196,7 @@ func TestDiscoverEgress_NoGateway(t *testing.T) {
 	}, nil, en0, nil)
 	fakeLinks(t, map[int]LinkInfo{4: link}, nil, nil, nil)
 
-	egress, err := DiscoverEgress(netutil.FamilyV4, nil, "")
+	egress, err := DiscoverEgress(netutil.FamilyV4)
 	require.NoError(t, err)
 	assert.Equal(t, EgressDirect, egress.Class)
 	assert.Equal(t, "en0", egress.Route.Iface.Name)
@@ -216,83 +208,29 @@ func TestDiscoverEgress_NoKernelRoute(t *testing.T) {
 	fakeDiscovery(t, kernelRoute{}, errNoRoute(probeDstV6), en0, nil)
 	fakeLinks(t, nil, nil, nil, nil)
 
-	_, err := DiscoverEgress(netutil.FamilyV6, nil, "")
+	_, err := DiscoverEgress(netutil.FamilyV6)
 	assert.ErrorIs(t, err, ErrNoIPv6)
 }
 
-func TestDiscoverEgress_Gateway(t *testing.T) {
+func TestDiscoverEgress_Errors(t *testing.T) {
 	en0 := net.Interface{Index: 4, Name: "en0", Flags: net.FlagUp}
-	utun := net.Interface{Index: 20, Name: "utun4", Flags: net.FlagUp}
-	en0Link := LinkInfo{Index: 4, Name: "en0", Kind: LinkPhysical, Detail: "IFT_ETHER"}
-	utunLink := LinkInfo{Index: 20, Name: "utun4", Kind: LinkVPN, Detail: "IFT_OTHER p2p"}
-	gateway := net.ParseIP("fe80::1")
 
-	t.Run("full-tunnel vpn overrides the gateway", func(t *testing.T) {
-		fakeZoneInterfaces(t, en0, utun)
-		fakeKernelRoute(t, func(netip.Addr) (kernelRoute, error) {
-			return kernelRoute{ifIndex: 20}, nil
-		})
-		fakeLinks(t, map[int]LinkInfo{4: en0Link, 20: utunLink}, nil, nil, nil)
-
-		egress, err := DiscoverEgress(netutil.FamilyV6, gateway, "en0")
-		require.NoError(t, err)
-		assert.Equal(t, EgressVPN, egress.Class)
-		assert.Equal(t, "utun4", egress.Link.Name)
-		assert.Equal(t, "en0", egress.Route.Iface.Name)
-		assert.Equal(t, "fe80::1%en0", egress.Route.GatewayString())
-	})
-
-	t.Run("no kernel route classifies the gateway's interface", func(t *testing.T) {
-		fakeZoneInterfaces(t, en0, utun)
-		fakeKernelRoute(t, func(dst netip.Addr) (kernelRoute, error) {
-			return kernelRoute{}, errNoRoute(dst)
-		})
-		fakeLinks(t, map[int]LinkInfo{4: en0Link, 20: utunLink}, nil, nil, nil)
-
-		egress, err := DiscoverEgress(netutil.FamilyV6, gateway, "en0")
-		require.NoError(t, err)
-		assert.Equal(t, EgressDirect, egress.Class)
-		assert.Equal(t, "en0", egress.Link.Name)
-		assert.Equal(t, "fe80::1%en0", egress.Route.GatewayString())
-	})
-
-	t.Run("other lookup errors are returned", func(t *testing.T) {
-		fakeZoneInterfaces(t, en0)
-		fakeKernelRoute(t, func(netip.Addr) (kernelRoute, error) {
-			return kernelRoute{}, errors.New("netlink down")
-		})
+	t.Run("lookup errors are returned", func(t *testing.T) {
+		fakeDiscovery(t, kernelRoute{}, errors.New("netlink down"), en0, nil)
 		fakeLinks(t, nil, nil, nil, nil)
 
-		_, err := DiscoverEgress(netutil.FamilyV6, gateway, "en0")
+		_, err := DiscoverEgress(netutil.FamilyV6)
 		assert.ErrorContains(t, err, "netlink down")
-		assert.NotErrorIs(t, err, ErrBadGateway)
 	})
 
 	t.Run("loopback kernel route is an error", func(t *testing.T) {
 		lo := net.Interface{Index: 1, Name: "lo0", Flags: net.FlagUp | net.FlagLoopback}
-		fakeZoneInterfaces(t, en0, lo)
-		fakeKernelRoute(t, func(netip.Addr) (kernelRoute, error) {
-			return kernelRoute{ifIndex: 1}, nil
-		})
+		fakeDiscovery(t, kernelRoute{ifIndex: 1}, nil, lo, nil)
 		fakeLinks(t, map[int]LinkInfo{
 			1: {Index: 1, Name: "lo0", Kind: LinkLoopback},
 		}, nil, nil, nil)
 
-		_, err := DiscoverEgress(netutil.FamilyV6, gateway, "en0")
+		_, err := DiscoverEgress(netutil.FamilyV6)
 		assert.ErrorIs(t, err, ErrNoIPv6)
-	})
-
-	t.Run("gateway errors name the gateway", func(t *testing.T) {
-		fakeZoneInterfaces(t, en0)
-		fakeLinks(t, nil, nil, nil, nil)
-
-		_, err := DiscoverEgress(netutil.FamilyV6, gateway, "nosuch")
-		assert.EqualError(t, err,
-			`gateway fe80::1: zone "nosuch": no such network interface`)
-		assert.ErrorIs(t, err, ErrBadGateway)
-
-		_, err = DiscoverEgress(netutil.FamilyV4, net.ParseIP("2001:db8::1"), "")
-		assert.ErrorContains(t, err, "is not an IPv4 address")
-		assert.ErrorIs(t, err, ErrBadGateway)
 	})
 }

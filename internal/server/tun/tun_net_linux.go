@@ -29,18 +29,12 @@ const egressFwmark = 0x30d5
 const ipv6CaptureGroup = "ipv6-capture"
 
 type tunNetworkInfoLinux struct {
-	// RouteTableID is the egress table, whose default route leaves through
-	// the physical interface.
-	RouteTableID int
 	// CaptureTableID is the table whose routes lead into the TUN.
 	CaptureTableID int
-	// GatewayIP is empty when the default route has no gateway.
-	GatewayIP     string
-	TUNName       string
-	PhysIfaceName string
-	PhysIfaceIP   string
-	TunLocalIP    string
-	TunRemoteIP   string
+	TUNName        string
+	PhysIfaceIP    string
+	TunLocalIP     string
+	TunRemoteIP    string
 	// MainRulePref, FromRulePref and CaptureRulePref are the prefs of the
 	// IPv4 rules, in ascending order.
 	MainRulePref    int
@@ -55,18 +49,9 @@ type tunNetworkInfoLinux struct {
 	TunIPv6Disabled     bool
 }
 
-// routeTableIDs holds the egress and the capture table IDs.
-type routeTableIDs struct {
-	egress  int
-	capture int
-}
-
-// allocateTableIDs allocates the table IDs once per process. Every call
-// returns the result of the first one, error included.
-var allocateTableIDs = sync.OnceValues(func() (routeTableIDs, error) {
-	egress, capture, err := findAvailableTableIDs()
-	return routeTableIDs{egress: egress, capture: capture}, err
-})
+// allocateCaptureTableID allocates the capture table ID once per process.
+// Every call returns the result of the first one, error included.
+var allocateCaptureTableID = sync.OnceValues(findAvailableTableID)
 
 func createTunDevice() (tun.Device, error) {
 	return tun.CreateTUN("tun-spoofdpi", 1500)
@@ -77,12 +62,11 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tunName: %w", err)
 	}
-	tableIDs, err := allocateTableIDs()
+	captureTableID, err := allocateCaptureTableID()
 	if err != nil {
 		return nil, fmt.Errorf("failed to allocate routing table ID: %w", err)
 	}
 
-	gateway := gatewayIP(sysNet.defaultRoute)
 	physIfaceName := sysNet.defaultRoute.Iface.Name
 
 	physIfaceIP, err := getInterfaceIP(physIfaceName)
@@ -130,11 +114,8 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 	prefs := assignRulePrefs(ipv4Prefs, ipv6Prefs)
 
 	return &tunNetworkInfoLinux{ //exhaustruct:enforce
-		RouteTableID:        tableIDs.egress,
-		CaptureTableID:      tableIDs.capture,
-		GatewayIP:           gateway,
+		CaptureTableID:      captureTableID,
 		TUNName:             tunName,
-		PhysIfaceName:       physIfaceName,
 		PhysIfaceIP:         physIfaceIP,
 		TunLocalIP:          tunLocalIP,
 		TunRemoteIP:         tunRemoteIP,
@@ -198,8 +179,8 @@ func (n *tunSystemNetworkLinux) BuildJobs() ([]server.NetworkJob, error) {
 // that looks up the capture table, whose default route leads into the TUN.
 // A rule before it looks up main with its default route suppressed, so the
 // more specific routes in main, such as the local subnets, still win.
-// Sockets marked with egressFwmark skip the capture rule and leave through
-// the egress table.
+// Sockets marked with egressFwmark skip the capture rule and leave by the
+// main table's routes.
 func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 	var jobs []server.NetworkJob
 
@@ -230,44 +211,6 @@ func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 		Reset:       fmt.Sprintf("ip link set dev %s down", info.TUNName),
 	})
 
-	// Without a gateway there is no next hop to reach: the default route
-	// leaves through the interface itself.
-	defaultRouteApply := fmt.Sprintf(
-		"ip route add default dev %s table %d",
-		info.PhysIfaceName,
-		info.RouteTableID,
-	)
-	if info.GatewayIP != "" {
-		jobs = append(jobs, server.NetworkJob{
-			Description: "add gateway host route to egress table",
-			Apply: fmt.Sprintf(
-				"ip route add %s dev %s table %d",
-				info.GatewayIP,
-				info.PhysIfaceName,
-				info.RouteTableID,
-			),
-			Reset: fmt.Sprintf(
-				"ip route del %s dev %s table %d",
-				info.GatewayIP,
-				info.PhysIfaceName,
-				info.RouteTableID,
-			),
-		})
-
-		defaultRouteApply = fmt.Sprintf(
-			"ip route add default via %s dev %s table %d",
-			info.GatewayIP,
-			info.PhysIfaceName,
-			info.RouteTableID,
-		)
-	}
-
-	jobs = append(jobs, server.NetworkJob{
-		Description: "add default route to routing table",
-		Apply:       defaultRouteApply,
-		Reset:       fmt.Sprintf("ip route del default table %d", info.RouteTableID),
-	})
-
 	jobs = append(jobs, server.NetworkJob{
 		Description: "add default route to capture table",
 		Apply: fmt.Sprintf(
@@ -295,19 +238,24 @@ func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 		),
 	})
 
+	// Traffic from the physical interface's address looks up main in full,
+	// before the capture rule. spoofdpi's own sockets carry the mark and
+	// skip the capture rule anyway, but the reverse-path lookup of their
+	// replies does not: it has mark 0 and the reply's destination, the
+	// physical address, as its source. Under strict reverse-path filtering,
+	// such as NixOS's nftables "fib saddr . mark . iif", that lookup would
+	// otherwise resolve to the TUN, and the replies would be dropped.
 	jobs = append(jobs, server.NetworkJob{
 		Description: "add policy routing rule",
 		Apply: fmt.Sprintf(
-			"ip rule add pref %d from %s lookup %d",
+			"ip rule add pref %d from %s lookup main",
 			info.FromRulePref,
 			info.PhysIfaceIP,
-			info.RouteTableID,
 		),
 		Reset: fmt.Sprintf(
-			"ip rule del pref %d from %s lookup %d",
+			"ip rule del pref %d from %s lookup main",
 			info.FromRulePref,
 			info.PhysIfaceIP,
-			info.RouteTableID,
 		),
 	})
 
@@ -333,8 +281,8 @@ func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 	// optional: IPv4 keeps working without them. They form a group, so a
 	// failed job skips the later ones: the capture rule must not route IPv6
 	// into the TUN without the route that captures it, or ahead of main's
-	// specific routes. TUN mode never dials IPv6, so IPv6 needs no egress
-	// table.
+	// specific routes. TUN mode never dials IPv6, so IPv6 needs no rule for
+	// traffic from the physical interface.
 	if info.IPv6Enabled && info.HasIPv6Egress && !info.TunIPv6Disabled &&
 		info.IPv6MainRulePref != 0 {
 		jobs = append(jobs, server.NetworkJob{
@@ -540,20 +488,14 @@ func ipv6Disabled(path string) bool {
 	return err == nil && strings.TrimSpace(string(b)) == "1"
 }
 
-// findAvailableTableIDs returns two distinct unused table IDs, the egress
-// table first.
-func findAvailableTableIDs() (egress, capture int, err error) {
-	var ids []int
-	for id := 200; id <= 250 && len(ids) < 2; id++ {
+// findAvailableTableID returns an unused table ID.
+func findAvailableTableID() (int, error) {
+	for id := 200; id <= 250; id++ {
 		if tableAvailable(id) {
-			ids = append(ids, id)
+			return id, nil
 		}
 	}
-	if len(ids) < 2 {
-		return 0, 0, fmt.Errorf("no two available routing table IDs in range 200-250")
-	}
-
-	return ids[0], ids[1], nil
+	return 0, fmt.Errorf("no available routing table ID in range 200-250")
 }
 
 // tableAvailable reports whether table id holds no IPv4 or IPv6 route and

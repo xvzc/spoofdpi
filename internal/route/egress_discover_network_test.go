@@ -18,7 +18,7 @@ func TestDiscoverEgress_MatchesLookup(t *testing.T) {
 				t.Skipf("no route to the probe destination: %v", err)
 			}
 
-			egress, err := DiscoverEgress(fam, nil, "")
+			egress, err := DiscoverEgress(fam)
 			if err != nil {
 				// A loopback route is the only reason to fail here.
 				require.ErrorIs(t, err, noRouteError(fam))

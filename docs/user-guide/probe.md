@@ -235,7 +235,7 @@ An offset inside both ranges, that is, one from `-1` to `-M` in the `fake` check
 
 ### Fake Packets
 
-The `fake` and server checks send their fake packets with spoofdpi's own code, as spoofdpi does without `--gateway`. They go out through a raw IP socket, and the system routes them. The fake is spoofdpi's default fake ClientHello, 517 bytes with the name `www.google.com`, sent in one packet.
+The `fake` and server checks send their fake packets with spoofdpi's own code, as spoofdpi does. They go out through a raw IP socket, and the system routes them. The fake is spoofdpi's default fake ClientHello, 517 bytes with the name `www.google.com`, sent in one packet.
 
 probe learns the connection's sequence numbers from its SYN/ACK, as spoofdpi does, and checks that the fake was crafted with the sequence numbers the capture shows the real ClientHello leaving with, plus the fake's offsets. A fake that was not is no test of the fake, so probe makes the try again on a new connection, up to 3 connections in all, before it gives `unknown (seq not learned)`.
 
@@ -314,7 +314,7 @@ The learned hop counts, the `position` of a DPI that drops silently, and the `fa
 
 When packet capture works but the fake packets cannot be sent, probe prints one warning of its own, without the advice to run as root, and shows `fake` and `server` as `unknown (fake packets unavailable)`. spoofdpi cannot send fake packets there either.
 
-The capture runs on the interface of the default route, as spoofdpi does without `--gateway`. A server reached through another interface, such as a split-routed VPN, gets the note `not learned`, as does a capture that stops with an error during the probe, and its silent `position` is `unknown (could not control TTL)`.
+The capture runs on the interface of the default route, as spoofdpi does. A server reached through another interface, such as a split-routed VPN, gets the note `not learned`, as does a capture that stops with an error during the probe, and its silent `position` is `unknown (could not control TTL)`.
 
 ## Timing
 

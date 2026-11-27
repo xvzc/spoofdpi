@@ -68,7 +68,7 @@ func (f desyncFakes) desyncer(ttl uint8) (helloSender, *fakeLog) {
 }
 
 // openFakeStack opens spoofdpi's packet stack on the interface of the
-// default route, as spoofdpi does without --gateway, and registers servers
+// default route, as spoofdpi does, and registers servers
 // for TCP hop-count learning, so that its sniffer learns the sequence
 // numbers of their connections. Like spoofdpi's, the stack stays open until the process
 // exits.

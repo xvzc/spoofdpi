@@ -4,27 +4,19 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
-// ErrNoIPv4 is returned, wrapped, by ResolveGateway when the OS has no
+// ErrNoIPv4 is returned, wrapped, by InternetInterface when the OS has no
 // IPv4 default route, for example on an IPv6-only network, and by Lookup
 // when the kernel has no route to an IPv4 destination.
 var ErrNoIPv4 = errors.New("no IPv4 default route")
-
-// ErrNoGateway is returned, wrapped, by ResolveGateway when the route to the
-// internet has no gateway, such as a point-to-point or VPN link.
-var ErrNoGateway = errors.New("route has no gateway")
 
 // addrsOf lists the addresses of iface. Tests replace it.
 var addrsOf = func(iface *net.Interface) ([]net.Addr, error) {
 	return iface.Addrs()
 }
-
-// interfaceByName resolves the interface a zone names. Tests replace it.
-var interfaceByName = net.InterfaceByName
 
 // Route is a route of one address family: the interface traffic leaves
 // through and its gateway, which is nil for an interface route.
@@ -66,124 +58,6 @@ func InternetInterface() (*net.Interface, net.IP, error) {
 	return &path.Iface, localIP, nil
 }
 
-// ResolveGateway resolves the IPv4 route through a gateway.
-// If gateway is nil, the gateway IP and interface are resolved from the
-// kernel's route to the internet, and ErrNoGateway is returned, wrapped,
-// when that route has no gateway. Otherwise the given gateway is used as
-// is, and the interface is the one whose subnet contains it, so the two
-// always match. An explicit gateway must be an IPv4 address.
-func ResolveGateway(gateway net.IP) (*Route, error) {
-	if gateway != nil {
-		if gateway.To4() == nil {
-			return nil, fmt.Errorf("gateway %s is not an IPv4 address", gateway)
-		}
-		return routeForGateway(gateway)
-	}
-
-	path, err := Lookup(probeDst(netutil.FamilyV4))
-	if err != nil {
-		return nil, fmt.Errorf("discover route: %w", err)
-	}
-	if !path.Gateway.IsValid() {
-		return nil, fmt.Errorf(
-			"route to %s goes through %s without a gateway: %w",
-			path.Dst,
-			path.Iface.Name,
-			ErrNoGateway,
-		)
-	}
-
-	localIP, err := localIPFor(path)
-	if err != nil {
-		return nil, err
-	}
-
-	route := path.Route()
-	route.LocalIP = localIP
-	return route, nil
-}
-
-// ResolveGateway6 resolves the IPv6 route through a gateway.
-// If gateway is nil, the route is the kernel's route to the internet; its
-// Gateway is nil when that route has no gateway, and its LocalIP is the
-// route's source address, if the kernel reported one. Otherwise the given
-// gateway is used as is, on the interface that zone names, by name or
-// index, if zone is not empty. Without a zone, a link-local gateway is on
-// the interface of the kernel's route to the internet, and any other
-// gateway on the interface whose subnet contains it.
-func ResolveGateway6(gateway net.IP, zone string) (*Route, error) {
-	if gateway == nil {
-		path, err := Lookup(probeDst(netutil.FamilyV6))
-		if err != nil {
-			return nil, fmt.Errorf("discover route: %w", err)
-		}
-		return path.Route(), nil
-	}
-
-	if gateway.To4() != nil {
-		return nil, fmt.Errorf("gateway %s is not an IPv6 address", gateway)
-	}
-
-	if zone != "" {
-		if !netutil.NeedsZone(gateway) {
-			return nil, fmt.Errorf(
-				"gateway %s: a zone is allowed only on a link-local address",
-				gateway,
-			)
-		}
-		iface, err := ifaceByZone(zone)
-		if err != nil {
-			return nil, fmt.Errorf("gateway %s: %w", gateway, err)
-		}
-		return newRoute6(iface, gateway), nil
-	}
-
-	if netutil.NeedsZone(gateway) {
-		path, err := Lookup(probeDst(netutil.FamilyV6))
-		if err != nil {
-			return nil, fmt.Errorf(
-				"link-local gateway %s: %w; add a %%<interface> zone to it",
-				gateway,
-				err,
-			)
-		}
-		return newRoute6(&path.Iface, gateway), nil
-	}
-
-	return routeForGateway(gateway)
-}
-
-// newRoute6 returns the IPv6 route through gateway on iface.
-func newRoute6(iface *net.Interface, gateway net.IP) *Route {
-	route := &Route{Family: netutil.FamilyV6, Iface: *iface, Gateway: gateway}
-	if netutil.NeedsZone(gateway) {
-		route.Zone = iface.Name
-	}
-	return route
-}
-
-// ifaceByZone returns the interface that zone names, by name or by index.
-// It must be up and not a loopback.
-func ifaceByZone(zone string) (*net.Interface, error) {
-	iface, err := interfaceByName(zone)
-	if err != nil {
-		index, convErr := strconv.Atoi(zone)
-		if convErr != nil || index <= 0 {
-			return nil, fmt.Errorf("zone %q: %w", zone, err)
-		}
-		if iface, err = interfaceByIndex(index); err != nil {
-			return nil, fmt.Errorf("zone %q: %w", zone, err)
-		}
-	}
-	if iface.Flags&net.FlagUp == 0 {
-		return nil, fmt.Errorf("interface %s is down", iface.Name)
-	}
-	if iface.Flags&net.FlagLoopback != 0 {
-		return nil, fmt.Errorf("interface %s is a loopback", iface.Name)
-	}
-	return iface, nil
-}
-
 // localIPFor returns the IPv4 address of the output interface of path: the
 // route's own source address when the kernel reported one, and otherwise
 // the first IPv4 address of the interface.
@@ -202,89 +76,4 @@ func localIPFor(p *Path) (net.IP, error) {
 		}
 	}
 	return nil, fmt.Errorf("interface %s has no IPv4 address", p.Iface.Name)
-}
-
-type ifaceAddrs struct {
-	iface net.Interface
-	addrs []net.Addr
-}
-
-func routeForGateway(gateway net.IP) (*Route, error) {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil, fmt.Errorf("net.Interfaces: %w", err)
-	}
-
-	candidates := make([]ifaceAddrs, 0, len(ifaces))
-	for _, iface := range ifaces {
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		candidates = append(candidates, ifaceAddrs{iface: iface, addrs: addrs})
-	}
-
-	iface, localIP, err := findIfaceByGateway(candidates, gateway)
-	if err != nil {
-		return nil, err
-	}
-
-	if gateway.To4() == nil {
-		route := newRoute6(iface, gateway)
-		route.LocalIP = localIP
-		return route, nil
-	}
-	return &Route{
-		Family:  netutil.FamilyV4,
-		Iface:   *iface,
-		LocalIP: localIP,
-		Gateway: gateway,
-	}, nil
-}
-
-// findIfaceByGateway returns the first interface that is up, is not a
-// loopback, and has a subnet of gateway's family containing gateway,
-// together with its own address on that subnet. IPv6 link-local subnets
-// are left out.
-func findIfaceByGateway(
-	candidates []ifaceAddrs,
-	gateway net.IP,
-) (*net.Interface, net.IP, error) {
-	isV4 := gateway.To4() != nil
-
-	for i := range candidates {
-		iface := &candidates[i].iface
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		for _, addr := range candidates[i].addrs {
-			ipnet, ok := addr.(*net.IPNet)
-			if !ok {
-				continue
-			}
-			localIP := ipnet.IP.To4()
-			if !isV4 {
-				if localIP != nil || ipnet.IP.IsLinkLocalUnicast() {
-					continue
-				}
-				localIP = ipnet.IP
-			}
-			if localIP == nil || !ipnet.Contains(gateway) {
-				continue
-			}
-			if localIP.Equal(gateway) {
-				return nil, nil, fmt.Errorf(
-					"gateway %s is the address of interface %s itself",
-					gateway,
-					iface.Name,
-				)
-			}
-			return iface, localIP, nil
-		}
-	}
-
-	return nil, nil, fmt.Errorf(
-		"no interface is on the same subnet as gateway %s",
-		gateway,
-	)
 }

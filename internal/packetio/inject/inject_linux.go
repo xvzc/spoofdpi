@@ -26,19 +26,14 @@ import "golang.org/x/net/ipv4"
 // raw_sendmsg looks the route up with the source of IP_PKTINFO, or with
 // the socket's bound source, 0.0.0.0, without it. Source-based policy
 // rules then match the fake as they match the real connection, such as
-// TUN mode's "ip rule from <physical source> lookup <egress table>",
-// whose table routes out of the TUN.
+// TUN mode's "ip rule from <physical source> lookup main", which sends the
+// fake out by the main table's routes, as the real connection goes.
 //
 // In TUN mode the socket is also bound to the physical interface with
-// SO_BINDTODEVICE and marked with SO_MARK. The mark skips TUN mode's
+// SO_BINDTODEVICE and marked with SO_MARK. The mark also skips TUN mode's
 // capture rule, "not fwmark <mark> lookup <capture table>", whose default
-// route leads into the TUN, so the lookup goes on to the other rules,
-// such as the main table's. Where the tables the lookup reaches have no
-// route through the bound interface, though, such as when the main
-// table's default route goes through another interface,
-// ip_route_output_key_hash_rcu treats the destination as on the link and
-// the fake is lost there. With the source, the egress table, whose
-// default route goes via the gateway, matches first.
+// route leads into the TUN, so a fake that no source-based rule matches
+// still reaches the main table's routes.
 //
 // The interface index stays 0, which keeps the socket's bound interface
 // (ip_cmsg_send in net/ipv4/ip_sockglue.c). Any source is accepted, since

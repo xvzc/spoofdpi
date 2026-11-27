@@ -52,7 +52,7 @@ type packetSource interface {
 type openCaptureFunc func(kind captureKind, servers []netip.Addr) (packetSource, error)
 
 // openCapture opens a capture on the interface of the default route, the
-// one spoofdpi captures on without --gateway. Its BPF filter is that of
+// one spoofdpi captures on. Its BPF filter is that of
 // spoofdpi's sniffer for kind, or for captureTCPFlows one that keeps the
 // TCP packets of the servers.
 func openCapture(kind captureKind, servers []netip.Addr) (packetSource, error) {

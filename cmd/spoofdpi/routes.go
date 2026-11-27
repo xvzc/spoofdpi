@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"net"
 	"net/netip"
 
 	"github.com/rs/zerolog"
@@ -18,7 +17,7 @@ import (
 type routeFinder struct {
 	// egress discovers and classifies the egress of fam, as
 	// route.DiscoverEgress does.
-	egress func(fam netutil.Family, gateway net.IP, zone string) (*route.Egress, error)
+	egress func(fam netutil.Family) (*route.Egress, error)
 	// hasIPv6Egress reports whether the host has an IPv6 route to the
 	// internet.
 	hasIPv6Egress func() bool
@@ -60,17 +59,16 @@ type startupNet struct {
 }
 
 // discoverEgresses discovers and classifies the egress of each address
-// family that cfg needs, using the gateways it sets, and decides whether
-// fake packets can be sent through them.
+// family that cfg needs, and decides whether fake packets can be sent
+// through them.
 //
 // The IPv4 egress is discovered only when cfg needs it: for fake packets
 // or TUN mode. A full-tunnel VPN there is fatal in TUN mode and turns
 // fake packets off otherwise.
 //
 // The IPv6 egress is discovered only when IPv6 is enabled. When none is
-// usable and no IPv6 gateway is set, or a full-tunnel VPN carries IPv6 in
-// TUN mode, discoverEgresses turns IPv6 off in cfg for this run. Fake
-// packets are off for IPv6.
+// usable, or a full-tunnel VPN carries IPv6 in TUN mode, discoverEgresses
+// turns IPv6 off in cfg for this run. Fake packets are off for IPv6.
 func discoverEgresses(
 	logger zerolog.Logger,
 	cfg *config.Config,
@@ -104,26 +102,13 @@ func discoverEgressV4(
 	cfg *config.Config,
 	f routeFinder,
 ) (*route.Egress, error, error) {
-	gateway := cfg.App.Gateway.V4
 	if !cfg.NeedsRoute() {
-		if gateway != nil {
-			logger.Warn().
-				Str("gateway", gateway.String()).
-				Msg("gateway is ignored; only fake packets and tun mode use it")
-		}
 		return nil, nil, nil
 	}
 
-	egress, err := f.egress(netutil.FamilyV4, gateway, "")
+	egress, err := f.egress(netutil.FamilyV4)
 	if errors.Is(err, route.ErrNoIPv4) {
 		return nil, nil, noIPv4RouteError(err, f.hasIPv6Egress())
-	}
-	if errors.Is(err, route.ErrBadGateway) {
-		return nil, nil, fmt.Errorf(
-			"failed to find default route: %w; check --gateway, "+
-				"or remove it to use the system's default route",
-			err,
-		)
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf(
@@ -137,18 +122,14 @@ func discoverEgressV4(
 	switch egress.Class {
 	case route.EgressVPN:
 		if cfg.App.Mode == config.AppModeTUN {
-			return nil, nil, tunVPNError(egress, gateway)
+			return nil, nil, tunVPNError(egress)
 		}
 		// Fake packets would leave through the VPN, whose far end, not
 		// the censor, would see them.
-		warn := fmt.Sprintf(
+		logger.Warn().Msgf(
 			"a full-tunnel VPN (%s) carries the traffic; fake packets are disabled",
 			egress.Reason,
 		)
-		if gateway != nil {
-			warn += fmt.Sprintf(" (gateway %s is ignored)", gateway)
-		}
-		logger.Warn().Msg(warn)
 		return egress, &desync.FakesOffError{
 			Family:    netutil.FamilyV4,
 			Kind:      desync.FakesOffVPNAtStartup,
@@ -165,17 +146,12 @@ func discoverEgressV4(
 }
 
 // tunVPNError is the error of TUN mode on an IPv4 egress that is a
-// full-tunnel VPN. gateway is the IPv4 gateway option, or nil.
-func tunVPNError(egress *route.Egress, gateway net.IP) error {
-	var note string
-	if gateway != nil {
-		note = "; the gateway option does not override this"
-	}
+// full-tunnel VPN.
+func tunVPNError(egress *route.Egress) error {
 	return fmt.Errorf(
 		"TUN mode cannot run while a full-tunnel VPN carries the traffic (%s); "+
-			"disconnect the VPN or use the HTTP or SOCKS5 mode%s",
+			"disconnect the VPN or use the HTTP or SOCKS5 mode",
 		egress.Reason,
-		note,
 	)
 }
 
@@ -186,27 +162,12 @@ func discoverEgressV6(
 	cfg *config.Config,
 	f routeFinder,
 ) (*route.Egress, ipv6OffCause, error) {
-	gateways := cfg.App.Gateway
 	if !cfg.IPv6Enabled() {
-		if gateways.V6 != nil {
-			v6 := config.Gateways{V6: gateways.V6, V6Zone: gateways.V6Zone}
-			logger.Warn().Msgf(
-				"IPv6 gateway %s is ignored; it is used only when ipv6 is enabled",
-				v6,
-			)
-		}
 		return nil, ipv6StayedOn, nil
 	}
 
-	egress, err := f.egress(netutil.FamilyV6, gateways.V6, gateways.V6Zone)
-	switch {
-	case err != nil && gateways.V6 != nil:
-		return nil, ipv6StayedOn, fmt.Errorf(
-			"failed to use IPv6 gateway: %w; check the IPv6 address of --gateway, "+
-				"or remove it to use the system's IPv6 default route",
-			err,
-		)
-	case err != nil:
+	egress, err := f.egress(netutil.FamilyV6)
+	if err != nil {
 		logger.Warn().
 			Err(err).
 			Msg("IPv6 is enabled but no usable IPv6 route was found; " +
@@ -218,15 +179,10 @@ func discoverEgressV6(
 	tun := cfg.App.Mode == config.AppModeTUN
 	switch {
 	case egress.Class == route.EgressVPN && tun:
-		warn := fmt.Sprintf(
+		logger.Warn().Msgf(
 			"a full-tunnel VPN (%s) carries IPv6; running with IPv6 disabled",
 			egress.Reason,
 		)
-		if gateways.V6 != nil {
-			v6 := config.Gateways{V6: gateways.V6, V6Zone: gateways.V6Zone}
-			warn += fmt.Sprintf(" (gateway %s is ignored)", v6)
-		}
-		logger.Warn().Msg(warn)
 		cfg.DisableIPv6()
 		return nil, ipv6OffVPN, nil
 	case egress.Class == route.EgressVPN:
@@ -247,10 +203,9 @@ func discoverEgressV6(
 // through a VPN, as a split-tunnel VPN does for some destinations, since
 // the VPN's far end, not the censor, would see them. start is the IPv4
 // egress found at startup, or nil; a destination routed through the
-// interface of start, or through the link of its kernel route (which an
-// explicit gateway on another interface leaves different), is not
-// classified again. routeTo and classify find and classify the
-// route to a destination, as route.Lookup and route.ClassifyPath do.
+// interface of start is not classified again. routeTo and classify find
+// and classify the route to a destination, as route.Lookup and
+// route.ClassifyPath do.
 //
 // A route that cannot be found or classified allows fake packets, with a
 // debug log.
@@ -269,9 +224,7 @@ func dstFakeCheck(
 				Msg("route lookup failed; allowing fake packets")
 			return nil
 		}
-		if start != nil &&
-			(path.Iface.Index == start.Route.Iface.Index ||
-				path.Iface.Index == start.Link.Index) {
+		if start != nil && path.Iface.Index == start.Route.Iface.Index {
 			return nil
 		}
 		egress, err := classify(path)

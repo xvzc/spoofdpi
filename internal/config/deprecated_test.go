@@ -3,8 +3,10 @@ package config
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -85,6 +87,50 @@ dns = { qtype = "all" }
 		cmd := CreateCommand(nil, "v0.0.0", "commit", "build")
 		for _, f := range cmd.VisibleFlags() {
 			assert.NotContains(t, f.Names(), "dns-qtype")
+		}
+	})
+}
+
+// The removed 'gateway' option is still accepted in any form, with a
+// warning, and has no effect: spoofdpi uses the system's route.
+func TestGatewayDeprecated(t *testing.T) {
+	const warnTOML = "'gateway' is deprecated and ignored; spoofdpi uses the system's route"
+	const warnFlag = "'--gateway' is deprecated and ignored; spoofdpi uses the system's route"
+
+	for _, value := range []string{
+		`"192.168.1.1"`,
+		`["192.168.1.1", "fe80::1%en0"]`,
+		`[]`,
+		`""`,
+		`"not an address"`,
+	} {
+		t.Run("toml "+value, func(t *testing.T) {
+			cfg, warns := runWithTOML(
+				t,
+				"[app]\ngateway = "+value+"\nlog-level = \"debug\"\n",
+			)
+			assert.Equal(t, zerolog.DebugLevel, cfg.App.LogLevel)
+			assert.Equal(t, []string{warnTOML}, warns)
+		})
+	}
+
+	for _, args := range [][]string{
+		{"--gateway", "192.168.1.1"},
+		{"--gateway", "192.168.1.1", "--gateway", "10.0.0.1"},
+		{"--gateway", "192.168.1.1,fe80::1%en0"},
+		{"--gateway", ""},
+		{"--gateway", "not an address"},
+	} {
+		t.Run(fmt.Sprintf("flag %q", args), func(t *testing.T) {
+			_, warns := runWithTOML(t, "", args...)
+			assert.Equal(t, []string{warnFlag}, warns)
+		})
+	}
+
+	t.Run("flag is hidden", func(t *testing.T) {
+		cmd := CreateCommand(nil, "v0.0.0", "commit", "build")
+		for _, f := range cmd.VisibleFlags() {
+			assert.NotContains(t, f.Names(), "gateway")
 		}
 	})
 }

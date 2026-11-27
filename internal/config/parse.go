@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"net"
-	"net/netip"
 	"strconv"
 	"strings"
 
@@ -101,86 +100,6 @@ func MustParseDNSModeType(s string) DNSModeType {
 		return DNSModeHTTPS
 	default:
 		panic(fmt.Sprintf("cannot parse %q to DNSModeType", s))
-	}
-}
-
-// parseGateway parses a gateway address: a global unicast or link-local
-// IPv4 or IPv6 address. Only a link-local IPv6 address may have a zone,
-// such as "fe80::1%en0". An IPv4-mapped IPv6 address is an IPv4 address.
-func parseGateway(s string) (ip net.IP, zone string, err error) {
-	addr, err := netip.ParseAddr(s)
-	if err != nil {
-		return nil, "", fmt.Errorf("value '%s' is not an IP address", s)
-	}
-	zone = addr.Zone()
-	addr = addr.WithZone("").Unmap()
-
-	if !addr.IsGlobalUnicast() && !addr.IsLinkLocalUnicast() {
-		return nil, "", fmt.Errorf("value '%s' is not a unicast address", s)
-	}
-	if zone != "" && (addr.Is4() || !addr.IsLinkLocalUnicast()) {
-		return nil, "", fmt.Errorf(
-			"value '%s': only a link-local IPv6 address may have a zone", s,
-		)
-	}
-
-	return net.IP(addr.AsSlice()), zone, nil
-}
-
-// parseGateways parses the values of the gateway option: at most one
-// address per family. Empty values are skipped, so no value, or only
-// empty ones, leaves every gateway to discovery.
-func parseGateways(values []string) (Gateways, error) {
-	var g Gateways
-	for _, v := range values {
-		v = strings.TrimSpace(v)
-		if v == "" {
-			continue
-		}
-		ip, zone, err := parseGateway(v)
-		if err != nil {
-			return Gateways{}, err
-		}
-
-		if len(ip) == net.IPv4len {
-			if g.V4 != nil {
-				return Gateways{}, fmt.Errorf(
-					"more than one IPv4 gateway: '%s' and '%s'", g.V4, v,
-				)
-			}
-			g.V4 = ip
-			continue
-		}
-		if g.V6 != nil {
-			return Gateways{}, fmt.Errorf(
-				"more than one IPv6 gateway: '%s' and '%s'", g.V6, v,
-			)
-		}
-		g.V6, g.V6Zone = ip, zone
-	}
-	return g, nil
-}
-
-// parseGatewaysFn parses the TOML gateway option: an address, or an array
-// of addresses (see parseGateways).
-func parseGatewaysFn() func(any) (Gateways, error) {
-	return func(v any) (Gateways, error) {
-		switch v := v.(type) {
-		case string:
-			return parseGateways([]string{v})
-		case []any:
-			values := make([]string, len(v))
-			for i, item := range v {
-				s, ok := item.(string)
-				if !ok {
-					return Gateways{}, fmt.Errorf("expected string, got %T", item)
-				}
-				values[i] = s
-			}
-			return parseGateways(values)
-		default:
-			return Gateways{}, fmt.Errorf("expected string or array, got %T", v)
-		}
 	}
 }
 

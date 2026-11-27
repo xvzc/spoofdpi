@@ -44,10 +44,10 @@ In TUN mode, the operating system and the applications resolve names and choose 
 
 ### TUN Mode Routing on Linux
 
-On Linux, TUN mode leaves the main routing table untouched. It adds its routes to two tables of its own, one into the TUN interface and one out of the physical interface, and policy rules (`ip rule`) that send unmarked traffic into the TUN. spoofdpi marks its own sockets, so its traffic leaves through the physical interface. Routes in the main table more specific than the default route, such as those of the local network, keep working.
+On Linux, TUN mode leaves the main routing table untouched. It adds its routes to a table of its own, which leads into the TUN interface, and policy rules (`ip rule`) that send unmarked traffic into the TUN. spoofdpi binds its own sockets to the interface of the route it found at startup and marks them, so its traffic skips that table and follows the main table's routes. Traffic from that interface's address also follows the main table's routes, so strict reverse-path filtering, such as NixOS's firewall, keeps accepting the replies to spoofdpi's own connections. This relies on the main table keeping its route through that interface: if a VPN or a network manager replaces it while spoofdpi runs, traffic through the TUN stops. Routes in the main table more specific than the default route, such as those of the local network, keep working.
 
 - Policy rules that other programs installed before spoofdpi started take precedence. spoofdpi places its rules after the existing ones; when there is no room, it places them before or among them and logs a warning naming those rules.
-- A VPN started after spoofdpi takes precedence when it adds policy rules, or routes in the main table more specific than the default route, such as `0.0.0.0/1` and `128.0.0.0/1`. A VPN that only replaces the main table's default route is still routed into the TUN.
+- A VPN started after spoofdpi takes precedence when it adds policy rules, or routes in the main table more specific than the default route, such as `0.0.0.0/1` and `128.0.0.0/1`. A VPN that only replaces the main table's default route does not: its traffic is still routed into the TUN, where it stops, as described above.
 - It needs `ip rule` support for `suppress_prefixlength` and `not`: iproute2 and Linux 3.12 or later.
 
 ### IPv6 Link-Local Destinations
@@ -60,7 +60,9 @@ A link-local IPv6 address (`fe80::/10`) is reachable only through the interface 
 
 ### Full-Tunnel VPNs
 
-When fake packets or TUN mode is enabled, spoofdpi looks up at startup the interface that the system routes the internet through, and logs it in an `egress` line with its class:
+When fake packets or TUN mode is enabled, spoofdpi looks up at startup the interface that the system routes the internet through, and logs it in an `egress` line with its class. spoofdpi always uses the system's route; to send its traffic out of another interface, change the system's routes. The route needs no gateway: a default route through a point-to-point interface, such as PPP, works. If the system has no IPv4 route to the internet, for example on an IPv6-only network, spoofdpi fails to start with an error that says so and whether the system has an IPv6 route. IPv6-only networks are not supported yet.
+
+The classes are:
 
 - `direct`: a physical interface, such as Ethernet or Wi-Fi.
 - `uplink`: a point-to-point interface, such as PPP or a 6in4 tunnel, that has the only default route.
@@ -69,7 +71,7 @@ When fake packets or TUN mode is enabled, spoofdpi looks up at startup the inter
 
 A full-tunnel VPN carries the traffic to its server, where the censor does not see fake packets, so:
 
-- TUN mode does not start while a full-tunnel VPN carries the IPv4 traffic: spoofdpi fails with an error. Disconnect the VPN, or use the HTTP or SOCKS5 mode. [`gateway`](#gateway) does not change this.
+- TUN mode does not start while a full-tunnel VPN carries the IPv4 traffic: spoofdpi fails with an error. Disconnect the VPN, or use the HTTP or SOCKS5 mode.
 - In the HTTP and SOCKS5 modes, fake packets are off for the whole run, and spoofdpi logs a warning at startup. The other desync methods, such as splitting, still apply.
 - With [`ipv6`](#ipv6) on, a full-tunnel VPN that carries IPv6 makes TUN mode run with IPv6 disabled, with a warning; the HTTP and SOCKS5 modes only log it.
 
@@ -129,9 +131,9 @@ A [rule](rules.md#rule-fields) can set its own `ipv6`; a rule that does not set 
 
 With this option off, only DNS and the IPv6 handling are off: an IPv6 literal requested through the HTTP or SOCKS5 proxy, such as `[2001:db8::1]`, is still connected to. To keep a site on IPv4, set `ipv6 = false` in its rule (see [IPv6](rules.md#ipv6)).
 
-When IPv6 is enabled, by this option or, outside TUN mode, by a rule that sets `ipv6 = true`, spoofdpi looks up the IPv6 route to the internet at startup, in every mode, and logs its interface. The route needs no gateway. When the IPv6 address of [`gateway`](#gateway) is set, spoofdpi checks it instead and logs it; it does not change routing yet.
+When IPv6 is enabled, by this option or, outside TUN mode, by a rule that sets `ipv6 = true`, spoofdpi looks up the IPv6 route to the internet at startup, in every mode, and logs its interface. The route needs no gateway.
 
-When spoofdpi finds no usable IPv6 route (the system has none, or the routing table cannot be read), or in TUN mode a full-tunnel VPN carries IPv6 (see [Full-Tunnel VPNs](#full-tunnel-vpns)), it logs a warning and runs with IPv6 disabled, as if this option and every rule's `ipv6` were off: DNS lookups ask for A records only, TUN mode routes no IPv6 into the TUN interface, and `ipv6 = true` in a rule has no effect. A rule with `ipv6 = false` still keeps its site on IPv4. When the IPv6 address of `gateway` is set and cannot be used, spoofdpi fails to start instead.
+When spoofdpi finds no usable IPv6 route (the system has none, or the routing table cannot be read), or in TUN mode a full-tunnel VPN carries IPv6 (see [Full-Tunnel VPNs](#full-tunnel-vpns)), it logs a warning and runs with IPv6 disabled, as if this option and every rule's `ipv6` were off: DNS lookups ask for A records only, TUN mode routes no IPv6 into the TUN interface, and `ipv6 = true` in a rule has no effect. A rule with `ipv6 = false` still keeps its site on IPv4.
 
 !!! warning
     IPv6 support is currently Experimental, and spoofdpi logs a warning at startup when this option is set.
@@ -275,51 +277,7 @@ $ spoofdpi --clean
 
 ## `gateway`
 
-`type: <ip> or array of <ip>`
-
-### Description
-
-Specifies the default gateway instead of discovering it automatically. `(default: auto-detect)`
-
-The value is an IPv4 address, an IPv6 address, or one of each; two addresses of the same family are rejected. A link-local IPv6 address may name its interface with a zone, as in `fe80::1%en0`; no other address may have a zone. An empty value means automatic discovery: an empty array (`gateway = []`), an empty string, an empty flag value (`--gateway ""`), or only empty entries. Each family is set on its own: a family without an address is still discovered automatically, so an IPv6 address alone leaves IPv4 to automatic discovery.
-
-The IPv4 address selects the interface that packet capture runs on and TUN mode's route out of the TUN: spoofdpi uses the network interface whose subnet contains the gateway, instead of the interface of the system's route to the internet. This helps when automatic discovery picks the wrong interface, for example on machines with multiple interfaces. If no interface is on the same subnet as the gateway, spoofdpi fails to start. The gateway works even when the system has no IPv4 default route. It is used only for fake packets ([`tls.fake-preflight`](tls.md#fake-preflight), [`tls.fake-stutter`](tls.md#fake-stutter) or [`udp.fake-preflight`](udp.md#fake-preflight) above 0) and for TUN mode; if neither is enabled, the IPv4 address is ignored with a warning.
-
-Fake packets go out through a raw IP socket on every OS, and where they go depends on the mode:
-
-- In the HTTP and SOCKS5 modes, fake packets follow the system's routing table, like any other packet, so the option does not change where they go.
-- In TUN mode, fake packets are pinned to the selected interface, like TUN mode's own connections: on Linux they are bound to it and marked, on macOS they are bound to it, and on FreeBSD they use the FIB ([`freebsd-fib`](#freebsd-fib)) whose default route goes through it.
-
-A full-tunnel VPN overrides the option: while one carries the traffic, TUN mode does not start and fake packets are off, whatever the gateway (see [Full-Tunnel VPNs](#full-tunnel-vpns)).
-
-The IPv6 address is used only when IPv6 is enabled, by [`ipv6`](#ipv6) or, outside TUN mode, by a rule; otherwise it is ignored with a warning. Its interface is the one its zone names, by name or by index; without a zone, a link-local gateway is on the interface of the system's IPv6 route to the internet, and any other gateway on the interface whose subnet contains it. If it cannot be used, for example because the zone names no interface that is up, spoofdpi fails to start. Otherwise it keeps IPv6 from being turned off for lack of a route, and spoofdpi logs it, but it does not change routing yet: nothing routes IPv6 by it. A link-local gateway without a zone needs an IPv6 route to the internet; without one, add a `%<interface>` zone.
-
-When no IPv4 address is set, fake packets and TUN mode need an IPv4 route to the internet. The route needs no gateway: a default route through a point-to-point interface, such as PPP, works. If the system has none, for example on an IPv6-only network, spoofdpi fails to start with an error that says so and whether the system has an IPv6 route. IPv6-only networks are not supported yet.
-
-### Usage
-
-**Command-Line Flag**
-
-Repeat the flag, or separate the addresses with commas. The flag replaces the whole `gateway` of the TOML config.
-
-```console
-$ spoofdpi --gateway 192.168.1.1
-$ spoofdpi --gateway 192.168.1.1 --gateway fe80::1%en0
-$ spoofdpi --gateway 192.168.1.1,fe80::1%en0
-```
-
-**TOML Config**
-```toml
-[app]
-gateway = "192.168.1.1"
-```
-
-With an IPv6 gateway too:
-
-```toml
-[app]
-gateway = ["192.168.1.1", "fe80::1%en0"]
-```
+The `gateway` option (`--gateway`, and `gateway` in `[app]`) is deprecated. It is ignored with a warning: spoofdpi uses the system's route to the internet (see [Full-Tunnel VPNs](#full-tunnel-vpns)). To send spoofdpi's traffic out of another interface, change the system's routes instead.
 
 ---
 
