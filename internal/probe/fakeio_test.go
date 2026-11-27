@@ -15,6 +15,14 @@ import (
 	"github.com/xvzc/spoofdpi/internal/desync"
 )
 
+// trackerSeqs is a seq source that gives the sequence numbers put in its
+// tracker, for connections to any server.
+type trackerSeqs struct {
+	*desync.SeqTracker
+}
+
+func (trackerSeqs) LearnsSeq(net.IP) bool { return true }
+
 // stubHops is a hop reader that has learned a hop count of 0 for every
 // server, which makes spoofdpi's desyncer skip the fakes.
 type stubHops struct {
@@ -166,7 +174,7 @@ func TestFakeDesyncer(t *testing.T) {
 					log:          log,
 				},
 				unlearnedHops{HopReader: &stubHops{}},
-				seqs,
+				trackerSeqs{seqs},
 				nil,
 			)
 			msg, err := buildClientHello("www.example.com")

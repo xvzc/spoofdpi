@@ -46,13 +46,6 @@ func NewSeqTracker(ttl time.Duration) *SeqTracker {
 	}
 }
 
-// CanLearnSeq reports whether the sniffer can learn sequence numbers for a
-// connection to remote. The SYN/ACK filter only captures IPv4, so waiting
-// for other connections would always time out.
-func CanLearnSeq(remote net.IP) bool {
-	return remote.To4() != nil
-}
-
 // SeqKey builds the key for a connection from the local host's view.
 func SeqKey(local, remote *net.TCPAddr) netutil.NATKey {
 	return netutil.NewNATKey(local.IP, local.Port, remote.IP, remote.Port)

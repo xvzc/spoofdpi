@@ -89,7 +89,7 @@ func stutterRunWith(
 		zerolog.Nop(),
 		eventWriter{log: log, failAt: failAt, sent: &sent},
 		stubHops{hopLearned: true, hops: 10},
-		seqs,
+		seqSource(seqs, ipv4Only),
 		nil,
 	)
 	sc := newStubConn("203.0.113.1")

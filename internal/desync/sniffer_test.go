@@ -93,6 +93,7 @@ func TestSniffer_StartCapturing(t *testing.T) {
 					"",
 					zerolog.Nop(),
 					h,
+					netutil.NewFamilySet(netutil.FamilyV4),
 					newTestHopStore(),
 					nil,
 				).StartCapturing()
@@ -102,7 +103,13 @@ func TestSniffer_StartCapturing(t *testing.T) {
 		{
 			"udp",
 			func(h capture.Handle) error {
-				return NewUDPSniffer("", zerolog.Nop(), h, newTestHopStore()).StartCapturing()
+				return NewUDPSniffer(
+					"",
+					zerolog.Nop(),
+					h,
+					netutil.NewFamilySet(netutil.FamilyV4),
+					newTestHopStore(),
+				).StartCapturing()
 			},
 			mustFilter(t, capture.UDPFilter),
 		},
@@ -375,6 +382,7 @@ func TestSniffer_CaptureLogsCarryRunID(t *testing.T) {
 	server := net.ParseIP("203.0.113.1")
 	client := net.ParseIP("192.168.1.11")
 	hops := newTestHopStore()
+	ipv4 := netutil.NewFamilySet(netutil.FamilyV4)
 
 	tcs := []struct {
 		name  string
@@ -387,7 +395,7 @@ func TestSniffer_CaptureLogsCarryRunID(t *testing.T) {
 		{
 			"tcp", ProtoTCP, 2,
 			func(runID string, logger zerolog.Logger, h capture.Handle) error {
-				return NewTCPSniffer(runID, logger, h, hops, nil).StartCapturing()
+				return NewTCPSniffer(runID, logger, h, ipv4, hops, nil).StartCapturing()
 			},
 			synAck(
 				t,
@@ -399,7 +407,7 @@ func TestSniffer_CaptureLogsCarryRunID(t *testing.T) {
 		{
 			"udp", ProtoUDP, 1,
 			func(runID string, logger zerolog.Logger, h capture.Handle) error {
-				return NewUDPSniffer(runID, logger, h, hops).StartCapturing()
+				return NewUDPSniffer(runID, logger, h, ipv4, hops).StartCapturing()
 			},
 			udpPacket(t, server, client, 52),
 		},

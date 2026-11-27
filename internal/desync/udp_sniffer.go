@@ -21,35 +21,38 @@ type UDPSniffer struct {
 	hops *HopStore
 
 	handle capture.Handle
+	// fams is the set of the address families whose UDP packets are
+	// captured.
+	fams netutil.FamilySet
 }
 
 func NewUDPSniffer(
 	runID string,
 	logger zerolog.Logger,
 	handle capture.Handle,
+	fams netutil.FamilySet,
 	hops *HopStore,
 ) *UDPSniffer {
 	return &UDPSniffer{
 		runID:  runID,
 		logger: logger,
 		handle: handle,
+		fams:   fams,
 		hops:   hops,
 	}
 }
 
-// StartCapturing begins monitoring for UDP packets in a background
-// goroutine. It returns an error if the UDP filter cannot be built, in
-// which case it wraps capture.ErrUnsupportedLinkType for a link type the
-// filter does not support, or installed.
+// StartCapturing begins monitoring for the UDP packets of the sniffer's
+// address families in a background goroutine. It returns an error if the
+// UDP filter cannot be built, in which case it wraps
+// capture.ErrUnsupportedLinkType for a link type the filter does not
+// support, or installed.
 func (us *UDPSniffer) StartCapturing() error {
 	// Detaching fails on a Linux socket that has no filter yet (ENOENT),
 	// and attaching a filter replaces any previous one, so a failed clear
 	// is harmless.
 	_ = us.handle.ClearBPF()
-	filter, err := capture.UDPFilter(
-		us.handle.LinkType(),
-		netutil.NewFamilySet(netutil.FamilyV4),
-	)
+	filter, err := capture.UDPFilter(us.handle.LinkType(), us.fams)
 	if err != nil {
 		return fmt.Errorf("build UDP capture filter: %w", err)
 	}

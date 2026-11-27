@@ -1,17 +1,22 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"syscall"
 	"testing"
 
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packetio/inject"
+	"github.com/xvzc/spoofdpi/internal/packetio/inject/injecttest"
 	"github.com/xvzc/spoofdpi/internal/route"
 )
 
@@ -100,4 +105,288 @@ func TestFakesState(t *testing.T) {
 		}),
 	)
 	assert.Equal(t, "off: boom", fakesState(errors.New("boom")))
+}
+
+func TestEgressIfaces(t *testing.T) {
+	en0 := net.Interface{Index: 4, Name: "en0"}
+	gif0 := net.Interface{Index: 7, Name: "gif0"}
+	egressOn := func(iface net.Interface) *route.Egress {
+		return &route.Egress{Route: route.Route{Iface: iface}}
+	}
+	v4 := netutil.NewFamilySet(netutil.FamilyV4)
+	v6 := netutil.NewFamilySet(netutil.FamilyV6)
+
+	withV6 := desync.Senders{V4: &injecttest.Sender{}, V6: &injecttest.Sender{}}
+	v4Only := desync.Senders{V4: &injecttest.Sender{}}
+
+	tcs := []struct {
+		name    string
+		startup startupNet
+		senders desync.Senders
+		want    []desync.EgressIface
+	}{
+		{
+			"ipv4 only",
+			startupNet{V4: egressOn(en0)},
+			v4Only,
+			[]desync.EgressIface{{Iface: en0, Fams: v4}},
+		},
+		{
+			"both families on one interface",
+			startupNet{V4: egressOn(en0), V6: egressOn(en0)},
+			withV6,
+			[]desync.EgressIface{{
+				Iface: en0,
+				Fams:  netutil.NewFamilySet(netutil.FamilyV4, netutil.FamilyV6),
+			}},
+		},
+		{
+			"ipv6 on another interface",
+			startupNet{V4: egressOn(en0), V6: egressOn(gif0)},
+			withV6,
+			[]desync.EgressIface{{Iface: en0, Fams: v4}, {Iface: gif0, Fams: v6}},
+		},
+		{
+			"ipv6 without its sender",
+			startupNet{V4: egressOn(en0), V6: egressOn(gif0)},
+			v4Only,
+			[]desync.EgressIface{{Iface: en0, Fams: v4}},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, egressIfaces(tc.startup, tc.senders))
+		})
+	}
+}
+
+// senderOpener records the families it opens senders for, and fails for
+// those in fail.
+type senderOpener struct {
+	fail   map[netutil.Family]error
+	opened []netutil.Family
+}
+
+func (o *senderOpener) open(
+	fam netutil.Family,
+	_ inject.Options,
+) (inject.Sender, error) {
+	if err := o.fail[fam]; err != nil {
+		return nil, err
+	}
+	o.opened = append(o.opened, fam)
+	return &injecttest.Sender{}, nil
+}
+
+func TestOpenFakeSenders(t *testing.T) {
+	egress := &route.Egress{
+		Route: route.Route{Iface: net.Interface{Index: 1, Name: "en0"}},
+	}
+	egress6 := &route.Egress{Route: route.Route{
+		Family: netutil.FamilyV6,
+		Iface:  net.Interface{Index: 1, Name: "en0"},
+	}}
+	withMode := func(mode config.AppModeType) *config.Config {
+		cfg := config.DefaultConfig()
+		cfg.App.Mode = mode
+		return cfg
+	}
+	failed := errors.New("protocol not available")
+
+	tcs := []struct {
+		name     string
+		cfg      *config.Config
+		startup  startupNet
+		fail     map[netutil.Family]error
+		wantOpen []netutil.Family
+		wantV6   bool
+		wantWarn bool
+	}{
+		{
+			name:     "ipv4 only",
+			cfg:      withMode(config.AppModeHTTP),
+			startup:  startupNet{V4: egress},
+			wantOpen: []netutil.Family{netutil.FamilyV4},
+		},
+		{
+			name:     "ipv6 egress in a proxy mode",
+			cfg:      withMode(config.AppModeSOCKS5),
+			startup:  startupNet{V4: egress, V6: egress6},
+			wantOpen: []netutil.Family{netutil.FamilyV4, netutil.FamilyV6},
+			wantV6:   true,
+		},
+		{
+			name:     "ipv6 egress in TUN mode",
+			cfg:      withMode(config.AppModeTUN),
+			startup:  startupNet{V4: egress, V6: egress6},
+			wantOpen: []netutil.Family{netutil.FamilyV4},
+		},
+		{
+			name:     "ipv6 sender failure is not fatal",
+			cfg:      withMode(config.AppModeHTTP),
+			startup:  startupNet{V4: egress, V6: egress6},
+			fail:     map[netutil.Family]error{netutil.FamilyV6: failed},
+			wantOpen: []netutil.Family{netutil.FamilyV4},
+			wantWarn: true,
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			opener := &senderOpener{fail: tc.fail}
+
+			senders, err := openFakeSenders(
+				zerolog.New(&logs),
+				tc.cfg,
+				tc.startup,
+				opener.open,
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantOpen, opener.opened)
+			assert.NotNil(t, senders.V4)
+			assert.Equal(t, tc.wantV6, senders.V6 != nil)
+			if tc.wantWarn {
+				assert.Contains(t, logs.String(), `"level":"warn"`)
+				assert.Contains(t, logs.String(), "protocol not available")
+				assert.Contains(t, logs.String(),
+					"failed to open the IPv6 fake packet sender; "+
+						"fake packets are off for IPv6")
+			} else {
+				assert.Empty(t, logs.String())
+			}
+		})
+	}
+
+	t.Run("ipv4 sender failure is fatal", func(t *testing.T) {
+		opener := &senderOpener{fail: map[netutil.Family]error{netutil.FamilyV4: failed}}
+
+		_, err := openFakeSenders(
+			zerolog.Nop(),
+			withMode(config.AppModeHTTP),
+			startupNet{V4: egress, V6: egress6},
+			opener.open,
+		)
+
+		require.ErrorIs(t, err, failed)
+		assert.Equal(t, "fake packet sender: protocol not available", err.Error())
+		assert.Empty(t, opener.opened, "no ipv6 sender is opened")
+	})
+}
+
+// fakeStackOpeners returns openers whose senders are recorded in senders,
+// and whose stacks are opened with the interfaces recorded in ifaces, or
+// fail with tcpErr or udpErr.
+func fakeStackOpeners(
+	senders *[]*injecttest.Sender,
+	ifaces *[]desync.EgressIface,
+	tcpErr, udpErr error,
+) stackOpeners {
+	return stackOpeners{
+		sender: func(netutil.Family, inject.Options) (inject.Sender, error) {
+			s := &injecttest.Sender{}
+			*senders = append(*senders, s)
+			return s, nil
+		},
+		tcp: func(
+			_ string,
+			_ zerolog.Logger,
+			got []desync.EgressIface,
+			_ desync.Senders,
+			_ *desync.HopStore,
+		) (*desync.TCPStack, error) {
+			*ifaces = got
+			if tcpErr != nil {
+				return nil, tcpErr
+			}
+			return &desync.TCPStack{}, nil
+		},
+		udp: func(
+			_ string,
+			_ zerolog.Logger,
+			got []desync.EgressIface,
+			_ desync.Senders,
+			_ *desync.HopStore,
+		) (*desync.UDPStack, error) {
+			*ifaces = got
+			if udpErr != nil {
+				return nil, udpErr
+			}
+			return &desync.UDPStack{}, nil
+		},
+	}
+}
+
+func TestSetupNetworkStack(t *testing.T) {
+	en0 := net.Interface{Index: 4, Name: "en0"}
+	startup := startupNet{
+		V4: &route.Egress{Route: route.Route{Iface: en0}},
+		V6: &route.Egress{Route: route.Route{Family: netutil.FamilyV6, Iface: en0}},
+	}
+	withStacks := func() *config.Config {
+		cfg := config.DefaultConfig()
+		cfg.HTTPS.FakePreflight = 1
+		cfg.UDP.FakePreflight = 1
+		return cfg
+	}
+	failed := errors.New("on en0: set SYN/ACK capture filter: program rejected")
+
+	t.Run("logs the families of each interface", func(t *testing.T) {
+		var senders []*injecttest.Sender
+		var ifaces []desync.EgressIface
+		var logs bytes.Buffer
+
+		tcp, udp, hops, err := setupNetworkStack(
+			context.Background(),
+			zerolog.New(&logs),
+			startup,
+			withStacks(),
+			fakeStackOpeners(&senders, &ifaces, nil, nil),
+		)
+
+		require.NoError(t, err)
+		assert.NotNil(t, tcp)
+		assert.NotNil(t, udp)
+		assert.NotNil(t, hops)
+		require.Len(t, senders, 2, "both senders open in a proxy mode")
+		assert.Equal(t, []desync.EgressIface{{
+			Iface: en0,
+			Fams:  netutil.NewFamilySet(netutil.FamilyV4, netutil.FamilyV6),
+		}}, ifaces)
+		assert.Contains(t, logs.String(),
+			`"name":"en0","families":["ipv4","ipv6"],"message":" interface"`)
+	})
+
+	for _, tc := range []struct {
+		name           string
+		tcpErr, udpErr error
+		want           string
+	}{
+		{"tcp", failed, nil, "tcp pcap handle " + failed.Error()},
+		{"udp", nil, failed, "udp pcap handle " + failed.Error()},
+	} {
+		t.Run(tc.name+" stack error closes the senders", func(t *testing.T) {
+			var senders []*injecttest.Sender
+			var ifaces []desync.EgressIface
+
+			tcp, udp, _, err := setupNetworkStack(
+				context.Background(),
+				zerolog.Nop(),
+				startup,
+				withStacks(),
+				fakeStackOpeners(&senders, &ifaces, tc.tcpErr, tc.udpErr),
+			)
+
+			require.ErrorIs(t, err, failed)
+			assert.EqualError(t, err, tc.want)
+			assert.Nil(t, udp)
+			if tc.tcpErr != nil {
+				assert.Nil(t, tcp)
+			}
+			require.Len(t, senders, 2)
+			for _, s := range senders {
+				assert.True(t, s.Closed(), "every sender is closed")
+			}
+		})
+	}
 }

@@ -30,7 +30,7 @@ type TLSDesyncer struct {
 	logger zerolog.Logger
 	writer TCPSeqWriter
 	hops   HopReader
-	seqs   *SeqTracker
+	seqs   SeqSource
 	caps   FakeCapability
 }
 
@@ -40,7 +40,7 @@ func NewTLSDesyncer(
 	logger zerolog.Logger,
 	writer TCPSeqWriter,
 	hops HopReader,
-	seqs *SeqTracker,
+	seqs SeqSource,
 	caps FakeCapability,
 ) *TLSDesyncer {
 	return &TLSDesyncer{
@@ -138,8 +138,9 @@ func (d *TLSDesyncer) Desync(
 // from its SYN/ACK. If they are not learned, it returns random ones chosen
 // once for the connection, so that the segments of each fake still line up.
 //
-// For IPv4 servers, it waits up to opts.SynAckTimeout for the sniffer to
-// process the SYN/ACK. IPv6 servers are not learned, so it does not wait.
+// For a server whose sequence numbers the seq source learns, it waits up
+// to opts.SynAckTimeout for the sniffer to process the SYN/ACK. For any
+// other, it does not wait.
 func (d *TLSDesyncer) learnSeqAck(
 	ctx context.Context,
 	logger zerolog.Logger,
@@ -150,7 +151,7 @@ func (d *TLSDesyncer) learnSeqAck(
 
 	local, lok := conn.LocalAddr().(*net.TCPAddr)
 	remote, rok := conn.RemoteAddr().(*net.TCPAddr)
-	if d.seqs == nil || !lok || !rok || !CanLearnSeq(remote.IP) {
+	if d.seqs == nil || !lok || !rok || !d.seqs.LearnsSeq(remote.IP) {
 		return random
 	}
 

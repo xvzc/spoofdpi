@@ -1,8 +1,14 @@
 package desync
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"strconv"
+
+	"github.com/rs/zerolog"
+	"github.com/xvzc/spoofdpi/internal/netutil"
+	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 )
 
 // joinAddrPort formats ip and port as ip:port, or [ip]:port for IPv6.
@@ -50,4 +56,67 @@ func (p HopPolicy) TTL(est HopEstimate) uint8 {
 	hops := min(max(int(p.Hops(est)), int(p.Min)), upper)
 
 	return uint8(min(max(hops+int(p.Offset), 1), 255))
+}
+
+// captureWarnings are the warnings startSniffer logs when it captures
+// less than asked.
+type captureWarnings struct {
+	// none says that nothing is learned on the interface.
+	none string
+	// ipv6 says that nothing is learned for IPv6 on the interface.
+	ipv6 string
+}
+
+// startSniffer opens a capture handle on e and starts on it the sniffer
+// that newSniffer makes for e's families. It returns the sniffer and the
+// families it captures, or a nil sniffer and no families when nothing is
+// captured on e, after logging warn.none. Only the failures that cost
+// IPv4 are errors, which name the interface:
+//
+//   - A link type the filter does not support costs every family of e,
+//     and is a warning.
+//   - Any other failure of an interface without IPv4 is a warning.
+//   - If the sniffer of both families does not start, the sniffer of IPv4
+//     is tried on the same handle, after logging warn.ipv6.
+//
+// The handle is closed unless the sniffer starts.
+func startSniffer[S Sniffer](
+	logger zerolog.Logger,
+	e EgressIface,
+	newSniffer func(capture.Handle, netutil.FamilySet) S,
+	warn captureWarnings,
+) (sniffer S, learns netutil.FamilySet, err error) {
+	var none S
+	logger = logger.With().Str("interface", e.Iface.Name).Logger()
+	ipv4 := netutil.NewFamilySet(netutil.FamilyV4)
+
+	handle, err := newCaptureHandle(&e.Iface)
+	if err != nil {
+		if e.Fams.Has(netutil.FamilyV4) {
+			return none, 0, fmt.Errorf("on %s: %w", e.Iface.Name, err)
+		}
+		logger.Warn().Err(err).Msg(warn.none)
+		return none, 0, nil
+	}
+
+	fams := e.Fams
+	for {
+		sniffer = newSniffer(handle, fams)
+		err = sniffer.StartCapturing()
+		switch {
+		case err == nil:
+			return sniffer, fams, nil
+		case errors.Is(err, capture.ErrUnsupportedLinkType),
+			!fams.Has(netutil.FamilyV4):
+			handle.Close()
+			logger.Warn().Err(err).Msg(warn.none)
+			return none, 0, nil
+		case fams != ipv4:
+			logger.Warn().Err(err).Msg(warn.ipv6)
+			fams = ipv4
+		default:
+			handle.Close()
+			return none, 0, fmt.Errorf("on %s: %w", e.Iface.Name, err)
+		}
+	}
 }

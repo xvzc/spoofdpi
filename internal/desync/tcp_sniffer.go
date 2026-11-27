@@ -22,12 +22,15 @@ type TCPSniffer struct {
 	seqs *SeqTracker
 
 	handle capture.Handle
+	// fams is the set of the address families whose SYN/ACKs are captured.
+	fams netutil.FamilySet
 }
 
 func NewTCPSniffer(
 	runID string,
 	logger zerolog.Logger,
 	handle capture.Handle,
+	fams netutil.FamilySet,
 	hops *HopStore,
 	seqs *SeqTracker,
 ) *TCPSniffer {
@@ -35,24 +38,23 @@ func NewTCPSniffer(
 		runID:  runID,
 		logger: logger,
 		handle: handle,
+		fams:   fams,
 		hops:   hops,
 		seqs:   seqs,
 	}
 }
 
-// StartCapturing begins monitoring for SYN/ACK packets in a background
-// goroutine. It returns an error if the SYN/ACK filter cannot be built, in
-// which case it wraps capture.ErrUnsupportedLinkType for a link type the
-// filter does not support, or installed.
+// StartCapturing begins monitoring for the SYN/ACK packets of the
+// sniffer's address families in a background goroutine. It returns an
+// error if the SYN/ACK filter cannot be built, in which case it wraps
+// capture.ErrUnsupportedLinkType for a link type the filter does not
+// support, or installed.
 func (ts *TCPSniffer) StartCapturing() error {
 	// Detaching fails on a Linux socket that has no filter yet (ENOENT),
 	// and attaching a filter replaces any previous one, so a failed clear
 	// is harmless.
 	_ = ts.handle.ClearBPF()
-	filter, err := capture.SynAckFilter(
-		ts.handle.LinkType(),
-		netutil.NewFamilySet(netutil.FamilyV4),
-	)
+	filter, err := capture.SynAckFilter(ts.handle.LinkType(), ts.fams)
 	if err != nil {
 		return fmt.Errorf("build SYN/ACK capture filter: %w", err)
 	}

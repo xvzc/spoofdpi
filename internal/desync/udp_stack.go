@@ -1,55 +1,69 @@
 package desync
 
 import (
-	"errors"
-	"net"
-
 	"github.com/rs/zerolog"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 )
 
-// UDPStack is what fake UDP packets are sent with: a sniffer that learns
-// hop counts, and a writer that sends crafted packets through its
-// senders.
+// UDPStack is what fake UDP packets are sent with: sniffers that learn hop
+// counts, and a writer that sends crafted packets through its senders.
 type UDPStack struct {
-	Sniffer *UDPSniffer
-	Writer  *UDPWriter
+	// Sniffers are the sniffers of the interfaces whose capture handles
+	// work, one per interface.
+	Sniffers []*UDPSniffer
+	Writer   *UDPWriter
 }
 
-// OpenUDPStack opens a capture handle on iface for a sniffer that records
-// hop counts in hops, starts the sniffer, which logs under the trace ID
-// runID, and makes a writer that sends
-// packets through senders. It fails, closing the handle, if the sniffer
-// cannot start. The handle stays open for the life of the process: the
-// sniffer reads it until then.
+// OpenUDPStack opens a capture handle on each of ifaces for a sniffer of
+// the families of that interface, which records hop counts in hops,
+// starts the sniffers, which log under the trace ID runID, and makes a
+// writer that sends packets through senders. Each interface must appear
+// once in ifaces. The handles stay open for the life of the process: the
+// sniffers read them until then.
 //
-// If iface has a link type the capture filter does not support, the
-// handle is closed and the stack has a nil Sniffer: no hop counts are
-// learned there, and fake packets use the default hop count.
+// A family whose packets cannot be captured is not learned: its fake
+// packets use the default hop count. Only IPv4 must be captured:
+//
+//   - On a link type the capture filter does not support, the handle is
+//     closed with a warning, whatever its families.
+//   - Any other failure to open or start the handle of an interface
+//     without IPv4 is a warning; a handle that opened is closed.
+//   - If the sniffer of an interface of both families does not start, the
+//     sniffer of IPv4 alone is started on it, with a warning.
+//
+// The other handles are kept. OpenUDPStack fails if the handle of IPv4
+// cannot be opened or its sniffer cannot start, with an error that names
+// the interface; the sniffers already started keep their handles, as the
+// error is meant to end the process.
 func OpenUDPStack(
 	runID string,
 	logger zerolog.Logger,
-	iface *net.Interface,
+	ifaces []EgressIface,
 	senders Senders,
 	hops *HopStore,
 ) (*UDPStack, error) {
-	handle, err := newCaptureHandle(iface)
-	if err != nil {
-		return nil, err
+	stack := &UDPStack{Writer: NewUDPWriter(logger, senders)}
+	newSniffer := func(h capture.Handle, fams netutil.FamilySet) *UDPSniffer {
+		return NewUDPSniffer(runID, logger, h, fams, hops)
 	}
-	sniffer := NewUDPSniffer(runID, logger, handle, hops)
-	writer := NewUDPWriter(logger, senders)
-	if err := sniffer.StartCapturing(); err != nil {
-		handle.Close()
-		if errors.Is(err, capture.ErrUnsupportedLinkType) {
-			logger.Warn().
-				Str("interface", iface.Name).
-				Err(err).
-				Msg("hop counts are not learned on this interface; " +
-					"fake packets use hop-count-default")
-			return &UDPStack{Writer: writer}, nil
+	for _, e := range ifaces {
+		sniffer, _, err := startSniffer(logger, e, newSniffer, udpCaptureWarnings)
+		if err != nil {
+			return nil, err
 		}
-		return nil, err
+		if sniffer != nil {
+			stack.Sniffers = append(stack.Sniffers, sniffer)
+		}
 	}
-	return &UDPStack{Sniffer: sniffer, Writer: writer}, nil
+	return stack, nil
+}
+
+// udpCaptureWarnings are the warnings of the families that a UDP stack
+// does not capture.
+var udpCaptureWarnings = captureWarnings{
+	none: "hop counts are not learned on this interface; " +
+		"fake packets use hop-count-default",
+	ipv6: "hop counts are not learned for IPv6 on this interface; " +
+		"IPv6 fake packets use hop-count-default",
 }

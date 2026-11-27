@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/proto"
 )
 
@@ -191,10 +192,16 @@ func TestSendSegments_AdvancesSeq(t *testing.T) {
 	assert.Equal(t, SeqAck{Seq: 1008, Ack: 5000}, *seq)
 }
 
+// seqSource returns a seq source that gives the sequence numbers put in
+// seqs, for the connections of the families in learns.
+func seqSource(seqs *SeqTracker, learns netutil.FamilySet) *TCPStack {
+	return &TCPStack{Seqs: seqs, learns: learns}
+}
+
 func TestDesync_UsesLearnedSeqAckWithOffsets(t *testing.T) {
 	w := &recordingWriter{}
 	seqs := NewSeqTracker(time.Minute)
-	d := NewTLSDesyncer(zerolog.Nop(), w, stubHops{}, seqs, nil)
+	d := NewTLSDesyncer(zerolog.Nop(), w, stubHops{}, seqSource(seqs, ipv4Only), nil)
 	conn := newStubConn("203.0.113.1")
 	seqs.Put(
 		SeqKey(conn.local, conn.remote),
@@ -218,7 +225,7 @@ func TestDesync_UnlearnedFakeSegmentsLineUp(t *testing.T) {
 		zerolog.Nop(),
 		w,
 		stubHops{},
-		NewSeqTracker(time.Minute),
+		seqSource(NewSeqTracker(time.Minute), ipv4Only),
 		nil,
 	)
 	opts := tlsOpts(1, 100)
@@ -246,17 +253,44 @@ func TestDesync_WaitRules(t *testing.T) {
 	tcs := []struct {
 		name       string
 		remote     string
+		learns     netutil.FamilySet
 		fakeCount  uint8
 		hopLearned bool
 		timeout    time.Duration
 		wantWait   bool
 	}{
-		{"waits", "203.0.113.1", 1, false, timeout, true},
-		{"waits even once the hop is learned", "203.0.113.1", 1, true, timeout, true},
-		{"timeout 0 does not wait", "203.0.113.1", 1, false, 0, false},
-		{"private server waits", "192.168.1.1", 1, false, timeout, true},
-		{"ipv6 server does not wait", "2001:db8::1", 1, false, timeout, false},
-		{"no fakes, no wait", "203.0.113.1", 0, false, timeout, false},
+		{"waits", "203.0.113.1", ipv4Only, 1, false, timeout, true},
+		{
+			"waits even once the hop is learned",
+			"203.0.113.1",
+			ipv4Only,
+			1,
+			true,
+			timeout,
+			true,
+		},
+		{"timeout 0 does not wait", "203.0.113.1", ipv4Only, 1, false, 0, false},
+		{"private server waits", "192.168.1.1", ipv4Only, 1, false, timeout, true},
+		{
+			"unlearned ipv6 server does not wait",
+			"2001:db8::1",
+			ipv4Only,
+			1,
+			false,
+			timeout,
+			false,
+		},
+		{"learned ipv6 server waits", "2001:db8::1", bothFams, 1, false, timeout, true},
+		{
+			"unlearned ipv4 server does not wait",
+			"203.0.113.1",
+			ipv6Only,
+			1,
+			false,
+			timeout,
+			false,
+		},
+		{"no fakes, no wait", "203.0.113.1", ipv4Only, 0, false, timeout, false},
 	}
 
 	for _, tc := range tcs {
@@ -265,7 +299,7 @@ func TestDesync_WaitRules(t *testing.T) {
 				zerolog.Nop(),
 				&recordingWriter{},
 				stubHops{hopLearned: tc.hopLearned},
-				NewSeqTracker(time.Minute),
+				seqSource(NewSeqTracker(time.Minute), tc.learns),
 				nil,
 			)
 			opts := tlsOpts(tc.fakeCount, 100)

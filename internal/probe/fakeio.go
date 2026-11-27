@@ -9,6 +9,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/desync"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packetio/inject"
 	"github.com/xvzc/spoofdpi/internal/route"
 )
@@ -62,7 +63,7 @@ func (f desyncFakes) desyncer(ttl uint8) (helloSender, *fakeLog) {
 			log:          log,
 		},
 		unlearnedHops{HopReader: f.hops},
-		f.stack.Seqs,
+		f.stack,
 		nil,
 	), log
 }
@@ -77,7 +78,7 @@ func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error)
 	if err != nil {
 		return nil, err
 	}
-	sender, err := desync.OpenIPv4Sender(inject.Options{})
+	sender, err := desync.OpenSender(netutil.FamilyV4, inject.Options{})
 	if errors.Is(err, inject.ErrNeedsRoot) {
 		return nil, fmt.Errorf("%w: %w", errFakeCapture, err)
 	}
@@ -88,7 +89,10 @@ func openFakeStack(ctx context.Context, servers []netip.Addr) (fakeStack, error)
 	stack, err := desync.OpenTCPStack(
 		"",
 		zerolog.Nop(),
-		iface,
+		[]desync.EgressIface{{
+			Iface: *iface,
+			Fams:  netutil.NewFamilySet(netutil.FamilyV4),
+		}},
 		desync.Senders{V4: sender},
 		hops,
 	)

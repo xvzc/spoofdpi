@@ -19,6 +19,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/dns"
 	"github.com/xvzc/spoofdpi/internal/logging"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packetio/inject"
 	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/rule"
@@ -307,11 +308,38 @@ func runOnceWhenDone(ctx context.Context, fn func()) func() {
 	}
 }
 
+// stackOpeners open what setupNetworkStack sets up. Tests replace them to
+// fake the host.
+type stackOpeners struct {
+	sender openSenderFunc
+	tcp    func(
+		runID string,
+		logger zerolog.Logger,
+		ifaces []desync.EgressIface,
+		senders desync.Senders,
+		hops *desync.HopStore,
+	) (*desync.TCPStack, error)
+	udp func(
+		runID string,
+		logger zerolog.Logger,
+		ifaces []desync.EgressIface,
+		senders desync.Senders,
+		hops *desync.HopStore,
+	) (*desync.UDPStack, error)
+}
+
+var osStackOpeners = stackOpeners{
+	sender: desync.OpenSender,
+	tcp:    desync.OpenTCPStack,
+	udp:    desync.OpenUDPStack,
+}
+
 func setupNetworkStack(
 	ctx context.Context,
 	logger zerolog.Logger,
-	rt *route.Route,
+	startup startupNet,
 	cfg *config.Config,
+	open stackOpeners,
 ) (
 	tcpStack *desync.TCPStack,
 	udpStack *desync.UDPStack,
@@ -325,51 +353,135 @@ func setupNetworkStack(
 	runID, _ := logging.TraceIDFromContext(ctx)
 	hops = desync.NewHopStore()
 
-	logger.Info().Msg("network info")
-	logger.Info().
-		Str("name", rt.Iface.Name).
-		Msg(" interface")
-
-	sender, sErr := desync.OpenIPv4Sender(fakeSenderOptions(cfg, rt))
-	if sErr != nil {
-		err = fakeSenderError(sErr)
+	senders, err := openFakeSenders(logger, cfg, startup, open.sender)
+	if err != nil {
 		return
 	}
-	senders := desync.Senders{V4: sender}
+	closeSenders := func() {
+		_ = senders.V4.Close()
+		if senders.V6 != nil {
+			_ = senders.V6.Close()
+		}
+	}
+	ifaces := egressIfaces(startup, senders)
+
+	logger.Info().Msg("network info")
+	for _, e := range ifaces {
+		logger.Info().
+			Str("name", e.Iface.Name).
+			Strs("families", familyNames(e.Fams)).
+			Msg(" interface")
+	}
 
 	if cfg.NeedsTCPStack() {
-		stack, hErr := desync.OpenTCPStack(
+		stack, hErr := open.tcp(
 			runID,
 			logger,
-			&rt.Iface,
+			ifaces,
 			senders,
 			hops,
 		)
 		if hErr != nil {
-			_ = sender.Close()
-			err = fmt.Errorf("tcp pcap handle on %s: %w", rt.Iface.Name, hErr)
+			closeSenders()
+			err = fmt.Errorf("tcp pcap handle %w", hErr)
 			return
 		}
 		tcpStack = stack
 	}
 
 	if cfg.NeedsUDPStack() {
-		stack, hErr := desync.OpenUDPStack(
+		stack, hErr := open.udp(
 			runID,
 			logger,
-			&rt.Iface,
+			ifaces,
 			senders,
 			hops,
 		)
 		if hErr != nil {
-			_ = sender.Close()
-			err = fmt.Errorf("udp pcap handle on %s: %w", rt.Iface.Name, hErr)
+			closeSenders()
+			err = fmt.Errorf("udp pcap handle %w", hErr)
 			return
 		}
 		udpStack = stack
 	}
 
 	return
+}
+
+// egressIfaces returns the interfaces that the packets of the network
+// stack are captured on: the one of each egress in startup whose fake
+// packets senders can send, with the families that leave through it.
+// Both families share an entry when they leave through the same
+// interface, so that it gets one capture handle.
+func egressIfaces(startup startupNet, senders desync.Senders) []desync.EgressIface {
+	var ifaces []desync.EgressIface
+	add := func(egress *route.Egress, fam netutil.Family) {
+		if egress == nil {
+			return
+		}
+		for i := range ifaces {
+			if ifaces[i].Iface.Index == egress.Route.Iface.Index {
+				ifaces[i].Fams |= netutil.NewFamilySet(fam)
+				return
+			}
+		}
+		ifaces = append(ifaces, desync.EgressIface{
+			Iface: egress.Route.Iface,
+			Fams:  netutil.NewFamilySet(fam),
+		})
+	}
+	add(startup.V4, netutil.FamilyV4)
+	if senders.V6 != nil {
+		add(startup.V6, netutil.FamilyV6)
+	}
+	return ifaces
+}
+
+// familyNames returns the names of the families in fams, for logs.
+func familyNames(fams netutil.FamilySet) []string {
+	var names []string
+	for _, fam := range []netutil.Family{netutil.FamilyV4, netutil.FamilyV6} {
+		if fams.Has(fam) {
+			names = append(names, fam.String())
+		}
+	}
+	return names
+}
+
+// openSenderFunc opens the sender of the fake packets of fam, as
+// desync.OpenSender does.
+type openSenderFunc func(fam netutil.Family, opts inject.Options) (inject.Sender, error)
+
+// openFakeSenders opens, with open, the senders of the fake packets of
+// the families that startup has an egress for. It fails if the IPv4
+// sender does not open. The IPv6 sender is opened outside TUN mode only,
+// as TUN mode does not carry IPv6 traffic; when it does not open, a
+// warning is logged and IPv6 has no sender.
+func openFakeSenders(
+	logger zerolog.Logger,
+	cfg *config.Config,
+	startup startupNet,
+	open openSenderFunc,
+) (desync.Senders, error) {
+	v4, err := open(netutil.FamilyV4, fakeSenderOptions(cfg, &startup.V4.Route))
+	if err != nil {
+		return desync.Senders{}, fakeSenderError(err)
+	}
+	senders := desync.Senders{V4: v4}
+	if startup.V6 == nil || cfg.App.Mode == config.AppModeTUN {
+		return senders, nil
+	}
+
+	v6, err := open(netutil.FamilyV6, fakeSenderOptions(cfg, &startup.V6.Route))
+	if err != nil {
+		logger.Warn().
+			Err(err).
+			Msg("failed to open the IPv6 fake packet sender; " +
+				"fake packets are off for IPv6")
+		return senders, nil
+	}
+	senders.V6 = v6
+	return senders, nil
 }
 
 // fakeSenderOptions returns the options of the raw sockets of rt's family
@@ -539,8 +651,9 @@ func createServer(
 	tcpStack, udpStack, hops, err = setupNetworkStack(
 		appctx,
 		logger,
-		defaultRoute,
+		startup,
 		cfg,
+		osStackOpeners,
 	)
 	if err != nil {
 		return nil, err
@@ -559,7 +672,7 @@ func createServer(
 	var (
 		tcpHops   desync.HopReader
 		tcpWriter desync.TCPSeqWriter
-		seqs      *desync.SeqTracker
+		seqs      desync.SeqSource
 		tcpCaps   desync.FakeCapability
 		udpHops   desync.HopReader
 		udpWriter desync.Writer
@@ -567,7 +680,7 @@ func createServer(
 	)
 	fakeGate := desync.NewStaticGate(nil, startup.FakesV6)
 	if tcpStack != nil {
-		tcpHops, tcpWriter, seqs = hops, tcpStack.Writer, tcpStack.Seqs
+		tcpHops, tcpWriter, seqs = hops, tcpStack.Writer, tcpStack
 		tcpCaps = fakeGate
 	}
 	if udpStack != nil {

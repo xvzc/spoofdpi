@@ -18,7 +18,9 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
-// synAck builds an Ethernet/IPv4/TCP SYN/ACK sent from server to client.
+// synAck builds an Ethernet/IP/TCP SYN/ACK sent from server to client,
+// over IPv4 with TTL ttl, or over IPv6 with hop limit ttl when server is
+// an IPv6 address.
 func synAck(
 	t *testing.T,
 	server, client *net.TCPAddr,
@@ -32,12 +34,22 @@ func synAck(
 		DstMAC:       net.HardwareAddr{6, 7, 8, 9, 10, 11},
 		EthernetType: layers.EthernetTypeIPv4,
 	}
-	ip := &layers.IPv4{
+	var ip gopacket.NetworkLayer = &layers.IPv4{
 		Version:  4,
 		TTL:      ttl,
 		Protocol: layers.IPProtocolTCP,
 		SrcIP:    server.IP.To4(),
 		DstIP:    client.IP.To4(),
+	}
+	if server.IP.To4() == nil {
+		eth.EthernetType = layers.EthernetTypeIPv6
+		ip = &layers.IPv6{
+			Version:    6,
+			HopLimit:   ttl,
+			NextHeader: layers.IPProtocolTCP,
+			SrcIP:      server.IP,
+			DstIP:      client.IP,
+		}
 	}
 	tcp := &layers.TCP{
 		SrcPort: layers.TCPPort(server.Port),
@@ -52,7 +64,9 @@ func synAck(
 
 	buf := gopacket.NewSerializeBuffer()
 	opts := gopacket.SerializeOptions{ComputeChecksums: true, FixLengths: true}
-	require.NoError(t, gopacket.SerializeLayers(buf, opts, eth, ip, tcp))
+	require.NoError(t, gopacket.SerializeLayers(
+		buf, opts, eth, ip.(gopacket.SerializableLayer), tcp,
+	))
 
 	return gopacket.NewPacket(buf.Bytes(), layers.LayerTypeEthernet, gopacket.Default)
 }
@@ -115,23 +129,22 @@ func TestTCPSniffer_DoesNotReinsertEvictedServer(t *testing.T) {
 	assert.Equal(t, 0, seqs.Len())
 }
 
-func TestCanLearnSeq(t *testing.T) {
-	tcs := []struct {
-		ip   string
-		want bool
-	}{
-		{"203.0.113.1", true},
-		{"8.8.8.8", true},
-		{"192.168.1.1", true},
-		{"10.0.0.1", true},
-		{"2001:db8::1", false},
-	}
+func TestTCPSniffer_LearnsFromIPv6SynAck(t *testing.T) {
+	local := &net.TCPAddr{IP: net.ParseIP("2001:db8::11"), Port: 50000}
+	remote := &net.TCPAddr{IP: net.ParseIP("2001:db8:1::1"), Port: 443}
 
-	for _, tc := range tcs {
-		t.Run(tc.ip, func(t *testing.T) {
-			assert.Equal(t, tc.want, CanLearnSeq(net.ParseIP(tc.ip)))
-		})
-	}
+	seqs := NewSeqTracker(time.Minute)
+	ts := newTestSniffer(seqs)
+	ts.hops.Register(ProtoTCP, []net.IP{remote.IP})
+
+	ts.processPacket(context.Background(), synAck(t, remote, local, 52, 7000, 1001))
+
+	hops, ok := learnedHops(ts.hops, ProtoTCP, remote.IP)
+	require.True(t, ok)
+	assert.Equal(t, uint8(12), hops, "hop limit 52 is 12 hops from 64")
+	seq, ok := seqs.Wait(context.Background(), SeqKey(local, remote), 10*time.Millisecond)
+	require.True(t, ok)
+	assert.Equal(t, SeqAck{Seq: 1001, Ack: 7001}, seq)
 }
 
 // learnedHops returns the hop count s learned for ip over p, and whether
