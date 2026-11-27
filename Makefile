@@ -23,10 +23,11 @@ test-network:
 	go test $(ARGS) -race -tags network ./... -v
 
 # Tests named ...RequireRoot. Go builds them as the current user and runs
-# only the test binaries through sudo.
+# only the test binaries through sudo. -p 1 runs one package at a time:
+# the TUN tests of several packages share /dev/tun.
 test-root:
 	$(SUDO) -v
-	go test $(ARGS) -exec "$(SUDO)" -tags network -count=1 -v -run RequireRoot ./internal/...
+	go test $(ARGS) -exec "$(SUDO)" -tags network -count=1 -p 1 -v -run RequireRoot ./internal/...
 
 # End-to-end tests: build spoofdpi, check that it refuses to send fakes
 # without root, then run proxy and TUN mode as root. Pass test flags such as

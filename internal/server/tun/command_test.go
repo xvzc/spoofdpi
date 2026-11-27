@@ -1,4 +1,4 @@
-//go:build darwin || freebsd
+//go:build darwin
 
 package tun
 

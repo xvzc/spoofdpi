@@ -123,7 +123,16 @@ ipv6 = false
 `
 	for _, mode := range []string{"http", "tun"} {
 		t.Run(mode, func(t *testing.T) {
-			cfg, _ := runWithTOML(t, rules, "--ipv6", "--app-mode", mode)
+			// tun mode needs a FIB on FreeBSD.
+			cfg, _ := runWithTOML(
+				t,
+				rules,
+				"--ipv6",
+				"--app-mode",
+				mode,
+				"--freebsd-fib",
+				"2",
+			)
 			require.True(t, cfg.IPv6Enabled())
 			require.Equal(t, DNSQueryAll, cfg.DNS.QType)
 

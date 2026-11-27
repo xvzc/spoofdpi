@@ -45,6 +45,7 @@ func TestCreateCommand_Flags(t *testing.T) {
 				assert.False(t, cfg.HTTPS.Skip)
 				assert.Equal(t, uint8(0), cfg.UDP.FakePreflight)
 				assert.Equal(t, 64, len(cfg.UDP.FakePacket))
+				assert.Equal(t, 0, cfg.App.FreebsdFIB, "freebsd-fib has no default")
 			},
 		},
 		{
@@ -217,6 +218,42 @@ func TestCreateCommand_ConnTimeoutRange(t *testing.T) {
 				assert.Equal(t, tc.want, get(got))
 			})
 		}
+	}
+}
+
+func TestCreateCommand_FreeBSDFIB(t *testing.T) {
+	tcs := []struct {
+		value   string
+		want    int
+		wantErr string
+	}{
+		{value: "0", wantErr: "value 0 out of range[1-15]"},
+		{value: "1", want: 1},
+		{value: "15", want: 15},
+		{value: "16", wantErr: "value 16 out of range[1-15]"},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.value, func(t *testing.T) {
+			var got *Config
+			runFunc := func(ctx context.Context, configDir string, cfg *Config) error {
+				got = cfg
+				return nil
+			}
+
+			cmd := CreateCommand(runFunc, "v0.0.0", "commit", "build")
+			err := cmd.Run(
+				context.Background(),
+				[]string{"spoofdpi", "--clean", "--freebsd-fib", tc.value},
+			)
+			if tc.wantErr != "" {
+				assert.ErrorContains(t, err, tc.wantErr)
+				assert.Nil(t, got)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.Equal(t, tc.want, got.App.FreebsdFIB)
+		})
 	}
 }
 

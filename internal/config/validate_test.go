@@ -266,3 +266,32 @@ func TestCheckLogLevel(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckFreeBSDFIBSet(t *testing.T) {
+	tcs := []struct {
+		name    string
+		goos    string
+		mode    AppModeType
+		fib     int
+		wantErr bool
+	}{
+		{"tun mode on FreeBSD without a FIB", "freebsd", AppModeTUN, 0, true},
+		{"tun mode on FreeBSD with a FIB", "freebsd", AppModeTUN, 2, false},
+		{"http mode on FreeBSD needs no FIB", "freebsd", AppModeHTTP, 0, false},
+		{"socks5 mode on FreeBSD needs no FIB", "freebsd", AppModeSOCKS5, 0, false},
+		{"tun mode on Linux needs no FIB", "linux", AppModeTUN, 0, false},
+		{"tun mode on macOS needs no FIB", "darwin", AppModeTUN, 0, false},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkFreeBSDFIBSet(tc.goos, AppOptions{Mode: tc.mode, FreebsdFIB: tc.fib})
+			if !tc.wantErr {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, "'freebsd-fib' is required in tun mode on FreeBSD")
+			assert.ErrorContains(t, err, "sysctl net.fibs=2")
+			assert.ErrorContains(t, err, "/boot/loader.conf")
+		})
+	}
+}

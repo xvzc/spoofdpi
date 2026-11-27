@@ -1,10 +1,12 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -175,6 +177,9 @@ func (c *Config) Validate() error {
 	if err := checkHopCountRange(c.Conn); err != nil {
 		return err
 	}
+	if err := checkFreeBSDFIBSet(runtime.GOOS, c.App); err != nil {
+		return err
+	}
 	for i, rule := range c.Rules {
 		if err := checkRule(rule); err != nil {
 			return fmt.Errorf("rules[%d]: %w", i, err)
@@ -185,6 +190,22 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// checkFreeBSDFIBSet returns an error when o runs in tun mode on goos
+// FreeBSD without 'freebsd-fib': spoofdpi's own traffic must leave through
+// a FIB of its own there, or the TUN's routes would carry it back into the
+// TUN.
+func checkFreeBSDFIBSet(goos string, o AppOptions) error {
+	if goos != "freebsd" || o.Mode != AppModeTUN || o.FreebsdFIB != 0 {
+		return nil
+	}
+	return errors.New(
+		"'freebsd-fib' is required in tun mode on FreeBSD: set it to a FIB " +
+			"from 1 to net.fibs-1 that only spoofdpi uses; if the system has " +
+			"one FIB (net.fibs=1), add one with 'sysctl net.fibs=2' or " +
+			"net.fibs=\"2\" in /boot/loader.conf",
+	)
 }
 
 func checkHopCountRange(o ConnOptions) error {

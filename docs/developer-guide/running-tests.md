@@ -60,8 +60,10 @@ Run them with `make test-root`. It runs the command below: Go builds the tests a
 
 ```console
 $ sudo -v
-$ go test -exec sudo -tags network -count=1 -v -run RequireRoot ./internal/...
+$ go test -exec sudo -tags network -count=1 -p 1 -v -run RequireRoot ./internal/...
 ```
+
+Keep `-p 1`: it runs one package at a time. The TUN tests of several packages share `/dev/tun`, and on FreeBSD two packages that create a TUN at the same moment make one of them fail and can leave a stale `/dev/tun0` behind.
 
 Running `sudo -v` first caches your credentials, so the test binaries don't each ask for the password. Without a terminal, such as over a non-interactive SSH session, sudo may not cache them; then set `SUDO_ASKPASS` to a program that prints the password and use `-exec "sudo -A"` instead of `-exec sudo`, or pass `SUDO="sudo -A"` to the make targets, such as `make test-root SUDO="sudo -A"`. Keep `-run RequireRoot`: without it, every test in `./internal/...` runs as root.
 
@@ -88,6 +90,8 @@ Proxy mode and TUN mode, as root:
 $ sudo -v
 $ go test -exec sudo -tags e2e -count=1 -v -run RequireRoot ./test/e2e/ -args -bin="$PWD/out/e2e/spoofdpi"
 ```
+
+On FreeBSD, TUN mode runs with `--freebsd-fib` set to the last FIB (`net.fibs` minus 1), or to FIB 15 when there are more, which must have no IPv4 default route. The TUN test skips on a host with one FIB or when that FIB has a default route; add a FIB with `sysctl net.fibs=2` if needed. That FIB must not be used by jails or by services started with `setfib`: the test adds and removes its routes.
 
 TUN mode routes the host's traffic into the TUN for a few seconds. On a remote host, make sure the session survives that, or run it from the console.
 

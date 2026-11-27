@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +76,34 @@ func TestFakeEgress_NonRoot(t *testing.T) {
 
 func listenAddr() string { return fmt.Sprintf("127.0.0.1:%d", *portFlag) }
 
+// tunModeArgs returns the flags TUN mode needs on this OS. On FreeBSD that
+// is --freebsd-fib with the last FIB, or FIB 15, the largest that
+// freebsd-fib takes, which must have no IPv4 default route, as spoofdpi
+// needs a FIB of its own; the test skips otherwise.
+func tunModeArgs(t *testing.T) []string {
+	t.Helper()
+	if runtime.GOOS != "freebsd" {
+		return nil
+	}
+	sysctl := strings.TrimSpace(output("sysctl", "-n", "net.fibs"))
+	fibs, err := strconv.Atoi(sysctl)
+	if err != nil || fibs < 2 {
+		t.Skipf(
+			"TUN mode needs a second FIB (net.fibs: %q): run 'sysctl net.fibs=2'",
+			sysctl,
+		)
+	}
+	fib := strconv.Itoa(min(fibs-1, 15))
+	for _, line := range strings.Split(output("setfib", fib, "netstat", "-rn", "-f", "inet"), "\n") {
+		if strings.HasPrefix(line, "default") {
+			t.Skipf("FIB %s has a default route; TUN mode needs it for "+
+				"spoofdpi alone: raise net.fibs or remove the route", fib)
+		}
+	}
+	t.Logf("freebsd-fib: %s", fib)
+	return []string{"--freebsd-fib", fib}
+}
+
 // runFakeEgress runs spoofdpi in proxy or TUN mode, fetches the URLs, and
 // reports each check as a subtest.
 func runFakeEgress(t *testing.T, tun bool) {
@@ -92,6 +122,11 @@ func runFakeEgress(t *testing.T, tun bool) {
 	}
 	t.Logf("physical interface: %s", phys)
 
+	var tunArgs []string
+	if tun {
+		tunArgs = tunModeArgs(t)
+	}
+
 	// The state a TUN run must restore.
 	before := snapshot()
 	beforePath := filepath.Join(dir, "before.txt")
@@ -102,6 +137,7 @@ func runFakeEgress(t *testing.T, tun bool) {
 	args := []string{"run", "--clean", "--no-tui"}
 	if tun {
 		args = append(args, "--app-mode", "tun", "--auto-configure-network")
+		args = append(args, tunArgs...)
 	} else {
 		args = append(args, "--app-mode", "http", "--listen-addr", listenAddr())
 	}

@@ -5,38 +5,55 @@ package tun
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/executil"
+	"github.com/xvzc/spoofdpi/internal/netif"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/server"
+	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
+// tunIfName is the name of the TUN interface on FreeBSD. CleanLeftovers
+// finds a run that crashed by it.
+const tunIfName = "tun-spoofdpi"
+
+// routeTag is the flag that marks the routes spoofdpi adds, so that
+// CleanLeftovers can tell them from the routes of others with the same
+// shape.
+const routeTag = unix.RTF_PROTO2
+
 type tunNetworkInfoFreeBSD struct {
 	FIBID int
-	// GatewayIP is empty when the default route has no gateway.
-	GatewayIP     string
-	PhysIfaceName string
-	// PhysIfaceCIDR is empty when the FIB needs no subnet route, as
-	// needsFIBSubnetRoute decides.
-	PhysIfaceCIDR string
+	// Gateway is the zero Addr when the default route has no gateway.
+	Gateway        netip.Addr
+	PhysIfaceName  string
+	PhysIfaceIndex int
+	// PhysIfaceSubnet is the zero Prefix when the FIB needs no subnet
+	// route, as needsFIBSubnetRoute decides.
+	PhysIfaceSubnet netip.Prefix
 	// PhysIfaceP2P reports a point-to-point interface, such as PPP.
-	PhysIfaceP2P     bool
-	TUNName          string
-	TunLocalIP       string
-	TunPrefixLen     int
-	RouteTargetCIDRs []string
-	IPv6Enabled      bool
-	HasIPv6Egress    bool
+	PhysIfaceP2P bool
+	// FIBHasSubnetRoute reports that the FIB already has the kernel's
+	// route to PhysIfaceSubnet, as with net.add_addr_allfibs=1.
+	FIBHasSubnetRoute bool
+	TUNName           string
+	TUNIndex          int
+	// TunAddr is the TUN's local address with the prefix length of its
+	// subnet.
+	TunAddr       netip.Prefix
+	RouteTargets  []netip.Prefix
+	IPv6Enabled   bool
+	HasIPv6Egress bool
 }
 
 func createTunDevice() (tun.Device, error) {
-	return tun.CreateTUN("tun-spoofdpi", 1500)
+	return tun.CreateTUN(tunIfName, 1500)
 }
 
 func collectNetworkInfo(
@@ -46,60 +63,140 @@ func collectNetworkInfo(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tunName: %w", err)
 	}
-
-	// Verify the requested FIB is not already in use.
-	if _, err := executil.Commandf(
-		"setfib %d route get default",
-		sysNet.FIBID(),
-	); err == nil {
-		return nil, fmt.Errorf("FIB %d is already in use", sysNet.FIBID())
+	tunIface, err := net.InterfaceByName(tunName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get TUN interface %s: %w", tunName, err)
 	}
 
-	gateway := gatewayIP(sysNet.defaultRoute)
+	fibRoutes, err := route.DumpRoutes(netutil.FamilyV4, sysNet.FIBID())
+	if err != nil {
+		return nil, fmt.Errorf(
+			"failed to read the routes of FIB %d: %w",
+			sysNet.FIBID(),
+			err,
+		)
+	}
+	var gateway netip.Addr
+	if gw := gatewayIP(sysNet.defaultRoute); gw != "" {
+		gateway, err = netip.ParseAddr(gw)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse gateway %s: %w", gw, err)
+		}
+		gateway = gateway.Unmap()
+	}
 	physIfaceP2P := sysNet.defaultRoute.Iface.Flags&net.FlagPointToPoint != 0
-	physIfaceCIDR := ""
+	var physIfaceSubnet netip.Prefix
 	if needsFIBSubnetRoute(physIfaceP2P, gateway) {
-		physIfaceCIDR, err = getInterfaceSubnet(sysNet.defaultRoute.Iface.Name)
+		physIfaceSubnet, err = getInterfaceSubnet(sysNet.defaultRoute.Iface.Name)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get interface subnet: %w", err)
 		}
 	}
+	if err := checkFIBUnused(sysNet.FIBID(), fibRoutes, physIfaceSubnet); err != nil {
+		return nil, err
+	}
+	fibHasSubnetRoute := hasKernelSubnetRoute(
+		fibRoutes,
+		physIfaceSubnet,
+		sysNet.defaultRoute.Iface.Index,
+	)
 
 	cidr, err := route.FindSafeCIDR()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find safe subnet: %w", err)
 	}
-
+	tunSubnet, err := netip.ParsePrefix(cidr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse safe subnet %s: %w", cidr, err)
+	}
 	tunLocalIP, err := route.AddrInCIDR(cidr, 1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get %dth ip in %s: %w", 1, cidr, err)
 	}
-	_, tunNet, err := net.ParseCIDR(cidr)
+	tunLocalAddr, err := netip.ParseAddr(tunLocalIP)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse safe subnet %s: %w", cidr, err)
+		return nil, fmt.Errorf("failed to parse TUN address %s: %w", tunLocalIP, err)
 	}
-	tunPrefixLen, _ := tunNet.Mask.Size()
 
 	// The TUN's own /30 needs no route job: the address below is set with
 	// its prefix length, so the kernel adds the /30 interface route.
-	routeTargetCIDRs := []string{"0.0.0.0/1", "128.0.0.0/1"}
+	routeTargets := mainFIBTargetsV4
 
 	// Runs before the TUN routes exist, so it sees the system's own route.
 	_, hasIPv6Egress := route.IPv6Egress()
 
 	return &tunNetworkInfoFreeBSD{ //exhaustruct:enforce
-		FIBID:            sysNet.FIBID(),
-		GatewayIP:        gateway,
-		PhysIfaceName:    sysNet.defaultRoute.Iface.Name,
-		PhysIfaceCIDR:    physIfaceCIDR,
-		PhysIfaceP2P:     physIfaceP2P,
-		TUNName:          tunName,
-		TunLocalIP:       tunLocalIP,
-		TunPrefixLen:     tunPrefixLen,
-		RouteTargetCIDRs: routeTargetCIDRs,
-		IPv6Enabled:      sysNet.ipv6Enabled,
-		HasIPv6Egress:    hasIPv6Egress,
+		FIBID:             sysNet.FIBID(),
+		Gateway:           gateway,
+		PhysIfaceName:     sysNet.defaultRoute.Iface.Name,
+		PhysIfaceIndex:    sysNet.defaultRoute.Iface.Index,
+		PhysIfaceSubnet:   physIfaceSubnet,
+		PhysIfaceP2P:      physIfaceP2P,
+		FIBHasSubnetRoute: fibHasSubnetRoute,
+		TUNName:           tunName,
+		TUNIndex:          tunIface.Index,
+		TunAddr:           netip.PrefixFrom(tunLocalAddr, tunSubnet.Bits()),
+		RouteTargets:      routeTargets,
+		IPv6Enabled:       sysNet.ipv6Enabled,
+		HasIPv6Egress:     hasIPv6Egress,
 	}, nil
+}
+
+// checkFIBUnused returns an error when fibRoutes, the IPv4 routes of fib,
+// show that fib is not free for this run: it has a default route, or an
+// untagged route to subnet, the physical interface's subnet, which the
+// subnet route job would fail to add. subnet is the zero Prefix when no
+// such job runs. Other routes do not count: the rc scripts add a loopback
+// route to every FIB, and a route that clashes with a job fails that job.
+// The kernel's own route to subnet does not count either, which
+// hasKernelSubnetRoute tells. A default route that CleanLeftovers would
+// have removed means that it could not, and the error tells how to remove
+// it by hand.
+func checkFIBUnused(fib int, fibRoutes []route.TableRoute, subnet netip.Prefix) error {
+	for _, r := range fibRoutes {
+		if r.Dst.Bits() != 0 {
+			if subnet.IsValid() && r.Dst == subnet && !isTaggedRoute(r) &&
+				r.Flags&(unix.RTF_STATIC|unix.RTF_GATEWAY) != 0 {
+				return fmt.Errorf(
+					"FIB %d is already in use: it has the route %s; "+
+						"set freebsd-fib to a FIB that only spoofdpi uses, "+
+						"or remove the route with '%s'",
+					fib, r, manualRouteDelete(fib, r),
+				)
+			}
+			continue
+		}
+		if isTaggedRoute(r) && isFIBRouteShape(r) {
+			return fmt.Errorf(
+				"FIB %d still has the default route %s of an earlier spoofdpi "+
+					"run, which could not be removed; remove it with '%s'",
+				fib, r, manualRouteDelete(fib, r),
+			)
+		}
+		return fmt.Errorf(
+			"FIB %d is already in use: it has the default route %s; "+
+				"set freebsd-fib to a FIB that only spoofdpi uses",
+			fib, r,
+		)
+	}
+	return nil
+}
+
+// hasKernelSubnetRoute reports whether fibRoutes hold the route that the
+// kernel adds for an address of the interface physIndex in subnet, which
+// it adds to every FIB with net.add_addr_allfibs=1.
+func hasKernelSubnetRoute(
+	fibRoutes []route.TableRoute,
+	subnet netip.Prefix,
+	physIndex int,
+) bool {
+	if !subnet.IsValid() {
+		return false
+	}
+	return slices.ContainsFunc(fibRoutes, func(r route.TableRoute) bool {
+		return r.Dst == subnet && r.Index == physIndex &&
+			r.Flags&(unix.RTF_STATIC|unix.RTF_GATEWAY) == 0
+	})
 }
 
 func (n *tunSystemNetworkFreeBSD) BuildJobs() ([]server.NetworkJob, error) {
@@ -107,101 +204,185 @@ func (n *tunSystemNetworkFreeBSD) BuildJobs() ([]server.NetworkJob, error) {
 	if err != nil {
 		return nil, err
 	}
+	rememberRun(runInfo{FIB: info.FIBID, TUNName: info.TUNName, TUNIndex: info.TUNIndex})
 	return buildJobs(info), nil
 }
 
 // buildJobs returns the jobs that route traffic into the TUN described by
-// info.
+// info. Every route they add carries routeTag.
 func buildJobs(info *tunNetworkInfoFreeBSD) []server.NetworkJob {
 	var jobs []server.NetworkJob
 
 	// wireguard-go puts the FreeBSD tun into IFF_BROADCAST mode, so a
-	// destination address would be ignored and ifconfig would fall back to
-	// the classful mask, such as 10.0.0.0/8 for a 10.x.y.z address, which
-	// would then be routed into the TUN. Set the /30 chosen by FindSafeCIDR
-	// explicitly instead.
+	// destination address would be read as the broadcast address. The
+	// address goes without one, with the /30 chosen by FindSafeCIDR as its
+	// netmask. The TUN cannot be destroyed while spoofdpi holds it open, so
+	// the reset only removes the address; closing the TUN at shutdown
+	// destroys it.
 	jobs = append(jobs, server.NetworkJob{
 		Description: "configure TUN interface address",
-		Apply: server.CommandAction{
-			"ifconfig", info.TUNName, "inet",
-			fmt.Sprintf("%s/%d", info.TunLocalIP, info.TunPrefixLen), "up",
-		},
-		Reset: server.CommandAction{"ifconfig", info.TUNName, "destroy"},
+		Apply:       tunAddressAddAction{Name: info.TUNName, Addr: info.TunAddr},
+		Reset:       tunAddressDeleteAction{Name: info.TUNName, Addr: info.TunAddr.Addr()},
 	})
 
-	fib := strconv.Itoa(info.FIBID)
-	if needsFIBSubnetRoute(info.PhysIfaceP2P, info.GatewayIP) {
-		jobs = append(jobs, server.NetworkJob{
-			Description: "add FIB subnet route",
-			Apply: server.CommandAction{
-				"route", "add", "-net", info.PhysIfaceCIDR,
-				"-iface", info.PhysIfaceName, "-fib", fib,
+	// With the kernel's own route to the subnet in the FIB, the job would
+	// fail as a duplicate, and its reset would delete the kernel's route.
+	if needsFIBSubnetRoute(info.PhysIfaceP2P, info.Gateway) && !info.FIBHasSubnetRoute {
+		jobs = append(jobs, routeJob(
+			"add FIB subnet route",
+			info.FIBID,
+			route.TableRoute{
+				Dst:         info.PhysIfaceSubnet,
+				GatewayLink: info.PhysIfaceIndex,
+				IfName:      info.PhysIfaceName,
+				Flags:       routeTag,
 			},
-			Reset: server.CommandAction{
-				"route", "delete", "-net", info.PhysIfaceCIDR,
-				"-iface", info.PhysIfaceName, "-fib", fib,
-			},
-		})
+		))
 	}
 
 	// Without a gateway, the FIB default route leaves through the
 	// interface itself.
-	fibDefaultTarget := []string{info.GatewayIP}
-	if info.GatewayIP == "" {
-		fibDefaultTarget = []string{"-interface", info.PhysIfaceName}
+	fibDefault := route.TableRoute{
+		Dst:     netip.PrefixFrom(netip.IPv4Unspecified(), 0),
+		Gateway: info.Gateway,
+		Flags:   routeTag,
 	}
-	jobs = append(jobs, server.NetworkJob{
-		Description: "add FIB default route",
-		Apply: server.CommandAction(slices.Concat(
-			[]string{"route", "add", "default"},
-			fibDefaultTarget,
-			[]string{"-fib", fib},
-		)),
-		Reset: server.CommandAction{"route", "delete", "default", "-fib", fib},
-	})
+	if !info.Gateway.IsValid() {
+		fibDefault.GatewayLink = info.PhysIfaceIndex
+		fibDefault.IfName = info.PhysIfaceName
+	}
+	jobs = append(jobs, routeJob("add FIB default route", info.FIBID, fibDefault))
 
-	for _, t := range info.RouteTargetCIDRs {
-		jobs = append(jobs, server.NetworkJob{
-			Description: fmt.Sprintf("add CIDR route %s via TUN", t),
-			Apply: server.CommandAction{
-				"route", "-n", "add", "-net", t, "-interface", info.TUNName,
-			},
-			Reset: server.CommandAction{
-				"route", "-n", "delete", "-net", t, "-interface", info.TUNName,
-			},
-		})
+	for _, t := range info.RouteTargets {
+		jobs = append(jobs, routeJob(
+			fmt.Sprintf("add CIDR route %s via TUN", t),
+			mainFIB,
+			tunRoute(t, info),
+		))
 	}
 
 	// Without --ipv6, IPv6 is left to the system's routes. With it, the TUN
 	// server refuses IPv6, so applications fall back to IPv4. The route is
 	// optional: IPv4 keeps working without it.
 	if info.IPv6Enabled && info.HasIPv6Egress {
-		jobs = append(jobs, server.NetworkJob{
-			Description: fmt.Sprintf("add IPv6 route %s via TUN", ipv6CaptureCIDR),
-			Apply: server.CommandAction{
-				"route", "-n", "add", "-inet6", "-net", ipv6CaptureCIDR,
-				"-interface", info.TUNName,
-			},
-			Reset: server.CommandAction{
-				"route", "-n", "delete", "-inet6", "-net", ipv6CaptureCIDR,
-				"-interface", info.TUNName,
-			},
-			Optional: true,
-			Warning:  ipv6RejectWarning,
-		})
+		job := routeJob(
+			fmt.Sprintf("add IPv6 route %s via TUN", ipv6CaptureCIDR),
+			mainFIB,
+			tunRoute(mainFIBTargetV6, info),
+		)
+		job.Optional = true
+		job.Warning = ipv6RejectWarning
+		jobs = append(jobs, job)
 	}
 
 	return jobs
 }
 
+// mainFIB is the FIB of the processes that do not set one, whose traffic
+// the TUN captures.
+const mainFIB = 0
+
+// mainFIBTargetsV4 are the IPv4 destinations routed into the TUN in the
+// main FIB. Together they cover all addresses, and each is longer than the
+// default route, so they win over it without replacing it.
+var mainFIBTargetsV4 = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/1"),
+	netip.MustParsePrefix("128.0.0.0/1"),
+}
+
+// mainFIBTargetV6 is ipv6CaptureCIDR as a prefix.
+var mainFIBTargetV6 = netip.MustParsePrefix(ipv6CaptureCIDR)
+
+// tunRoute returns the tagged route of dst through the TUN of info, as
+// `route add -net dst -interface tun` adds it.
+func tunRoute(dst netip.Prefix, info *tunNetworkInfoFreeBSD) route.TableRoute {
+	return route.TableRoute{
+		Dst:         dst,
+		GatewayLink: info.TUNIndex,
+		IfName:      info.TUNName,
+		Flags:       routeTag,
+	}
+}
+
+// routeJob returns the job that adds r to fib and deletes it again. The
+// delete carries the gateway of r, so it removes only that route.
+func routeJob(description string, fib int, r route.TableRoute) server.NetworkJob {
+	return server.NetworkJob{
+		Description: description,
+		Apply:       routeAddAction{FIB: fib, Route: r},
+		Reset:       routeDeleteAction{FIB: fib, Route: r},
+	}
+}
+
+// routeAddAction adds Route to the routing table of FIB.
+type routeAddAction struct {
+	FIB   int
+	Route route.TableRoute
+}
+
+func (a routeAddAction) Run() error {
+	return route.AddRoute(a.FIB, a.Route)
+}
+
+func (a routeAddAction) String() string {
+	return fmt.Sprintf("add route %s to fib %d", a.Route, a.FIB)
+}
+
+// routeDeleteAction deletes Route from the routing table of FIB.
+type routeDeleteAction struct {
+	FIB   int
+	Route route.TableRoute
+}
+
+func (a routeDeleteAction) Run() error {
+	return route.DeleteRoute(a.FIB, a.Route)
+}
+
+func (a routeDeleteAction) String() string {
+	return fmt.Sprintf("delete route %s from fib %d", a.Route, a.FIB)
+}
+
+// tunAddressAddAction sets Addr on the interface Name and brings it up, as
+// `ifconfig Name inet Addr up` does.
+type tunAddressAddAction struct {
+	Name string
+	Addr netip.Prefix
+}
+
+func (a tunAddressAddAction) Run() error {
+	if err := netif.AddAddr4(a.Name, a.Addr, netip.Addr{}); err != nil {
+		return err
+	}
+	return netif.SetUp(a.Name)
+}
+
+func (a tunAddressAddAction) String() string {
+	return fmt.Sprintf("set address %s on %s and bring it up", a.Addr, a.Name)
+}
+
+// tunAddressDeleteAction deletes Addr from the interface Name, which also
+// removes the route to its subnet.
+type tunAddressDeleteAction struct {
+	Name string
+	Addr netip.Addr
+}
+
+func (a tunAddressDeleteAction) Run() error {
+	return netif.DelAddr4(a.Name, a.Addr)
+}
+
+func (a tunAddressDeleteAction) String() string {
+	return fmt.Sprintf("delete address %s from %s", a.Addr, a.Name)
+}
+
 // needsFIBSubnetRoute reports whether the FIB needs a route to the
 // physical interface's subnet, given whether the interface is
-// point-to-point and its gateway, empty when there is none. A
+// point-to-point and its gateway, the zero Addr when there is none. A
 // point-to-point interface without a gateway reaches the internet through
 // the interface itself, so its subnet needs no route; with a gateway, the
 // FIB keeps the subnet route that reaches that gateway.
-func needsFIBSubnetRoute(physIfaceP2P bool, gatewayIP string) bool {
-	return !physIfaceP2P || gatewayIP != ""
+func needsFIBSubnetRoute(physIfaceP2P bool, gateway netip.Addr) bool {
+	return !physIfaceP2P || gateway.IsValid()
 }
 
 type tunSystemNetworkFreeBSD struct {
@@ -213,13 +394,23 @@ type tunSystemNetworkFreeBSD struct {
 }
 
 // NewTUNSystemNetwork creates a new TUNSystemNetwork for TUN mode on
-// FreeBSD. IPv6 is routed into the TUN only when ipv6Enabled is set.
+// FreeBSD, which routes spoofdpi's own traffic through FIB fibID. It fails
+// when the kernel has no such FIB. IPv6 is routed into the TUN only when
+// ipv6Enabled is set.
 func NewTUNSystemNetwork(
 	logger zerolog.Logger,
 	defaultRoute *route.Route,
 	fibID int,
 	ipv6Enabled bool,
 ) (TUNSystemNetwork, error) {
+	fibs, err := unix.SysctlUint32("net.fibs")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read net.fibs: %w", err)
+	}
+	if err := checkFIBNumber(fibID, int(fibs)); err != nil {
+		return nil, err
+	}
+
 	dev, err := createTunDevice()
 	if err != nil {
 		return nil, err
@@ -232,6 +423,21 @@ func NewTUNSystemNetwork(
 		fibID:        fibID,
 		ipv6Enabled:  ipv6Enabled,
 	}, nil
+}
+
+// checkFIBNumber returns an error unless fib is a FIB other than the main
+// one among the fibs FIBs of the kernel (net.fibs).
+func checkFIBNumber(fib, fibs int) error {
+	if fib >= 1 && fib < fibs {
+		return nil
+	}
+	return fmt.Errorf(
+		"freebsd-fib %d is not available: the kernel has %d FIBs (net.fibs), "+
+			"and spoofdpi needs one of FIBs 1 to net.fibs-1 for itself alone; "+
+			"to add FIBs, run 'sysctl net.fibs=%d' or set net.fibs in "+
+			"/boot/loader.conf",
+		fib, fibs, max(fib+1, 2),
+	)
 }
 
 func (n *tunSystemNetworkFreeBSD) TunDevice() tun.Device {
@@ -326,25 +532,26 @@ func (n *tunSystemNetworkFreeBSD) BindDialer(
 	return nil
 }
 
-func getInterfaceSubnet(ifaceName string) (string, error) {
+// getInterfaceSubnet returns the subnet of the first IPv4 address of the
+// interface ifaceName.
+func getInterfaceSubnet(ifaceName string) (netip.Prefix, error) {
 	iface, err := net.InterfaceByName(ifaceName)
 	if err != nil {
-		return "", fmt.Errorf("failed to get interface %s: %w", ifaceName, err)
+		return netip.Prefix{}, fmt.Errorf("failed to get interface %s: %w", ifaceName, err)
 	}
 
 	addrs, err := iface.Addrs()
 	if err != nil {
-		return "", fmt.Errorf("failed to get interface addresses: %w", err)
+		return netip.Prefix{}, fmt.Errorf("failed to get interface addresses: %w", err)
 	}
 
 	for _, addr := range addrs {
 		if ipnet, ok := addr.(*net.IPNet); ok && ipnet.IP.To4() != nil {
-			network := ipnet.IP.Mask(ipnet.Mask)
+			ip, _ := netip.AddrFromSlice(ipnet.IP.To4())
 			ones, _ := ipnet.Mask.Size()
-			subnet := fmt.Sprintf("%s/%d", network.String(), ones)
-			return subnet, nil
+			return netip.PrefixFrom(ip, ones).Masked(), nil
 		}
 	}
 
-	return "", fmt.Errorf("no IPv4 address found on interface %s", ifaceName)
+	return netip.Prefix{}, fmt.Errorf("no IPv4 address found on interface %s", ifaceName)
 }

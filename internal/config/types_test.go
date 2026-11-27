@@ -53,6 +53,23 @@ func TestAppOptions_UnmarshalTOML(t *testing.T) {
 			input:   map[string]any{"ipv6": "yes"},
 			wantErr: true,
 		},
+		{
+			name:  "freebsd-fib",
+			input: map[string]any{"freebsd-fib": int64(4)},
+			assert: func(t *testing.T, o AppOptions) {
+				assert.Equal(t, 4, o.FreebsdFIB)
+			},
+		},
+		{
+			name:    "freebsd-fib 0 is not a FIB of its own",
+			input:   map[string]any{"freebsd-fib": int64(0)},
+			wantErr: true,
+		},
+		{
+			name:    "freebsd-fib out of range",
+			input:   map[string]any{"freebsd-fib": int64(16)},
+			wantErr: true,
+		},
 	}
 
 	for _, tc := range tcs {

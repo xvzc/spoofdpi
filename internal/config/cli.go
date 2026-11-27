@@ -32,7 +32,7 @@ func DefaultConfig() *Config { //exhaustruct:enforce
 			AutoConfigureNetwork: false,
 			Mode:                 AppModeHTTP,
 			ListenAddr:           net.TCPAddr{},
-			FreebsdFIB:           1,
+			FreebsdFIB:           0,
 			IPv6:                 false,
 		},
 		Rules: nil,
@@ -503,11 +503,10 @@ func CreateCommand(
 
 				&cli.Int64Flag{
 					Name: "freebsd-fib",
-					Usage: fmt.Sprintf(`
-				FIB ID for FreeBSD routing table (1-15). (default: %v)`,
-						1,
-					),
-					Value:     1,
+					Usage: `
+				FIB (1-15) that spoofdpi's own traffic uses in tun mode on
+				FreeBSD. Required there; the FIB must be used by spoofdpi alone`,
+					Value:     0,
 					OnlyOnce:  true,
 					Validator: checkFreeBSDFibID,
 					Action: func(ctx context.Context, cmd *cli.Command, v int64) error {

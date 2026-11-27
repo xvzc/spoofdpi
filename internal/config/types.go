@@ -31,7 +31,9 @@ type AppOptions struct {
 	AutoConfigureNetwork bool          `toml:"auto-configure-network"`
 	Mode                 AppModeType   `toml:"mode"`
 	ListenAddr           net.TCPAddr   `toml:"listen-addr"`
-	FreebsdFIB           int           `toml:"freebsd-fib"` // FreeBSD only: FIB ID for routing (2-15)
+	// FreebsdFIB is the FIB of spoofdpi's own traffic in tun mode on
+	// FreeBSD (1-15), or 0 when it is not set. It is required there.
+	FreebsdFIB int `toml:"freebsd-fib"`
 	// IPv6 is the global ipv6 option. Rules inherit it unless they set
 	// their own; RuntimeConfig.IPv6 holds the value a connection uses.
 	IPv6 bool `toml:"ipv6"`
