@@ -274,6 +274,7 @@ func (c *connectConn) resolveDestination(ctx context.Context) error {
 			resolved, err := h.resolver.Resolve(ctx, &nameCfg.DNS, name)
 			if err != nil {
 				logger.Error().Str("domain", req.FQDN).Err(err).Msgf("dns lookup failed")
+				_ = proto.SOCKS5HostUnreachableResponse().Write(c.conn)
 				return err
 			}
 			addrs = netutil.IPsFromAddrs(resolved)

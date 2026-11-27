@@ -692,6 +692,47 @@ func TestHTTPProxy_HandleNewConnection_PlainRequestClosesConn(t *testing.T) {
 	assert.Len(t, resolver.lookups, 2, "each request is looked up")
 }
 
+// A second request pipelined on the conn of an allowed first one does not
+// reach the host that a rule blocks.
+func TestHTTPProxy_HandleNewConnection_PipelinedRequestToBlockedHost(t *testing.T) {
+	origin, accepted, reqs := startHTTPOrigin(t)
+	resolver := &fakeResolver{addrs: []netip.Addr{netip.MustParseAddr("127.0.0.1")}}
+	rs := rule.NewRuleSet()
+	require.NoError(t, rs.Add(&config.Rule{
+		Name:     "block second",
+		Priority: 10,
+		Block:    true,
+		Match:    &config.MatchAttrs{Domains: []string{"second.test"}},
+	}))
+	p := newTestProxy(
+		zerolog.Nop(),
+		resolver,
+		rs,
+		&config.RuntimeConfig{},
+		net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1},
+	)
+
+	client, done := runConn(t, p)
+	_, err := client.Write([]byte(
+		getRequest("first.test", origin.Port, "/one") +
+			getRequest("second.test", origin.Port, "/two"),
+	))
+	require.NoError(t, err)
+
+	_, err = io.ReadAll(client)
+	require.NoError(t, err)
+	<-done
+
+	assert.Equal(t, "/one", (<-reqs).URL.Path)
+	assert.Len(t, resolver.lookups, 1, "the second request is not looked up")
+	assert.Equal(t, int32(1), accepted.Load())
+	select {
+	case fwd := <-reqs:
+		t.Fatalf("the second request reached the origin: %s", fwd.URL)
+	default:
+	}
+}
+
 // A request that upgrades the conn is forwarded as is, and then the conns
 // are tunneled.
 func TestHTTPProxy_HandleNewConnection_PlainUpgradeTunnels(t *testing.T) {
