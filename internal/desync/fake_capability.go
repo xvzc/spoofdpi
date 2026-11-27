@@ -18,8 +18,13 @@ type FakeCapability interface {
 // Kinds of FakesOffError. Each names one cause, whatever destination or
 // interface it is reported for.
 const (
-	// FakesOffIPv6Unsupported: fake packets are not sent over IPv6.
+	// FakesOffIPv6Unsupported: the app mode sends no fake packets over
+	// IPv6.
 	FakesOffIPv6Unsupported = "ipv6-unsupported"
+	// FakesOffIPv6Disabled: IPv6 is off for the run, so it has no egress.
+	FakesOffIPv6Disabled = "ipv6-disabled"
+	// FakesOffIPv6NoSender: the sender of IPv6 fake packets did not open.
+	FakesOffIPv6NoSender = "ipv6-no-sender"
 )
 
 // FakesOffError says that fake packets are off for an address family, or

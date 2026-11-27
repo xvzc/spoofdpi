@@ -334,6 +334,10 @@ var osStackOpeners = stackOpeners{
 	udp:    desync.OpenUDPStack,
 }
 
+// setupNetworkStack opens, with open, the senders and the stacks of the
+// fake packets that cfg sends, if it sends any. fakesV6 says why fake
+// packets are off for IPv6, or is nil when they are sent to IPv6 servers;
+// it is meaningful only when a stack is returned.
 func setupNetworkStack(
 	ctx context.Context,
 	logger zerolog.Logger,
@@ -344,6 +348,7 @@ func setupNetworkStack(
 	tcpStack *desync.TCPStack,
 	udpStack *desync.UDPStack,
 	hops *desync.HopStore,
+	fakesV6 error,
 	err error,
 ) {
 	if !cfg.NeedsNetworkStack() {
@@ -353,7 +358,7 @@ func setupNetworkStack(
 	runID, _ := logging.TraceIDFromContext(ctx)
 	hops = desync.NewHopStore()
 
-	senders, err := openFakeSenders(logger, cfg, startup, open.sender)
+	senders, fakesV6, err := openFakeSenders(logger, cfg, startup, open.sender)
 	if err != nil {
 		return
 	}
@@ -453,7 +458,8 @@ func familyNames(fams netutil.FamilySet) []string {
 type openSenderFunc func(fam netutil.Family, opts inject.Options) (inject.Sender, error)
 
 // openFakeSenders opens, with open, the senders of the fake packets of
-// the families that startup has an egress for. It fails if the IPv4
+// the families that startup has an egress for, and returns why fake
+// packets are off for IPv6, as fakesOffV6 does. It fails if the IPv4
 // sender does not open. The IPv6 sender is opened outside TUN mode only,
 // as TUN mode does not carry IPv6 traffic; when it does not open, a
 // warning is logged and IPv6 has no sender.
@@ -462,14 +468,14 @@ func openFakeSenders(
 	cfg *config.Config,
 	startup startupNet,
 	open openSenderFunc,
-) (desync.Senders, error) {
+) (senders desync.Senders, fakesV6 error, err error) {
 	v4, err := open(netutil.FamilyV4, fakeSenderOptions(cfg, &startup.V4.Route))
 	if err != nil {
-		return desync.Senders{}, fakeSenderError(err)
+		return desync.Senders{}, nil, fakeSenderError(err)
 	}
-	senders := desync.Senders{V4: v4}
+	senders = desync.Senders{V4: v4}
 	if startup.V6 == nil || cfg.App.Mode == config.AppModeTUN {
-		return senders, nil
+		return senders, fakesOffV6(cfg, startup, nil), nil
 	}
 
 	v6, err := open(netutil.FamilyV6, fakeSenderOptions(cfg, &startup.V6.Route))
@@ -478,10 +484,38 @@ func openFakeSenders(
 			Err(err).
 			Msg("failed to open the IPv6 fake packet sender; " +
 				"fake packets are off for IPv6")
-		return senders, nil
+		return senders, fakesOffV6(cfg, startup, err), nil
 	}
 	senders.V6 = v6
-	return senders, nil
+	return senders, nil, nil
+}
+
+// fakesOffV6 returns why fake packets are off for IPv6, or nil when they
+// are sent to IPv6 servers: when startup has an IPv6 egress, the mode is
+// not TUN, and the IPv6 sender opened. senderErr is why the IPv6 sender
+// did not open, or nil.
+func fakesOffV6(cfg *config.Config, startup startupNet, senderErr error) error {
+	off := func(kind, reason string) error {
+		return &desync.FakesOffError{Family: netutil.FamilyV6, Kind: kind, Reason: reason}
+	}
+	switch {
+	case startup.V6 == nil && startup.IPv6Off == ipv6OffNoRoute:
+		return off(desync.FakesOffIPv6Disabled, "no usable IPv6 route was found")
+	case startup.V6 == nil:
+		return off(desync.FakesOffIPv6Disabled, "IPv6 is not enabled")
+	case cfg.App.Mode == config.AppModeTUN:
+		return off(
+			desync.FakesOffIPv6Unsupported,
+			"IPv6 fakes are not supported in TUN mode yet",
+		)
+	case senderErr != nil:
+		return off(
+			desync.FakesOffIPv6NoSender,
+			"the IPv6 sender did not open: "+senderErr.Error(),
+		)
+	default:
+		return nil
+	}
 }
 
 // fakeSenderOptions returns the options of the raw sockets of rt's family
@@ -647,8 +681,9 @@ func createServer(
 		tcpStack *desync.TCPStack
 		udpStack *desync.UDPStack
 		hops     *desync.HopStore
+		fakesV6  error
 	)
-	tcpStack, udpStack, hops, err = setupNetworkStack(
+	tcpStack, udpStack, hops, fakesV6, err = setupNetworkStack(
 		appctx,
 		logger,
 		startup,
@@ -661,7 +696,7 @@ func createServer(
 	if cfg.NeedsNetworkStack() {
 		logger.Info().
 			Str("v4", "on").
-			Str("v6", fakesState(startup.FakesV6)).
+			Str("v6", fakesState(fakesV6)).
 			Str("pinned", fakesPinning(runtime.GOOS, cfg, defaultRoute)).
 			Msg("fake packets")
 	}
@@ -678,7 +713,7 @@ func createServer(
 		udpWriter desync.Writer
 		udpCaps   desync.FakeCapability
 	)
-	fakeGate := desync.NewStaticGate(nil, startup.FakesV6)
+	fakeGate := desync.NewStaticGate(nil, fakesV6)
 	if tcpStack != nil {
 		tcpHops, tcpWriter, seqs = hops, tcpStack.Writer, tcpStack
 		tcpCaps = fakeGate

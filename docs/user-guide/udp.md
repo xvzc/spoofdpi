@@ -38,11 +38,11 @@ Specifies the number of fake packets to be sent before actual UDP packets. `(def
 
 Sending fake packets can trick DPI systems into inspecting invalid traffic, allowing real packets to pass through.
 
-Fake packets are not sent to a server found to be on the local link (0 hops away), since they would reach it no matter their TTL. spoofdpi logs a warning with the server's address the first time it skips them for a server. The hop count is learned from the server's replies, so the first flow to a new server still sends them; use a [rule](rules.md) to turn them off for such servers.
+Fake packets are not sent to a server found to be on the local link (0 hops away), since they would reach it no matter their TTL. spoofdpi logs a warning with the server's address the first time it skips them for a server. They are not sent to a link-local or multicast address either, such as `fe80::/10`, `169.254.0.0/16` or `224.0.0.0/4`, from the first flow on; spoofdpi logs this at debug level only. The hop count is learned from the server's replies, so the first flow to a new server still sends them; use a [rule](rules.md) to turn them off for such servers.
 
 On an interface whose link type spoofdpi cannot capture on (it supports Ethernet, loopback, raw IP, and PPP), no hop counts are learned: spoofdpi logs a warning at startup and fake packets use the default hop count.
 
-Fake packets are sent to IPv4 servers only for now. For an IPv6 server they are skipped, and spoofdpi logs a warning the first time it skips them.
+Fake packets are sent to IPv6 servers too in the HTTP and SOCKS5 modes, when [`ipv6`](app.md#ipv6) is enabled and spoofdpi finds an IPv6 route at startup. TUN mode does not send them to IPv6 servers yet. When fake packets are off for IPv6, for one of these reasons or because the raw socket for IPv6 cannot be opened, they are skipped for IPv6 servers. spoofdpi logs why in the `fake packets` line at startup, and logs a warning the first time it skips them.
 
 Fake packets go out through a raw IP socket on every OS and follow the system's route to the internet, which needs no gateway: a default route through a point-to-point interface, such as PPP, works. In TUN mode, fake packets are pinned to the interface of the system's route found at startup, as spoofdpi's own connections are: on Linux the socket is bound to the interface and marked, on macOS it is bound to the interface, and on FreeBSD it uses the FIB set by [`freebsd-fib`](app.md#freebsd-fib), whose default route goes through that interface. In the HTTP and SOCKS5 modes, the system routes them. spoofdpi does not detect VPNs: fake packets that go into a VPN's tunnel do not reach the censor (see [Conflicts with a VPN](app.md#conflicts-with-a-vpn)).
 

@@ -15,7 +15,9 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
-// udpPacket builds an Ethernet/IPv4/UDP packet from src to dst.
+// udpPacket builds an Ethernet/IP/UDP packet from src to dst, over IPv4
+// with TTL ttl, or over IPv6 with hop limit ttl when src is an IPv6
+// address.
 func udpPacket(t *testing.T, src, dst net.IP, ttl uint8) gopacket.Packet {
 	t.Helper()
 
@@ -24,12 +26,22 @@ func udpPacket(t *testing.T, src, dst net.IP, ttl uint8) gopacket.Packet {
 		DstMAC:       net.HardwareAddr{6, 7, 8, 9, 10, 11},
 		EthernetType: layers.EthernetTypeIPv4,
 	}
-	ip := &layers.IPv4{
+	var ip gopacket.NetworkLayer = &layers.IPv4{
 		Version:  4,
 		TTL:      ttl,
 		Protocol: layers.IPProtocolUDP,
 		SrcIP:    src.To4(),
 		DstIP:    dst.To4(),
+	}
+	if src.To4() == nil {
+		eth.EthernetType = layers.EthernetTypeIPv6
+		ip = &layers.IPv6{
+			Version:    6,
+			HopLimit:   ttl,
+			NextHeader: layers.IPProtocolUDP,
+			SrcIP:      src,
+			DstIP:      dst,
+		}
 	}
 	udp := &layers.UDP{SrcPort: 443, DstPort: 50000}
 	require.NoError(t, udp.SetNetworkLayerForChecksum(ip))
@@ -38,7 +50,9 @@ func udpPacket(t *testing.T, src, dst net.IP, ttl uint8) gopacket.Packet {
 	opts := gopacket.SerializeOptions{ComputeChecksums: true, FixLengths: true}
 	require.NoError(
 		t,
-		gopacket.SerializeLayers(buf, opts, eth, ip, udp, gopacket.Payload("x")),
+		gopacket.SerializeLayers(
+			buf, opts, eth, ip.(gopacket.SerializableLayer), udp, gopacket.Payload("x"),
+		),
 	)
 
 	return gopacket.NewPacket(buf.Bytes(), layers.LayerTypeEthernet, gopacket.Default)

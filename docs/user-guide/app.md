@@ -125,7 +125,7 @@ A [rule](rules.md#rule-fields) can set its own `ipv6`; a rule that does not set 
 
 With this option off, only DNS and the IPv6 handling are off: an IPv6 literal requested through the HTTP or SOCKS5 proxy, such as `[2001:db8::1]`, is still connected to. To keep a site on IPv4, set `ipv6 = false` in its rule (see [IPv6](rules.md#ipv6)).
 
-When IPv6 is enabled, by this option or, outside TUN mode, by a rule that sets `ipv6 = true`, spoofdpi looks up the IPv6 route to the internet at startup, in every mode, and logs its interface. The route needs no gateway.
+When IPv6 is enabled, by this option or, outside TUN mode, by a rule that sets `ipv6 = true`, spoofdpi looks up the IPv6 route to the internet at startup, in every mode, and logs its interface. The route needs no gateway. In the HTTP and SOCKS5 modes, fake packets are then sent to IPv6 servers too (see [`fake-preflight`](tls.md#fake-preflight)).
 
 When spoofdpi finds no usable IPv6 route (the system has none, or the routing table cannot be read), it logs a warning and runs with IPv6 disabled, as if this option and every rule's `ipv6` were off: DNS lookups ask for A records only, TUN mode routes no IPv6 into the TUN interface, and `ipv6 = true` in a rule has no effect. A rule with `ipv6 = false` still keeps its site on IPv4.
 

@@ -98,13 +98,92 @@ func TestFakesState(t *testing.T) {
 	assert.Equal(t, "on", fakesState(nil))
 	assert.Equal(
 		t,
-		"off: IPv6 fakes are not supported yet",
+		"off: IPv6 fakes are not supported in TUN mode yet",
 		fakesState(&desync.FakesOffError{
 			Family: netutil.FamilyV6,
-			Reason: "IPv6 fakes are not supported yet",
+			Kind:   desync.FakesOffIPv6Unsupported,
+			Reason: "IPv6 fakes are not supported in TUN mode yet",
 		}),
 	)
 	assert.Equal(t, "off: boom", fakesState(errors.New("boom")))
+}
+
+func TestFakesOffV6(t *testing.T) {
+	egress6 := &route.Egress{Route: route.Route{
+		Family: netutil.FamilyV6,
+		Iface:  net.Interface{Index: 1, Name: "en0"},
+	}}
+	withMode := func(mode config.AppModeType) *config.Config {
+		cfg := config.DefaultConfig()
+		cfg.App.Mode = mode
+		return cfg
+	}
+	senderErr := errors.New("listen ip6:tcp: protocol not available")
+
+	tcs := []struct {
+		name       string
+		cfg        *config.Config
+		startup    startupNet
+		senderErr  error
+		wantKind   string
+		wantReason string
+	}{
+		{
+			name:    "http with an ipv6 egress and sender",
+			cfg:     withMode(config.AppModeHTTP),
+			startup: startupNet{V6: egress6},
+		},
+		{
+			name:    "socks5 with an ipv6 egress and sender",
+			cfg:     withMode(config.AppModeSOCKS5),
+			startup: startupNet{V6: egress6},
+		},
+		{
+			name:       "tun",
+			cfg:        withMode(config.AppModeTUN),
+			startup:    startupNet{V6: egress6},
+			wantKind:   desync.FakesOffIPv6Unsupported,
+			wantReason: "IPv6 fakes are not supported in TUN mode yet",
+		},
+		{
+			name:       "ipv6 sender failed",
+			cfg:        withMode(config.AppModeHTTP),
+			startup:    startupNet{V6: egress6},
+			senderErr:  senderErr,
+			wantKind:   desync.FakesOffIPv6NoSender,
+			wantReason: "the IPv6 sender did not open: " + senderErr.Error(),
+		},
+		{
+			name:       "ipv6 not enabled",
+			cfg:        withMode(config.AppModeHTTP),
+			wantKind:   desync.FakesOffIPv6Disabled,
+			wantReason: "IPv6 is not enabled",
+		},
+		{
+			name:       "ipv6 turned off for want of a route",
+			cfg:        withMode(config.AppModeSOCKS5),
+			startup:    startupNet{IPv6Off: ipv6OffNoRoute},
+			wantKind:   desync.FakesOffIPv6Disabled,
+			wantReason: "no usable IPv6 route was found",
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			err := fakesOffV6(tc.cfg, tc.startup, tc.senderErr)
+
+			if tc.wantKind == "" {
+				assert.NoError(t, err)
+				return
+			}
+			var off *desync.FakesOffError
+			require.ErrorAs(t, err, &off)
+			assert.Equal(t, netutil.FamilyV6, off.Family)
+			assert.Equal(t, tc.wantKind, off.Kind)
+			assert.Equal(t, tc.wantReason, off.Reason)
+			assert.Equal(t, "off: "+tc.wantReason, fakesState(err),
+				"the startup line says why")
+		})
+	}
 }
 
 func TestEgressIfaces(t *testing.T) {
@@ -200,13 +279,17 @@ func TestOpenFakeSenders(t *testing.T) {
 		fail     map[netutil.Family]error
 		wantOpen []netutil.Family
 		wantV6   bool
-		wantWarn bool
+		// wantOffKind is the kind of the reason fakes are off for IPv6,
+		// or "" when they are on.
+		wantOffKind string
+		wantWarn    bool
 	}{
 		{
-			name:     "ipv4 only",
-			cfg:      withMode(config.AppModeHTTP),
-			startup:  startupNet{V4: egress},
-			wantOpen: []netutil.Family{netutil.FamilyV4},
+			name:        "ipv4 only",
+			cfg:         withMode(config.AppModeHTTP),
+			startup:     startupNet{V4: egress},
+			wantOpen:    []netutil.Family{netutil.FamilyV4},
+			wantOffKind: desync.FakesOffIPv6Disabled,
 		},
 		{
 			name:     "ipv6 egress in a proxy mode",
@@ -216,18 +299,20 @@ func TestOpenFakeSenders(t *testing.T) {
 			wantV6:   true,
 		},
 		{
-			name:     "ipv6 egress in TUN mode",
-			cfg:      withMode(config.AppModeTUN),
-			startup:  startupNet{V4: egress, V6: egress6},
-			wantOpen: []netutil.Family{netutil.FamilyV4},
+			name:        "ipv6 egress in TUN mode",
+			cfg:         withMode(config.AppModeTUN),
+			startup:     startupNet{V4: egress, V6: egress6},
+			wantOpen:    []netutil.Family{netutil.FamilyV4},
+			wantOffKind: desync.FakesOffIPv6Unsupported,
 		},
 		{
-			name:     "ipv6 sender failure is not fatal",
-			cfg:      withMode(config.AppModeHTTP),
-			startup:  startupNet{V4: egress, V6: egress6},
-			fail:     map[netutil.Family]error{netutil.FamilyV6: failed},
-			wantOpen: []netutil.Family{netutil.FamilyV4},
-			wantWarn: true,
+			name:        "ipv6 sender failure is not fatal",
+			cfg:         withMode(config.AppModeHTTP),
+			startup:     startupNet{V4: egress, V6: egress6},
+			fail:        map[netutil.Family]error{netutil.FamilyV6: failed},
+			wantOpen:    []netutil.Family{netutil.FamilyV4},
+			wantOffKind: desync.FakesOffIPv6NoSender,
+			wantWarn:    true,
 		},
 	}
 	for _, tc := range tcs {
@@ -235,7 +320,7 @@ func TestOpenFakeSenders(t *testing.T) {
 			var logs bytes.Buffer
 			opener := &senderOpener{fail: tc.fail}
 
-			senders, err := openFakeSenders(
+			senders, fakesV6, err := openFakeSenders(
 				zerolog.New(&logs),
 				tc.cfg,
 				tc.startup,
@@ -246,6 +331,13 @@ func TestOpenFakeSenders(t *testing.T) {
 			assert.Equal(t, tc.wantOpen, opener.opened)
 			assert.NotNil(t, senders.V4)
 			assert.Equal(t, tc.wantV6, senders.V6 != nil)
+			if tc.wantOffKind == "" {
+				assert.NoError(t, fakesV6)
+			} else {
+				var off *desync.FakesOffError
+				require.ErrorAs(t, fakesV6, &off)
+				assert.Equal(t, tc.wantOffKind, off.Kind)
+			}
 			if tc.wantWarn {
 				assert.Contains(t, logs.String(), `"level":"warn"`)
 				assert.Contains(t, logs.String(), "protocol not available")
@@ -261,7 +353,7 @@ func TestOpenFakeSenders(t *testing.T) {
 	t.Run("ipv4 sender failure is fatal", func(t *testing.T) {
 		opener := &senderOpener{fail: map[netutil.Family]error{netutil.FamilyV4: failed}}
 
-		_, err := openFakeSenders(
+		_, _, err := openFakeSenders(
 			zerolog.Nop(),
 			withMode(config.AppModeHTTP),
 			startupNet{V4: egress, V6: egress6},
@@ -336,7 +428,7 @@ func TestSetupNetworkStack(t *testing.T) {
 		var ifaces []desync.EgressIface
 		var logs bytes.Buffer
 
-		tcp, udp, hops, err := setupNetworkStack(
+		tcp, udp, hops, fakesV6, err := setupNetworkStack(
 			context.Background(),
 			zerolog.New(&logs),
 			startup,
@@ -348,6 +440,7 @@ func TestSetupNetworkStack(t *testing.T) {
 		assert.NotNil(t, tcp)
 		assert.NotNil(t, udp)
 		assert.NotNil(t, hops)
+		assert.NoError(t, fakesV6, "fakes are on for IPv6 in a proxy mode")
 		require.Len(t, senders, 2, "both senders open in a proxy mode")
 		assert.Equal(t, []desync.EgressIface{{
 			Iface: en0,
@@ -355,6 +448,31 @@ func TestSetupNetworkStack(t *testing.T) {
 		}}, ifaces)
 		assert.Contains(t, logs.String(),
 			`"name":"en0","families":["ipv4","ipv6"],"message":" interface"`)
+	})
+
+	t.Run("tun mode keeps ipv6 fakes off", func(t *testing.T) {
+		var senders []*injecttest.Sender
+		var ifaces []desync.EgressIface
+		cfg := withStacks()
+		cfg.App.Mode = config.AppModeTUN
+
+		_, _, _, fakesV6, err := setupNetworkStack(
+			context.Background(),
+			zerolog.Nop(),
+			startup,
+			cfg,
+			fakeStackOpeners(&senders, &ifaces, nil, nil),
+		)
+
+		require.NoError(t, err)
+		var off *desync.FakesOffError
+		require.ErrorAs(t, fakesV6, &off)
+		assert.Equal(t, desync.FakesOffIPv6Unsupported, off.Kind)
+		assert.Len(t, senders, 1, "no IPv6 sender opens in TUN mode")
+		assert.Equal(t, []desync.EgressIface{{
+			Iface: en0,
+			Fams:  netutil.NewFamilySet(netutil.FamilyV4),
+		}}, ifaces)
 	})
 
 	for _, tc := range []struct {
@@ -369,7 +487,7 @@ func TestSetupNetworkStack(t *testing.T) {
 			var senders []*injecttest.Sender
 			var ifaces []desync.EgressIface
 
-			tcp, udp, _, err := setupNetworkStack(
+			tcp, udp, _, _, err := setupNetworkStack(
 				context.Background(),
 				zerolog.Nop(),
 				startup,

@@ -51,6 +51,10 @@ func (d *UDPDesyncer) Desync(
 	}
 
 	dstIP := rConn.RemoteAddr().(*net.UDPAddr).IP
+	if linkScoped(dstIP) {
+		logLinkScoped(logger, dstIP)
+		return 0, nil
+	}
 	if err := checkFake(d.caps, dstIP); err != nil {
 		logCannotFake(logger, dstIP, err)
 		return 0, nil

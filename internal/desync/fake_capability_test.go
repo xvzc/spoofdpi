@@ -17,7 +17,8 @@ import (
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
-// testGate allows fakes to IPv4 servers only, as main wires it.
+// testGate allows fakes to IPv4 servers only, as main wires it when IPv6
+// fakes are off.
 var testGate = NewStaticGate(
 	nil,
 	&FakesOffError{

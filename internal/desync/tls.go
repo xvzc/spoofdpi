@@ -87,6 +87,10 @@ func (d *TLSDesyncer) Desync(
 	var fakes *fakeSender
 	if httpsOpts.UsesFakes() && d.hops != nil && d.writer != nil {
 		dstIP := conn.RemoteAddr().(*net.TCPAddr).IP
+		if linkScoped(dstIP) {
+			logLinkScoped(logger, dstIP)
+			return d.sendSegments(ctx, conn, logger, split(logger, msg, httpsOpts), nil, nil)
+		}
 		if err := checkFake(d.caps, dstIP); err != nil {
 			logCannotFake(logger, dstIP, err)
 			return d.sendSegments(ctx, conn, logger, split(logger, msg, httpsOpts), nil, nil)
@@ -174,6 +178,23 @@ func (d *TLSDesyncer) learnSeqAck(
 // connection.
 func onLocalLink(est HopEstimate) bool {
 	return est.Learned() && est.Hops == 0
+}
+
+// linkScoped reports whether ip is a link-local unicast or a multicast
+// address, of either family. Such a destination is on the local link, or
+// reached without a router in between, so no DPI can sit before it and
+// fakes are pointless, whatever hop count is learned.
+func linkScoped(ip net.IP) bool {
+	return ip.IsLinkLocalUnicast() || ip.IsMulticast()
+}
+
+// logLinkScoped logs, at debug level only as such destinations are
+// expected, that the fake packets to ip are skipped because it is
+// link-scoped.
+func logLinkScoped(logger zerolog.Logger, ip net.IP) {
+	logger.Debug().
+		Str("dst", ip.String()).
+		Msg("link-local or multicast destination, skipping fake packets")
 }
 
 // warnLocalLink warns that the fake packets to the server at ip are

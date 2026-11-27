@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/config"
-	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/route"
 )
@@ -100,7 +99,6 @@ func egress6(e *route.Egress) *route.Egress {
 
 const (
 	egressInfo    = "info: egress"
-	fakesV6Off    = "fake packets are off for ipv6: IPv6 fakes are not supported yet"
 	fallback6Warn = "warn: IPv6 is enabled but no usable IPv6 route was found; running with IPv6 disabled"
 	callV4        = "ipv4"
 	callV6        = "ipv6"
@@ -182,10 +180,6 @@ func TestDiscoverEgresses_IPv4Matrix(t *testing.T) {
 			} else {
 				assert.Nil(t, got.V4)
 			}
-			assert.EqualError(t, got.FakesV6, fakesV6Off)
-			var off6 *desync.FakesOffError
-			require.ErrorAs(t, got.FakesV6, &off6)
-			assert.Equal(t, desync.FakesOffIPv6Unsupported, off6.Kind)
 			assert.Nil(t, got.V6)
 			assert.Equal(t, ipv6StayedOn, got.IPv6Off)
 			assert.Equal(t, tc.wantLogs, logLines(t, &buf))
@@ -381,7 +375,6 @@ func TestDiscoverEgresses_IPv6(t *testing.T) {
 				cfg.IPv6Enabled(),
 				"IPv6Enabled",
 			)
-			assert.EqualError(t, got.FakesV6, fakesV6Off)
 		})
 	}
 }

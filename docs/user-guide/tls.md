@@ -82,9 +82,9 @@ Specifies the number of fake packets to be sent before the actual Client Hello. 
 Sending fake packets can trick DPI systems into inspecting invalid traffic, allowing the real Client Hello to pass through.
 Each fake packet is split the same way as the real Client Hello.
 
-Fake packets are not sent to a server found to be on the local link (0 hops away), since no TTL can stop them before such a server. spoofdpi logs a warning with the server's address the first time it skips them for a server. To turn fake packets off for other servers, such as those on a LAN or a corporate network, use a [rule](rules.md), for example `tls = { fake-preflight = 0, fake-stutter = 0 }` for their CIDRs.
+Fake packets are not sent to a server found to be on the local link (0 hops away), since no TTL can stop them before such a server. spoofdpi logs a warning with the server's address the first time it skips them for a server. They are not sent to a link-local or multicast address either, such as `fe80::/10` or `169.254.0.0/16`, without waiting for a hop count to be learned; spoofdpi logs this at debug level only. To turn fake packets off for other servers, such as those on a LAN or a corporate network, use a [rule](rules.md), for example `tls = { fake-preflight = 0, fake-stutter = 0 }` for their CIDRs.
 
-Fake packets, from this option and [`fake-stutter`](#fake-stutter), are sent to IPv4 servers only for now. For an IPv6 server they are skipped, and the Client Hello is still split; spoofdpi logs a warning the first time it skips them.
+Fake packets, from this option and [`fake-stutter`](#fake-stutter), are sent to IPv6 servers too in the HTTP and SOCKS5 modes, when [`ipv6`](app.md#ipv6) is enabled and spoofdpi finds an IPv6 route at startup. TUN mode does not send them to IPv6 servers yet. When fake packets are off for IPv6, for one of these reasons or because the raw socket for IPv6 cannot be opened, they are skipped for IPv6 servers, and the Client Hello is still split. spoofdpi logs why in the `fake packets` line at startup, and logs a warning the first time it skips them.
 
 Fake packets go out through a raw IP socket on every OS and follow the system's route to the internet, which needs no gateway: a default route through a point-to-point interface, such as PPP, works. In TUN mode, fake packets are pinned to the interface of the system's route found at startup, as spoofdpi's own connections are: on Linux the socket is bound to the interface and marked, on macOS it is bound to the interface, and on FreeBSD it uses the FIB set by [`freebsd-fib`](app.md#freebsd-fib), whose default route goes through that interface. In the HTTP and SOCKS5 modes, the system routes them. spoofdpi does not detect VPNs: fake packets that go into a VPN's tunnel do not reach the censor (see [Conflicts with a VPN](app.md#conflicts-with-a-vpn)).
 
@@ -300,7 +300,7 @@ The SYN/ACK gives the connection's real sequence numbers and the number of hops 
 
 The wait ends as soon as the SYN/ACK is processed. If it is not processed in time, random sequence numbers and the default TTL are used. `0` disables waiting: only numbers already learned are used.
 
-Only IPv4 servers are learned; spoofdpi does not wait for IPv6 servers.
+IPv6 servers are learned too when fake packets are sent to them (see [`fake-preflight`](#fake-preflight)). If the IPv6 SYN/ACKs cannot be captured on the interface of the IPv6 route, spoofdpi logs a warning at startup and does not wait for IPv6 servers: their fake packets use the default hop count and random sequence numbers.
 
 On an interface whose link type spoofdpi cannot capture on (it supports Ethernet, loopback, raw IP, and PPP), nothing is learned: spoofdpi logs a warning at startup and fake packets use the default hop count and random sequence numbers.
 

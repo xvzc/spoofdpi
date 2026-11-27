@@ -64,7 +64,7 @@ udp-idle-timeout = 30000
 
 The hop count to the server assumed until spoofdpi learns it. `(default: 8)`
 
-Fake packets should pass the DPI but expire before reaching the server, so they are sent with a [Time To Live (TTL)](https://en.wikipedia.org/wiki/Time_to_live) of the hop count to the server plus [`hop-count-offset`](#hop-count-offset), which is the hop count minus 1 by default. spoofdpi learns the hop count from the TTL left on the server's replies, separately for TCP and UDP. Fake packets use the hop count learned over their own protocol, or else the one learned over the other protocol; until either is learned, this value is used.
+Fake packets should pass the DPI but expire before reaching the server, so they are sent with a [Time To Live (TTL)](https://en.wikipedia.org/wiki/Time_to_live), the hop limit over IPv6, of the hop count to the server plus [`hop-count-offset`](#hop-count-offset), which is the hop count minus 1 by default. spoofdpi learns the hop count from the TTL or hop limit left on the server's replies, separately for TCP and UDP. Fake packets use the hop count learned over their own protocol, or else the one learned over the other protocol; until either is learned, this value is used.
 
 !!! note
     This option was previously named `default-fake-ttl` (`--default-fake-ttl`). The old name still works but prints a deprecation warning. If both are set in the TOML config, `default-fake-ttl` is ignored.

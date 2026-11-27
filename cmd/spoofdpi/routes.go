@@ -6,7 +6,6 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/config"
-	"github.com/xvzc/spoofdpi/internal/desync"
 	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/route"
 )
@@ -45,8 +44,6 @@ type startupNet struct {
 	V4 *route.Egress
 	// V6 is the IPv6 egress, or nil when IPv6 is off.
 	V6 *route.Egress
-	// FakesV6 says why fake packets are off for IPv6.
-	FakesV6 error
 	// IPv6Off is why discoverEgresses turned IPv6 off in the config for
 	// this run, or ipv6StayedOn.
 	IPv6Off ipv6OffCause
@@ -59,8 +56,7 @@ type startupNet struct {
 // or TUN mode.
 //
 // The IPv6 egress is discovered only when IPv6 is enabled. When none is
-// usable, discoverEgresses turns IPv6 off in cfg for this run. Fake
-// packets are off for IPv6.
+// usable, discoverEgresses turns IPv6 off in cfg for this run.
 func discoverEgresses(
 	logger zerolog.Logger,
 	cfg *config.Config,
@@ -71,16 +67,7 @@ func discoverEgresses(
 		return startupNet{}, err
 	}
 	v6, ipv6Off := discoverEgressV6(logger, cfg, f)
-	return startupNet{
-		V4: v4,
-		V6: v6,
-		FakesV6: &desync.FakesOffError{
-			Family: netutil.FamilyV6,
-			Kind:   desync.FakesOffIPv6Unsupported,
-			Reason: "IPv6 fakes are not supported yet",
-		},
-		IPv6Off: ipv6Off,
-	}, nil
+	return startupNet{V4: v4, V6: v6, IPv6Off: ipv6Off}, nil
 }
 
 // discoverEgressV4 discovers the IPv4 egress when cfg needs it.
