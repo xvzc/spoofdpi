@@ -44,11 +44,18 @@ In TUN mode, the operating system and the applications resolve names and choose 
 
 ### TUN Mode Routing on Linux
 
-On Linux, TUN mode leaves the main routing table untouched. It adds its routes to a table of its own, which leads into the TUN interface, and policy rules (`ip rule`) that send only unmarked traffic into the TUN. Traffic that another program marks, such as the tunnel packets of a VPN like `wg-quick`, is not captured and follows the system's rules, so spoofdpi does not circumvent it; this includes any traffic that a firewall or container runtime, such as Docker, marks. spoofdpi binds its own sockets to the interface of the route it found at startup and marks them for the same reason, so its traffic follows the main table's routes. Traffic from that interface's address also follows the main table's routes, so strict reverse-path filtering, such as NixOS's firewall, keeps accepting the replies to spoofdpi's own connections. This relies on the main table keeping its route through that interface: if a VPN or a network manager replaces it while spoofdpi runs, traffic through the TUN stops. Routes in the main table more specific than the default route, such as those of the local network, keep working.
+On Linux, TUN mode leaves the main routing table untouched. It adds its routes to a table of its own, which leads into the TUN interface, and policy rules that send only unmarked traffic into the TUN. spoofdpi sets them up through netlink and runs no `ip` command.
+
+- Traffic that another program marks, such as the tunnel packets of a VPN like `wg-quick`, is not captured and follows the system's rules, so spoofdpi does not circumvent it; this includes any traffic that a firewall or container runtime, such as Docker, marks.
+- spoofdpi binds its own sockets to the interface of the route it found at startup and marks them for the same reason, so its traffic follows the main table's routes.
+- Traffic from that interface's address also follows the main table's routes, so strict reverse-path filtering, such as NixOS's firewall, keeps accepting the replies to spoofdpi's own connections.
+- This relies on the main table keeping its route through that interface: if a VPN or a network manager replaces it while spoofdpi runs, traffic through the TUN stops.
+- Routes in the main table more specific than the default route, such as those of the local network, keep working.
 
 - Policy rules that other programs installed before spoofdpi started take precedence. spoofdpi places its rules after the existing ones; when there is no room, it places them before or among them and logs a warning naming those rules.
 - A VPN started after spoofdpi takes precedence when it adds policy rules, or routes in the main table more specific than the default route, such as `0.0.0.0/1` and `128.0.0.0/1`. A VPN that only replaces the main table's default route does not: its traffic is still routed into the TUN, where it stops, as described above.
-- It needs `ip rule` support for `suppress_prefixlength`: iproute2 and Linux 3.12 or later.
+- It needs Linux 4.17 or later and policy routing (`CONFIG_IP_MULTIPLE_TABLES`). It does not need iproute2. On an older kernel, or one without policy routing, spoofdpi fails to start in TUN mode.
+- Its rules carry `protocol 213` and its routes `proto 213`, and its table ID is in the range `0x53504400` to `0x535044ff` (1397769216 to 1397769471), which spoofdpi alone uses. The capture rule is `fwmark 0/0xffffffff lookup <table>`: it matches only unmarked traffic.
 
 ### IPv6 Link-Local Destinations
 
@@ -213,8 +220,12 @@ The system proxy points at the address in [`listen-addr`](#listen-addr). When th
 
 In `tun` mode, spoofdpi exits with an error when it fails to set up the network config, since no traffic reaches the TUN interface without it. In `http` and `socks5` modes, it logs the error and keeps running.
 
+spoofdpi undoes what it set up when it shuts down. It keeps no state file for this: the old `/tmp/spoofdpi.*.state` files are never read. If one is still there, spoofdpi warns at startup that it is no longer used; delete it and do not run the commands in it. If spoofdpi does not exit cleanly, the next start removes what it left (see [Leftovers After a Crash](#leftovers-after-a-crash)).
+
 !!! important
     In `http` and `socks5` modes, setting the system proxy is currently only supported on **macOS**. In `tun` mode, this option sets up the routing into the TUN interface on Linux, macOS and FreeBSD.
+
+On macOS, the system proxy is a proxy auto-configuration (PAC) URL that spoofdpi serves at `/spoofdpi.pac` on `127.0.0.1`. spoofdpi does not turn on automatic proxy discovery (WPAD).
 
 ### Usage
 
@@ -289,9 +300,15 @@ The `gateway` option (`--gateway`, and `gateway` in `[app]`) is deprecated. It i
 
 ### Description
 
-Specifies the FIB (Forwarding Information Base) ID for FreeBSD routing table. `(default: 1)`
+Specifies the FIB (Forwarding Information Base) that spoofdpi's own traffic uses. `(default: none)`
 
-Valid range is 1-15. This option is only applicable on **FreeBSD** systems when using TUN mode.
+This option is only applicable on **FreeBSD** systems when using TUN mode, and it is **required** there: spoofdpi does not start without it. Valid range is 1 to `net.fibs` minus 1, and at most 15.
+
+Use a FIB that only spoofdpi uses, not one that jails or services started with `setfib` use. spoofdpi fails to start when the FIB has a default route, or a static route to the subnet of the physical interface.
+
+It has no effect in other modes or on other operating systems; there it is only checked to be in the range 1 to 15. A config that omitted it on FreeBSD now fails at startup with `'freebsd-fib' is required in tun mode on FreeBSD`: add the option.
+
+A system with one FIB (`net.fibs=1`) has none to give. Add FIBs with `sysctl net.fibs=2`, or set `net.fibs="2"` in `/boot/loader.conf` to keep them across reboots.
 
 ### Usage
 
@@ -304,6 +321,60 @@ $ spoofdpi --freebsd-fib 3
 ```toml
 [app]
 freebsd-fib = 3
+```
+
+---
+
+## Leftovers After a Crash
+
+spoofdpi undoes its network configuration from memory when it shuts down. When a run does not exit cleanly, for example after a crash or `kill -9`, it can leave routes, rules or a system proxy behind. At every start, in every mode, spoofdpi removes what such a run left, and only the items that it tagged and that have the exact shape it adds. Anything else that looks like its own, it reports with a warning. The command to remove it by hand is in the `manual_command` field of the warning. Cleanup never stops spoofdpi from starting.
+
+spoofdpi does not remove what a running spoofdpi uses: in TUN mode it checks for the running instance's TUN interface or routes, and on macOS it probes the PAC server of the system proxy.
+
+The commands below need root.
+
+**Linux**
+
+- spoofdpi removes the tagged capture rule, the rules of its block, and the tagged routes of its table. It removes nothing while `tun-spoofdpi` exists.
+- It warns about a persistent `tun-spoofdpi` interface, which outlives the process that made it.
+- It only reports rules without a tag that older builds added, and the source routing rules (`from <IP> lookup N`, N within 200-250) that v1.6.0 and earlier added, as they can be your own. Remove them by hand.
+
+spoofdpi's own items are removed with commands of this form:
+
+```console
+$ ip rule del pref <N> fwmark 0/0xffffffff lookup <T> protocol 213
+$ ip route del default table <T> proto 213
+$ ip -6 route del 2000::/3 table <T> proto 213
+```
+
+For v1.6.0 and earlier, the commands are plain, for example the following, where the last one removes the host route to the gateway in the main table:
+
+```console
+$ ip rule del pref <pref> from <IP> lookup <table>
+$ ip route del default via <gateway> table <table> proto 3
+$ ip route del <gateway>/32 table main proto 3
+```
+
+**FreeBSD**
+
+- spoofdpi removes the tagged routes of the FIB set by [`freebsd-fib`](#freebsd-fib), and a closed `tun-spoofdpi` interface with its tagged routes in the main FIB.
+- Tagged routes in other FIBs are only reported, with the hint to start spoofdpi once with that FIB in `freebsd-fib`.
+- FIBs above 15 cannot be set in `freebsd-fib`, so clean them by hand.
+- Remove what it reports by hand, for example:
+
+```console
+$ route -n delete default <gateway> -fib <N>
+$ ifconfig tun-spoofdpi destroy
+```
+
+**macOS**
+
+- spoofdpi removes a tagged scoped default route that an earlier run left, only when it is the only scoped default route of its interface. At shutdown, it removes its own scoped default route only while it is still spoofdpi's. It adds none when the physical interface already has one.
+- After a crash in `http` or `socks5` mode, it turns off an enabled spoofdpi PAC URL (also the older `/proxy.pac`) only when the server at that URL refuses connections. A live spoofdpi PAC server is left alone and logged at INFO. It warns only when the state is unclear: another server answers on the port, the server does not answer in time, or the answer has no spoofdpi marker. Remove what it reports by hand, for example:
+
+```console
+$ route -n delete -ifscope <interface> default <gateway>
+$ networksetup -setautoproxystate "<service>" off
 ```
 
 ---
