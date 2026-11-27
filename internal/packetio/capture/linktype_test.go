@@ -33,7 +33,7 @@ func TestNormalizeLinkType(t *testing.T) {
 // A normalized link type is one the filters support.
 func TestNormalizeLinkType_FiltersSupportIt(t *testing.T) {
 	for _, lt := range []layers.LinkType{12, 50} {
-		_, err := SynAckFilter(normalizeLinkType(lt))
+		_, err := SynAckFilter(normalizeLinkType(lt), bothFamilies)
 		assert.NoError(t, err, lt)
 	}
 }

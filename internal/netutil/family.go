@@ -18,3 +18,20 @@ func (f Family) String() string {
 		return "unknown"
 	}
 }
+
+// FamilySet is a set of IP address families. The zero value is empty.
+type FamilySet uint8
+
+// NewFamilySet returns the set of fams.
+func NewFamilySet(fams ...Family) FamilySet {
+	var s FamilySet
+	for _, f := range fams {
+		s |= 1 << f
+	}
+	return s
+}
+
+// Has reports whether f is in s.
+func (s FamilySet) Has(f Family) bool {
+	return s&(1<<f) != 0
+}

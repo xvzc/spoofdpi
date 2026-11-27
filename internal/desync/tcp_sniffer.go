@@ -49,7 +49,10 @@ func (ts *TCPSniffer) StartCapturing() error {
 	// and attaching a filter replaces any previous one, so a failed clear
 	// is harmless.
 	_ = ts.handle.ClearBPF()
-	filter, err := capture.SynAckFilter(ts.handle.LinkType())
+	filter, err := capture.SynAckFilter(
+		ts.handle.LinkType(),
+		netutil.NewFamilySet(netutil.FamilyV4),
+	)
 	if err != nil {
 		return fmt.Errorf("build SYN/ACK capture filter: %w", err)
 	}

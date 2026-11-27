@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
 // SynAck is a captured TCP SYN/ACK.
@@ -85,20 +86,39 @@ func EstimateHops(ttlLeft uint8) uint8 {
 	return estimatedInitialHops - ttlLeft
 }
 
-// SynAckFilter returns a BPF program that accepts IPv4 TCP SYN/ACKs on the
-// given link type. It supports Ethernet, Null/Loop (loopback and VPN), Raw
-// IP, and PPP, and returns ErrUnsupportedLinkType for any other.
-func SynAckFilter(linkType layers.LinkType) ([]BPFInstruction, error) {
-	return buildForLink(linkType, synAckProgram)
+// SynAckFilter returns a BPF program that accepts the TCP SYN/ACKs of the
+// address families in fams on the given link type. Over IPv6, it accepts
+// SYN/ACKs right after the IPv6 header and, without checking what follows,
+// packets whose first next header is a hop-by-hop (0), routing (43), or
+// destination options (60) header, which ParseSynAck sorts out. It rejects
+// fragments (44) and every other next header, such as AH (51) or ESP (50).
+// It supports Ethernet, Null/Loop (loopback and VPN), Raw IP, and PPP,
+// and returns ErrUnsupportedLinkType for any other, and ErrNoFamily for an
+// empty fams.
+func SynAckFilter(
+	linkType layers.LinkType,
+	fams netutil.FamilySet,
+) ([]BPFInstruction, error) {
+	build, err := familyProgram(fams, synAckIPv4Program, synAckIPv6Program)
+	if err != nil {
+		return nil, err
+	}
+	return buildForLink(linkType, build)
 }
 
-// synAckProgram is the SYN/ACK filter for the frames of layout l.
-func synAckProgram(l linkLayout) []BPFInstruction {
+// synAckIPv4Program is the IPv4 SYN/ACK filter for the frames of layout l.
+// A frame that is not IPv4 goes to the instruction after the program when
+// nextBranch is set.
+func synAckIPv4Program(l linkLayout, nextBranch bool) []BPFInstruction {
 	baseOffset := l.base
 
 	// 1. Protocol Verification (IPv4). The false jump lands on the reject
-	// instruction, 9 forward.
-	instructions := l.ipv4Check(9)
+	// instruction, 9 forward, or on the next branch past it.
+	rejectJf := uint8(9)
+	if nextBranch {
+		rejectJf++
+	}
+	instructions := l.ipv4Check(rejectJf)
 
 	// 2. Check Protocol == TCP (6)
 	instructions = append(instructions,
@@ -133,4 +153,26 @@ func synAckProgram(l linkLayout) []BPFInstruction {
 	)
 
 	return instructions
+}
+
+// synAckIPv6Program is the IPv6 SYN/ACK filter for the frames of layout l.
+func synAckIPv6Program(l linkLayout) []BPFInstruction {
+	base := l.base
+
+	// The false jump lands on the reject instruction, 9 forward.
+	instructions := l.ipv6Check(9)
+	return append(
+		instructions,
+		BPFInstruction{Op: 0x30, K: base + 6},            // ldb [next header]
+		BPFInstruction{Op: 0x15, Jt: 3, K: 6},            // jeq #TCP -> flags
+		BPFInstruction{Op: 0x15, Jt: 5, K: ipv6HopByHop}, // jeq #0 -> accept
+		BPFInstruction{Op: 0x15, Jt: 4, K: ipv6Routing},  // jeq #43 -> accept
+		// jeq #60 -> accept, else reject
+		BPFInstruction{Op: 0x15, Jt: 3, Jf: 4, K: ipv6DestOptions},
+		BPFInstruction{Op: 0x30, K: base + ipv6HeaderLen + 13}, // ldb [TCP flags]
+		BPFInstruction{Op: 0x54, K: 0x12},                      // and #SYN|ACK
+		BPFInstruction{Op: 0x15, Jf: 1, K: 0x12},               // jeq #SYN|ACK
+		BPFInstruction{Op: 0x6, K: 0x00040000},                 // accept
+		BPFInstruction{Op: 0x6, K: 0},                          // reject
+	)
 }

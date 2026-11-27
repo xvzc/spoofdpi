@@ -7,6 +7,7 @@ import (
 	"github.com/google/gopacket"
 	"github.com/rs/zerolog"
 	"github.com/xvzc/spoofdpi/internal/logging"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 )
 
@@ -45,7 +46,10 @@ func (us *UDPSniffer) StartCapturing() error {
 	// and attaching a filter replaces any previous one, so a failed clear
 	// is harmless.
 	_ = us.handle.ClearBPF()
-	filter, err := capture.UDPFilter(us.handle.LinkType())
+	filter, err := capture.UDPFilter(
+		us.handle.LinkType(),
+		netutil.NewFamilySet(netutil.FamilyV4),
+	)
 	if err != nil {
 		return fmt.Errorf("build UDP capture filter: %w", err)
 	}

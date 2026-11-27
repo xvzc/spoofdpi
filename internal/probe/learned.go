@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 	"github.com/xvzc/spoofdpi/internal/route"
 )
@@ -56,10 +57,15 @@ type openCaptureFunc func(kind captureKind, servers []netip.Addr) (packetSource,
 // spoofdpi's sniffer for kind, or for captureTCPFlows one that keeps the
 // TCP packets of the servers.
 func openCapture(kind captureKind, servers []netip.Addr) (packetSource, error) {
-	filter := capture.SynAckFilter
+	ipv4 := netutil.NewFamilySet(netutil.FamilyV4)
+	filter := func(linkType layers.LinkType) ([]capture.BPFInstruction, error) {
+		return capture.SynAckFilter(linkType, ipv4)
+	}
 	switch kind {
 	case captureUDP:
-		filter = capture.UDPFilter
+		filter = func(linkType layers.LinkType) ([]capture.BPFInstruction, error) {
+			return capture.UDPFilter(linkType, ipv4)
+		}
 	case captureTCPFlows:
 		hosts := make([]net.IP, len(servers))
 		for i, s := range servers {

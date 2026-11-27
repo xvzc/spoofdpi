@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/xvzc/spoofdpi/internal/cache"
 	"github.com/xvzc/spoofdpi/internal/logging"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 )
 
@@ -65,14 +66,14 @@ func (h *filterHandle) SetBPFRawInstructionFilter(f []capture.BPFInstruction) er
 	return nil
 }
 
-// mustFilter returns the program of filter for an Ethernet link.
+// mustFilter returns the IPv4 program of filter for an Ethernet link.
 func mustFilter(
 	t *testing.T,
-	filter func(layers.LinkType) ([]capture.BPFInstruction, error),
+	filter func(layers.LinkType, netutil.FamilySet) ([]capture.BPFInstruction, error),
 ) []capture.BPFInstruction {
 	t.Helper()
 
-	prog, err := filter(layers.LinkTypeEthernet)
+	prog, err := filter(layers.LinkTypeEthernet, netutil.NewFamilySet(netutil.FamilyV4))
 	require.NoError(t, err)
 	return prog
 }

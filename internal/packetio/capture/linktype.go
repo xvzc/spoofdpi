@@ -7,6 +7,7 @@ import (
 	"net"
 
 	"github.com/google/gopacket/layers"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 )
 
 // ErrUnsupportedLinkType is returned by the capture filters for a link
@@ -51,44 +52,58 @@ func linuxLinkType(flags net.Flags, hardwareAddr net.HardwareAddr) layers.LinkTy
 }
 
 // linkLayout is where the IP header is on a link, and the BPF
-// instructions that check it is IPv4.
+// instructions that check its version.
 type linkLayout struct {
 	// base is the offset of the IP header.
 	base uint32
-	// ipv4Check returns instructions that load and test what marks the
-	// frame as IPv4, whose last one jumps rejectJf instructions forward on
-	// a mismatch and falls through otherwise.
-	ipv4Check func(rejectJf uint8) []BPFInstruction
+	// ipv4Check and ipv6Check return instructions that load and test what
+	// marks the frame as IPv4 or IPv6, whose last one jumps rejectJf
+	// instructions forward on a mismatch and falls through otherwise.
+	ipv4Check, ipv6Check func(rejectJf uint8) []BPFInstruction
 }
 
-// etherTypeCheck tests that the EtherType is IPv4.
-func etherTypeCheck(rejectJf uint8) []BPFInstruction {
-	return []BPFInstruction{
-		{Op: 0x28, K: 12},                   // ldh [12]
-		{Op: 0x15, Jf: rejectJf, K: 0x0800}, // jeq #0x0800
-	}
-}
+// EtherTypes of IPv4 and IPv6.
+const (
+	etherTypeIPv4 = 0x0800
+	etherTypeIPv6 = 0x86dd
+)
 
-// versionCheck tests that the IP version nibble at base is 4. Without it
-// the accumulator is 0 and the check always fails, silently dropping every
-// packet.
-func versionCheck(base uint32) func(uint8) []BPFInstruction {
+// etherTypeCheck tests that the EtherType is etherType.
+func etherTypeCheck(etherType uint32) func(uint8) []BPFInstruction {
 	return func(rejectJf uint8) []BPFInstruction {
 		return []BPFInstruction{
-			{Op: 0x30, K: base},               // ldb [base]
-			{Op: 0x54, K: 0xf0},               // and #0xf0
-			{Op: 0x15, Jf: rejectJf, K: 0x40}, // jeq #0x40
+			{Op: 0x28, K: 12},                      // ldh [12]
+			{Op: 0x15, Jf: rejectJf, K: etherType}, // jeq #etherType
 		}
 	}
 }
 
-// pppProtocolCheck tests that the PPP protocol field at protoOffset is
-// IPv4 (0x0021).
-func pppProtocolCheck(protoOffset uint32) func(uint8) []BPFInstruction {
+// versionCheck tests that the IP version nibble at base is version.
+// Without it the accumulator is 0 and the check always fails, silently
+// dropping every packet.
+func versionCheck(base, version uint32) func(uint8) []BPFInstruction {
 	return func(rejectJf uint8) []BPFInstruction {
 		return []BPFInstruction{
-			{Op: 0x28, K: protoOffset},          // ldh [protoOffset]
-			{Op: 0x15, Jf: rejectJf, K: 0x0021}, // jeq #0x0021
+			{Op: 0x30, K: base},                       // ldb [base]
+			{Op: 0x54, K: 0xf0},                       // and #0xf0
+			{Op: 0x15, Jf: rejectJf, K: version << 4}, // jeq #version<<4
+		}
+	}
+}
+
+// PPP protocol numbers of IPv4 and IPv6.
+const (
+	pppProtocolIPv4 = 0x0021
+	pppProtocolIPv6 = 0x0057
+)
+
+// pppProtocolCheck tests that the PPP protocol field at protoOffset is
+// protocol.
+func pppProtocolCheck(protoOffset, protocol uint32) func(uint8) []BPFInstruction {
+	return func(rejectJf uint8) []BPFInstruction {
+		return []BPFInstruction{
+			{Op: 0x28, K: protoOffset},            // ldh [protoOffset]
+			{Op: 0x15, Jf: rejectJf, K: protocol}, // jeq #protocol
 		}
 	}
 }
@@ -103,15 +118,35 @@ const pppHDLCMarker = 0xff03
 func linkLayouts(lt layers.LinkType) ([]linkLayout, error) {
 	switch lt {
 	case layers.LinkTypeEthernet:
-		return []linkLayout{{base: 14, ipv4Check: etherTypeCheck}}, nil
+		return []linkLayout{{
+			base:      14,
+			ipv4Check: etherTypeCheck(etherTypeIPv4),
+			ipv6Check: etherTypeCheck(etherTypeIPv6),
+		}}, nil
 	case layers.LinkTypeNull, layers.LinkTypeLoop:
-		return []linkLayout{{base: 4, ipv4Check: versionCheck(4)}}, nil
+		return []linkLayout{{
+			base:      4,
+			ipv4Check: versionCheck(4, 4),
+			ipv6Check: versionCheck(4, 6),
+		}}, nil
 	case layers.LinkTypeRaw:
-		return []linkLayout{{base: 0, ipv4Check: versionCheck(0)}}, nil
+		return []linkLayout{{
+			base:      0,
+			ipv4Check: versionCheck(0, 4),
+			ipv6Check: versionCheck(0, 6),
+		}}, nil
 	case layers.LinkTypePPP:
 		return []linkLayout{
-			{base: 4, ipv4Check: pppProtocolCheck(2)},
-			{base: 2, ipv4Check: pppProtocolCheck(0)},
+			{
+				base:      4,
+				ipv4Check: pppProtocolCheck(2, pppProtocolIPv4),
+				ipv6Check: pppProtocolCheck(2, pppProtocolIPv6),
+			},
+			{
+				base:      2,
+				ipv4Check: pppProtocolCheck(0, pppProtocolIPv4),
+				ipv6Check: pppProtocolCheck(0, pppProtocolIPv6),
+			},
 		}, nil
 	}
 	return nil, fmt.Errorf("%w: %d", ErrUnsupportedLinkType, lt)
@@ -148,3 +183,41 @@ func buildForLink(
 	}
 	return append(append(prog, hdlc...), plain...), nil
 }
+
+// ErrNoFamily is returned by the capture filters for an empty set of
+// address families.
+var ErrNoFamily = errors.New("no address family to capture")
+
+// familyProgram returns a build function for buildForLink that joins the
+// IPv4 and IPv6 branches of the families in fams, IPv4 first. Each branch
+// starts with its family check and ends with a reject. ipv4 jumps from its
+// check past that reject to the IPv6 branch when nextBranch is set.
+func familyProgram(
+	fams netutil.FamilySet,
+	ipv4 func(l linkLayout, nextBranch bool) []BPFInstruction,
+	ipv6 func(l linkLayout) []BPFInstruction,
+) (func(linkLayout) []BPFInstruction, error) {
+	if !fams.Has(netutil.FamilyV4) && !fams.Has(netutil.FamilyV6) {
+		return nil, ErrNoFamily
+	}
+	return func(l linkLayout) []BPFInstruction {
+		var prog []BPFInstruction
+		if fams.Has(netutil.FamilyV4) {
+			prog = ipv4(l, fams.Has(netutil.FamilyV6))
+		}
+		if fams.Has(netutil.FamilyV6) {
+			prog = append(prog, ipv6(l)...)
+		}
+		return prog
+	}, nil
+}
+
+// IPv6 next header values the filters look at.
+const (
+	ipv6HopByHop    = 0
+	ipv6Routing     = 43
+	ipv6Fragment    = 44
+	ipv6DestOptions = 60
+	// ipv6HeaderLen is the length of the fixed IPv6 header.
+	ipv6HeaderLen = 40
+)
