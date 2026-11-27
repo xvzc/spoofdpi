@@ -127,8 +127,9 @@ func AddRule(r Rule) error {
 // filter matches, like `ip rule del`. It refuses a rule without a
 // preference, table, action or protocol tag. The kernel takes a zero mark,
 // source length and TOS, an absent suppress_prefixlength, the invert flag
-// and the selectors in OtherAttrs as wildcards, so a delete can remove
-// another rule than r; RuleDeleteAmbiguous tells beforehand.
+// and the selectors in OtherAttrs as wildcards, and older kernels may
+// compare neither suppress_prefixlength nor the protocol, so a delete can
+// remove another rule than r; RuleDeleteAmbiguous tells beforehand.
 func DeleteRule(r Rule) error {
 	if err := checkRuleDelete(r); err != nil {
 		return fmt.Errorf("delete rule %s: %w", r, err)

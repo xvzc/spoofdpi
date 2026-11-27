@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"strconv"
 
 	"github.com/xvzc/spoofdpi/internal/netutil"
 )
@@ -69,6 +70,13 @@ type RouteEntry struct {
 }
 
 func (r RouteEntry) String() string {
+	return r.StringWithNames(nil)
+}
+
+// StringWithNames is String with the interface shown by the name that
+// ifaceName returns for its index. It shows the index when ifaceName is nil
+// or returns "".
+func (r RouteEntry) StringWithNames(ifaceName func(index int) string) string {
 	dst := r.Dst.String()
 	if r.Dst.Bits() == 0 {
 		dst = "default"
@@ -78,7 +86,14 @@ func (r RouteEntry) String() string {
 		s += " via " + r.Gateway.String()
 	}
 	if r.Oif != 0 {
-		s += fmt.Sprintf(" dev %d", r.Oif)
+		dev := ""
+		if ifaceName != nil {
+			dev = ifaceName(r.Oif)
+		}
+		if dev == "" {
+			dev = strconv.Itoa(r.Oif)
+		}
+		s += " dev " + dev
 	}
 	if r.Metric != 0 {
 		s += fmt.Sprintf(" metric %d", r.Metric)

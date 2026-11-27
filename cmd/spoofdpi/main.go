@@ -153,8 +153,8 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 
 	// Clean up what a run that crashed left behind before createServer
 	// discovers the routes, so its routes do not obscure the real default
-	// route, and before the TUN's table and rule prefs are chosen. Until the
-	// cleanup entry points find anything, nothing recovers from a crash.
+	// route, and before the TUN's table and rule prefs are chosen. Only what
+	// spoofdpi tagged is removed; anything else is left with a warning.
 	server.WarnLegacyStateFiles(logger)
 	tun.CleanLeftovers(logger, tun.CleanupOptions{FreeBSDFIB: cfg.App.FreebsdFIB})
 	server.CleanSystemProxyLeftovers(logger)

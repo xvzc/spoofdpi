@@ -221,7 +221,9 @@ func TestRuleModify_RequireRoot(t *testing.T) {
 				want = append(want, twin)
 			}
 			assert.ElementsMatch(t, want, got)
-			assert.False(t, RuleDeleteAmbiguous(r, got))
+			// The helper is conservative: with a twin at the same pref,
+			// table and action, a delete may hit either rule.
+			assert.Equal(t, hasTwin, RuleDeleteAmbiguous(r, got))
 
 			require.NoError(t, DeleteRule(r))
 			assert.ElementsMatch(t, want[1:], rulesAt(t, r.Family, testRulePref))
@@ -239,9 +241,10 @@ func TestRuleModify_RequireRoot(t *testing.T) {
 
 // TestRuleDeleteFilter_RequireRoot adds a tagged rule and a twin that
 // differs in one attribute the kernel's delete may take as a wildcard,
-// deletes the rule, and checks that the kernel removed the rule that
-// ruleDeleteMatches predicts: the first match in dump order. The twin goes
-// first when the kernel takes it, so that a wildcard shows.
+// deletes the rule, and checks that RuleDeleteAmbiguous reports every
+// delete that hits the twin. It logs which rule the kernel removed, so the
+// kernel's filter shows. The twin goes first when the kernel takes it, so
+// that a wildcard shows.
 func TestRuleDeleteFilter_RequireRoot(t *testing.T) {
 	testutil.RequireRoot(t)
 	requireRuleProtocol(t)
@@ -272,7 +275,8 @@ func TestRuleDeleteFilter_RequireRoot(t *testing.T) {
 		{name: "no source and a twin from a host", target: base, twin: fromHost},
 		{name: "a source and a twin from all", target: fromHost, twin: base},
 		{name: "an inverted twin", target: base, twin: inverted},
-		// DeleteRule's safety rests on the kernel comparing the tag.
+		// Shows whether this kernel compares the tag; RuleDeleteAmbiguous
+		// does not rely on it.
 		{name: "a twin with another tag", target: base, twin: otherTag},
 	}
 
@@ -301,9 +305,6 @@ func TestRuleDeleteFilter_RequireRoot(t *testing.T) {
 			i := slices.IndexFunc(dump, func(r Rule) bool { return rulesEqual(r, tc.target) })
 			require.GreaterOrEqual(t, i, 0, "target %s not in the dump", tc.target)
 			target := dump[i]
-			predicted := dump[slices.IndexFunc(dump, func(r Rule) bool {
-				return ruleDeleteMatches(target, r)
-			})]
 			ambiguous := RuleDeleteAmbiguous(target, dump)
 
 			require.NoError(t, DeleteRule(target))
@@ -316,16 +317,6 @@ func TestRuleDeleteFilter_RequireRoot(t *testing.T) {
 			hitTwin := !rulesEqual(deleted, target)
 			t.Logf("outcome: added %s; ambiguous=%v; the delete removed the %s",
 				order, ambiguous, map[bool]string{true: "twin", false: "target"}[hitTwin])
-			switch {
-			case rulesEqual(predicted, deleted):
-			case !hitTwin:
-				// Safe: the helper over-reports ambiguity.
-				t.Logf("the kernel compares more than ruleDeleteMatches "+
-					"assumes: it deleted the target, not the predicted %s", predicted)
-			default:
-				t.Errorf("predicted the delete of %s, the kernel deleted %s",
-					predicted, deleted)
-			}
 			if hitTwin {
 				assert.True(t, ambiguous, "the delete hit the twin")
 			}

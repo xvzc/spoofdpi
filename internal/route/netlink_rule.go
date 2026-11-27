@@ -155,7 +155,7 @@ func checkRuleDelete(r Rule) error {
 
 // encodeRuleModify returns an RTM_NEWRULE (add) or RTM_DELRULE request for
 // r. The table goes in FRA_TABLE, so that tables above 255 work. See
-// ruleDeleteMatches for the rules a delete removes.
+// RuleDeleteAmbiguous for the rules a delete may remove.
 func encodeRuleModify(seq uint32, r Rule, add bool) []byte {
 	u32 := func(v uint32) []byte { return binary.NativeEndian.AppendUint32(nil, v) }
 
@@ -289,55 +289,40 @@ func rulesFromNetlink(reply []netlinkMessage, fam netutil.Family) ([]Rule, error
 
 // RuleDeleteAmbiguous reports whether DeleteRule(target) could delete a
 // rule of dump, a fresh Rules dump of target's family, other than target:
-// when the kernel's delete filter matches more than one rule of dump, or
-// one rule that is not target. The kernel deletes the first match in dump
-// order. Pass a rule of dump as target: a rule that only resembles one,
-// such as one without the protocol that the kernel dumps, counts as
-// another rule. The result assumes that RuleProtocolSupported reports
-// true: a kernel that drops the tag leaves every rule without one.
+// when the delete filter may match more than one rule of dump, or one rule
+// that is not target. Pass a rule of dump as target: a rule that only
+// resembles one, such as one without the protocol that the kernel dumps,
+// counts as another rule.
+//
+// It is strictly conservative, so that it holds on every kernel from 4.17
+// on: any other rule of target's preference, table and action counts as a
+// possible match, whatever its mark, mask, source, TOS, invert flag,
+// suppress_prefixlength, protocol or other selectors. Kernels differ in
+// which of these the delete compares; older ones may compare neither
+// suppress_prefixlength nor the protocol.
 func RuleDeleteAmbiguous(target Rule, dump []Rule) bool {
 	var matches []Rule
 	for _, r := range dump {
-		if ruleDeleteMatches(target, r) {
+		if ruleDeleteMayMatch(target, r) {
 			matches = append(matches, r)
 		}
 	}
 	return len(matches) > 1 || len(matches) == 1 && !rulesEqual(matches[0], target)
 }
 
-// ruleDeleteMatches reports whether the kernel's delete of filter, as
-// encodeRuleModify sends it, could remove r (rule_find in
-// net/core/fib_rules.c). The preference is always compared. A zero action,
-// table, mark, mask, protocol, source length and TOS, and an absent
-// suppress_prefixlength, match any value; so do the invert flag and every
-// selector that Rule does not send (OtherAttrs).
-func ruleDeleteMatches(filter, r Rule) bool {
+// ruleDeleteMayMatch reports whether a delete of filter, as
+// encodeRuleModify sends it, may remove r on some kernel (rule_find in
+// net/core/fib_rules.c): r has filter's family and preference, and its
+// table and action unless filter leaves them zero, which match any value.
+// Every other attribute is taken as a possible wildcard.
+func ruleDeleteMayMatch(filter, r Rule) bool {
 	if r.Family != filter.Family || r.Priority != filter.Priority {
 		return false
 	}
 	if filter.Action != 0 && r.Action != filter.Action {
 		return false
 	}
-	if filter.Table != 0 && r.Table != filter.Table {
-		return false
-	}
-	if mark := ruleMark(filter); mark != 0 && ruleMark(r) != mark {
-		return false
-	}
-	if mask := ruleMask(filter); mask != 0 && ruleMask(r) != mask {
-		return false
-	}
-	if filter.HasSuppressPrefixlen &&
-		(!r.HasSuppressPrefixlen || r.SuppressPrefixlen != filter.SuppressPrefixlen) {
-		return false
-	}
-	if filter.HasProtocol && filter.Protocol != 0 && r.Protocol != filter.Protocol {
-		return false
-	}
-	if filter.Src.IsValid() && filter.Src.Bits() > 0 && r.Src != filter.Src {
-		return false
-	}
-	return filter.TOS == 0 || r.TOS == filter.TOS
+	return filter.Table == 0 || r.Table == filter.Table
 }
 
 // ruleMark returns the mark the kernel keeps for r.

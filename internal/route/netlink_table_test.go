@@ -280,6 +280,23 @@ func TestRouteEntriesFromNetlink(t *testing.T) {
 	})
 }
 
+func TestRouteEntryStringWithNames(t *testing.T) {
+	e := RouteEntry{
+		Table: 254,
+		Dst:   netip.MustParsePrefix("192.0.2.0/24"),
+		Oif:   2,
+	}
+	names := map[int]string{2: "eth0"}
+	lookup := func(i int) string { return names[i] }
+
+	assert.Equal(t, "192.0.2.0/24 dev eth0 table 254 proto 0 scope 0 type 0",
+		e.StringWithNames(lookup))
+	e.Oif = 3
+	assert.Equal(t, "192.0.2.0/24 dev 3 table 254 proto 0 scope 0 type 0",
+		e.StringWithNames(lookup), "an unknown index stays an index")
+	assert.Equal(t, e.String(), e.StringWithNames(nil))
+}
+
 func TestRouteEntryString(t *testing.T) {
 	assert.Equal(
 		t,

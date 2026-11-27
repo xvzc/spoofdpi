@@ -3,47 +3,42 @@
 package tun
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 
 	"github.com/rs/zerolog"
-	"github.com/xvzc/spoofdpi/internal/executil"
+	"github.com/xvzc/spoofdpi/internal/netutil"
 	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/server"
 	"golang.zx2c4.com/wireguard/tun"
 )
-
-// egressFwmark marks every socket TUN mode sends through the physical
-// interface, so the capture rule, which matches only unmarked packets, passes
-// them by. Any nonzero mark would do; this one avoids the bits that
-// kube-proxy (0x4000, 0x8000), Cilium (0x0f00), Calico (0xffff0000) and
-// Tailscale (0xff0000) use.
-const egressFwmark = 0x30d5
 
 // ipv6CaptureGroup is the server.NetworkJob group of the IPv6 jobs.
 const ipv6CaptureGroup = "ipv6-capture"
 
 type tunNetworkInfoLinux struct {
 	// CaptureTableID is the table whose routes lead into the TUN.
-	CaptureTableID int
+	CaptureTableID uint32
 	TUNName        string
-	PhysIfaceIP    string
-	TunLocalIP     string
-	TunRemoteIP    string
+	TUNIndex       int
+	PhysIfaceIP    netip.Addr
+	TunLocalIP     netip.Addr
+	TunRemoteIP    netip.Addr
 	// MainRulePref, FromRulePref and CaptureRulePref are the prefs of the
-	// IPv4 rules, in ascending order.
-	MainRulePref    int
-	FromRulePref    int
-	CaptureRulePref int
-	// IPv6MainRulePref and IPv6CaptureRulePref are the prefs of the IPv6
-	// rules. They are 0 when IPv6 is not routed into the TUN.
-	IPv6MainRulePref    int
-	IPv6CaptureRulePref int
+	// IPv4 rules, in ascending order and consecutive.
+	MainRulePref    uint32
+	FromRulePref    uint32
+	CaptureRulePref uint32
+	// IPv6MainRulePref and IPv6CaptureRulePref are the consecutive prefs of
+	// the IPv6 rules. They are 0 when IPv6 is not routed into the TUN.
+	IPv6MainRulePref    uint32
+	IPv6CaptureRulePref uint32
 	IPv6Enabled         bool
 	HasIPv6Egress       bool
 	TunIPv6Disabled     bool
@@ -54,13 +49,17 @@ type tunNetworkInfoLinux struct {
 var allocateCaptureTableID = sync.OnceValues(findAvailableTableID)
 
 func createTunDevice() (tun.Device, error) {
-	return tun.CreateTUN("tun-spoofdpi", 1500)
+	return tun.CreateTUN(linuxTUNName, 1500)
 }
 
 func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, error) {
 	tunName, err := sysNet.TunDevice().Name()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get tunName: %w", err)
+	}
+	tunIface, err := net.InterfaceByName(tunName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up interface %s: %w", tunName, err)
 	}
 	captureTableID, err := allocateCaptureTableID()
 	if err != nil {
@@ -82,20 +81,20 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 		return nil, fmt.Errorf("failed to find safe subnet: %w", err)
 	}
 
-	tunLocalIP, err := route.AddrInCIDR(cidr, 1)
+	tunLocalIP, err := addrInCIDR(cidr, 1)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get %dth ip in %s: %w", 1, cidr, err)
+		return nil, err
 	}
-	tunRemoteIP, err := route.AddrInCIDR(cidr, 2)
+	tunRemoteIP, err := addrInCIDR(cidr, 2)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get %dth ip in %s: %w", 2, cidr, err)
+		return nil, err
 	}
 
-	ruleOut, err := executil.Command("ip rule show")
+	ipv4Rules, err := route.Rules(netutil.FamilyV4)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list IPv4 rules: %w", err)
 	}
-	ipv4Prefs, ahead, err := freeRulePrefs(ruleOut, 3)
+	ipv4Prefs, ahead, err := freeRulePrefs(ipv4Rules, 3)
 	if err != nil {
 		return nil, fmt.Errorf("failed to choose IPv4 rule prefs: %w", err)
 	}
@@ -107,7 +106,7 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 		fmt.Sprintf("/proc/sys/net/ipv6/conf/%s/disable_ipv6", tunName),
 	)
 
-	var ipv6Prefs []int
+	var ipv6Prefs []uint32
 	if sysNet.ipv6Enabled && hasIPv6Egress && !tunIPv6Disabled {
 		ipv6Prefs = ipv6RulePrefs(sysNet.logger)
 	}
@@ -116,6 +115,7 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 	return &tunNetworkInfoLinux{ //exhaustruct:enforce
 		CaptureTableID:      captureTableID,
 		TUNName:             tunName,
+		TUNIndex:            tunIface.Index,
 		PhysIfaceIP:         physIfaceIP,
 		TunLocalIP:          tunLocalIP,
 		TunRemoteIP:         tunRemoteIP,
@@ -130,18 +130,31 @@ func collectNetworkInfo(sysNet *tunSystemNetworkLinux) (*tunNetworkInfoLinux, er
 	}, nil
 }
 
+// addrInCIDR returns the nth address of cidr.
+func addrInCIDR(cidr string, n int) (netip.Addr, error) {
+	s, err := route.AddrInCIDR(cidr, n)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("failed to get %dth ip in %s: %w", n, cidr, err)
+	}
+	addr, err := netip.ParseAddr(s)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("failed to get %dth ip in %s: %w", n, cidr, err)
+	}
+	return addr, nil
+}
+
 // ipv6RulePrefs returns the two prefs of the IPv6 rules, or nil, with a
 // warning, when they cannot be chosen. IPv6 is optional in TUN mode, so
 // this does not fail it.
-func ipv6RulePrefs(logger zerolog.Logger) []int {
-	out, err := executil.Command("ip -6 rule show")
+func ipv6RulePrefs(logger zerolog.Logger) []uint32 {
+	rules, err := route.Rules(netutil.FamilyV6)
 	if err != nil {
 		logger.Warn().
 			Err(err).
 			Msg("failed to list IPv6 rules; IPv6 is not routed into the TUN")
 		return nil
 	}
-	prefs, ahead, err := freeRulePrefs(out, 2)
+	prefs, ahead, err := freeRulePrefs(rules, 2)
 	if err != nil {
 		logger.Warn().
 			Err(err).
@@ -154,26 +167,93 @@ func ipv6RulePrefs(logger zerolog.Logger) []int {
 
 // warnRulesAhead warns that TUN mode's rules come before the rules ahead,
 // which were installed earlier and would otherwise come first.
-func warnRulesAhead(logger zerolog.Logger, family string, ahead []string) {
+func warnRulesAhead(logger zerolog.Logger, family string, ahead []route.Rule) {
 	if len(ahead) == 0 {
 		return
 	}
+	lines := make([]string, 0, len(ahead))
+	for _, r := range ahead {
+		lines = append(lines, r.String())
+	}
 	logger.Warn().
-		Strs("rules", ahead).
+		Strs("rules", lines).
 		Msgf("no room for TUN mode's %s rules after the existing ones; "+
-			"they are placed before or among these rules", family)
+			"they are placed before these rules", family)
 }
 
 func (n *tunSystemNetworkLinux) BuildJobs() ([]server.NetworkJob, error) {
+	err := checkRuleProtocol(
+		func() ([]route.Rule, error) { return route.Rules(netutil.FamilyV4) },
+		route.RuleProtocolSupported,
+		kernelRelease,
+	)
+	if err != nil {
+		return nil, err
+	}
 	info, err := collectNetworkInfo(n)
 	if err != nil {
 		return nil, err
 	}
+	recordThisRun(info)
 	return buildJobs(info), nil
 }
 
+// checkRuleProtocol returns an error when the kernel cannot hold TUN
+// mode's rules as tagged rules: it has no policy routing, shows no IPv4
+// rule, or drops the protocol tag of rules, as kernels before 4.17 do
+// without an error, so that the next start could not tell TUN mode's rules
+// from others to remove them after a crash. rules dumps the IPv4 rules,
+// supported is route.RuleProtocolSupported, and release returns the
+// kernel's version for the errors.
+func checkRuleProtocol(
+	rules func() ([]route.Rule, error),
+	supported func() (bool, error),
+	release func() string,
+) error {
+	dump, err := rules()
+	switch {
+	case errors.Is(err, syscall.EAFNOSUPPORT):
+		return fmt.Errorf(
+			"TUN mode needs policy routing (CONFIG_IP_MULTIPLE_TABLES), "+
+				"which kernel %s lacks: %w",
+			release(),
+			err,
+		)
+	case err != nil:
+		return fmt.Errorf("failed to list IPv4 rules: %w", err)
+	case len(dump) == 0:
+		return fmt.Errorf(
+			"TUN mode needs the kernel's IPv4 rules, such as "+
+				"\"from all lookup main\", but kernel %s shows none",
+			release(),
+		)
+	}
+	ok, err := supported()
+	if err != nil {
+		return fmt.Errorf("failed to check the kernel's rule protocol support: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf(
+			"TUN mode's network configuration needs Linux 4.17 or later, "+
+				"which keeps the protocol tag of routing rules; this kernel is %s",
+			release(),
+		)
+	}
+	return nil
+}
+
+// kernelRelease returns the kernel's release, such as 6.18.0, or "unknown".
+func kernelRelease() string {
+	b, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimSpace(string(b))
+}
+
 // buildJobs returns the jobs that route traffic into the TUN described by
-// info.
+// info. Every rule and route they add carries captureProtocol, so a later
+// run can find them after a crash (see CleanLeftovers).
 //
 // The main table is left untouched. Unmarked traffic is captured by a rule
 // that looks up the capture table, whose default route leads into the TUN.
@@ -183,55 +263,42 @@ func (n *tunSystemNetworkLinux) BuildJobs() ([]server.NetworkJob, error) {
 // carry any mark skip it and follow the system's other rules. That covers
 // sockets marked with egressFwmark, which leave by the main table's routes,
 // and the tunnel packets of a VPN such as wg-quick, which marks its own.
+//
+// The capture rule, the anchor of the leftover search, goes first: while
+// the capture table is empty, it captures nothing. The rules before it
+// follow, and capture starts with the route in the capture table, last.
+// A run that crashes halfway so leaves the anchor behind with the rest.
 func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 	var jobs []server.NetworkJob
-	table := strconv.Itoa(info.CaptureTableID)
+	table := info.CaptureTableID
 
-	jobs = append(jobs, server.NetworkJob{
-		Description: "remove TUN interface",
-		Reset:       server.CommandAction{"ip", "link", "delete", info.TUNName},
-	})
-
+	addr := route.InterfaceAddr{
+		Index:     info.TUNIndex,
+		Local:     info.TunLocalIP,
+		Peer:      info.TunRemoteIP,
+		PrefixLen: info.TunRemoteIP.BitLen(),
+	}
 	jobs = append(jobs, server.NetworkJob{
 		Description: "configure TUN interface address",
-		Apply: server.CommandAction{
-			"ip", "addr", "add", info.TunLocalIP,
-			"peer", info.TunRemoteIP, "dev", info.TUNName,
-		},
-		Reset: server.CommandAction{
-			"ip", "addr", "del", info.TunLocalIP,
-			"peer", info.TunRemoteIP, "dev", info.TUNName,
-		},
+		Apply:       addressAction{add: true, addr: addr, dev: info.TUNName},
+		Reset:       addressAction{add: false, addr: addr, dev: info.TUNName},
 	})
 
 	jobs = append(jobs, server.NetworkJob{
 		Description: "bring TUN interface up",
-		Apply:       server.CommandAction{"ip", "link", "set", "dev", info.TUNName, "up"},
-		Reset:       server.CommandAction{"ip", "link", "set", "dev", info.TUNName, "down"},
+		Apply:       linkAction{up: true, index: info.TUNIndex, dev: info.TUNName},
+		Reset:       linkAction{up: false, index: info.TUNIndex, dev: info.TUNName},
 	})
 
-	jobs = append(jobs, server.NetworkJob{
-		Description: "add default route to capture table",
-		Apply: server.CommandAction{
-			"ip", "route", "add", "default", "dev", info.TUNName, "table", table,
-		},
-		Reset: server.CommandAction{
-			"ip", "route", "del", "default", "dev", info.TUNName, "table", table,
-		},
-	})
+	jobs = append(jobs, ruleJob(
+		"add capture rule for unmarked traffic",
+		captureRule(netutil.FamilyV4, info.CaptureRulePref, table),
+	))
 
-	jobs = append(jobs, server.NetworkJob{
-		Description: "add rule for the main table without its default route " +
-			"(needs suppress_prefixlength: iproute2 and Linux 3.12+)",
-		Apply: server.CommandAction{
-			"ip", "rule", "add", "pref", strconv.Itoa(info.MainRulePref),
-			"lookup", "main", "suppress_prefixlength", "0",
-		},
-		Reset: server.CommandAction{
-			"ip", "rule", "del", "pref", strconv.Itoa(info.MainRulePref),
-			"lookup", "main", "suppress_prefixlength", "0",
-		},
-	})
+	jobs = append(jobs, ruleJob(
+		"add rule for the main table without its default route",
+		mainLookupRule(netutil.FamilyV4, info.MainRulePref),
+	))
 
 	// Traffic from the physical interface's address looks up main in full,
 	// before the capture rule. spoofdpi's own sockets carry the mark and
@@ -240,89 +307,71 @@ func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 	// physical address, as its source. Under strict reverse-path filtering,
 	// such as NixOS's nftables "fib saddr . mark . iif", that lookup would
 	// otherwise resolve to the TUN, and the replies would be dropped.
-	jobs = append(jobs, server.NetworkJob{
-		Description: "add policy routing rule",
-		Apply: server.CommandAction{
-			"ip", "rule", "add", "pref", strconv.Itoa(info.FromRulePref),
-			"from", info.PhysIfaceIP, "lookup", "main",
-		},
-		Reset: server.CommandAction{
-			"ip", "rule", "del", "pref", strconv.Itoa(info.FromRulePref),
-			"from", info.PhysIfaceIP, "lookup", "main",
-		},
-	})
+	jobs = append(jobs, ruleJob(
+		"add policy routing rule",
+		fromRule(info.FromRulePref, info.PhysIfaceIP),
+	))
 
-	// Capture starts with this rule, so it goes last.
-	jobs = append(jobs, server.NetworkJob{
-		Description: "add capture rule for unmarked traffic",
-		Apply: server.CommandAction{
-			"ip", "rule", "add", "pref", strconv.Itoa(info.CaptureRulePref),
-			"fwmark", "0/0xffffffff", "lookup", table,
-		},
-		Reset: server.CommandAction{
-			"ip", "rule", "del", "pref", strconv.Itoa(info.CaptureRulePref),
-			"fwmark", "0/0xffffffff", "lookup", table,
-		},
-	})
+	// Capture starts with this route, so it goes last.
+	jobs = append(jobs, routeJob(
+		"add default route to capture table",
+		captureRoute(netutil.FamilyV4, table, info.TUNIndex),
+		info.TUNName,
+	))
 
 	// Without --ipv6, IPv6 is left to the system's routes. With it, the TUN
 	// server refuses IPv6, so applications fall back to IPv4. The jobs are
 	// optional: IPv4 keeps working without them. They form a group, so a
-	// failed job skips the later ones: the capture rule must not route IPv6
-	// into the TUN without the route that captures it, or ahead of main's
-	// specific routes. TUN mode never dials IPv6, so IPv6 needs no rule for
-	// traffic from the physical interface.
+	// failed job skips the later ones: the route that starts capture must
+	// not be added without the rule that keeps main's specific routes ahead
+	// of it. TUN mode never dials IPv6, so IPv6 needs no rule for traffic
+	// from the physical interface.
 	if info.IPv6Enabled && info.HasIPv6Egress && !info.TunIPv6Disabled &&
 		info.IPv6MainRulePref != 0 {
-		jobs = append(jobs, server.NetworkJob{
-			Description: fmt.Sprintf(
-				"add IPv6 route %s to capture table",
-				ipv6CaptureCIDR,
-			),
-			Apply: server.CommandAction{
-				"ip", "-6", "route", "add", ipv6CaptureCIDR,
-				"dev", info.TUNName, "table", table,
-			},
-			Reset: server.CommandAction{
-				"ip", "-6", "route", "del", ipv6CaptureCIDR,
-				"dev", info.TUNName, "table", table,
-			},
-			Optional: true,
-			Group:    ipv6CaptureGroup,
-		})
+		ipv6Capture := ruleJob(
+			"add IPv6 capture rule for unmarked traffic",
+			captureRule(netutil.FamilyV6, info.IPv6CaptureRulePref, table),
+		)
+		ipv6Capture.Optional, ipv6Capture.Group = true, ipv6CaptureGroup
+		jobs = append(jobs, ipv6Capture)
 
-		jobs = append(jobs, server.NetworkJob{
-			Description: "add IPv6 rule for the main table without its default " +
-				"route (needs suppress_prefixlength: iproute2 and Linux 3.12+)",
-			Apply: server.CommandAction{
-				"ip", "-6", "rule", "add", "pref", strconv.Itoa(info.IPv6MainRulePref),
-				"lookup", "main", "suppress_prefixlength", "0",
-			},
-			Reset: server.CommandAction{
-				"ip", "-6", "rule", "del", "pref", strconv.Itoa(info.IPv6MainRulePref),
-				"lookup", "main", "suppress_prefixlength", "0",
-			},
-			Optional: true,
-			Group:    ipv6CaptureGroup,
-		})
+		ipv6Main := ruleJob(
+			"add IPv6 rule for the main table without its default route",
+			mainLookupRule(netutil.FamilyV6, info.IPv6MainRulePref),
+		)
+		ipv6Main.Optional, ipv6Main.Group = true, ipv6CaptureGroup
+		jobs = append(jobs, ipv6Main)
 
-		jobs = append(jobs, server.NetworkJob{
-			Description: "add IPv6 capture rule for unmarked traffic",
-			Apply: server.CommandAction{
-				"ip", "-6", "rule", "add", "pref", strconv.Itoa(info.IPv6CaptureRulePref),
-				"fwmark", "0/0xffffffff", "lookup", table,
-			},
-			Reset: server.CommandAction{
-				"ip", "-6", "rule", "del", "pref", strconv.Itoa(info.IPv6CaptureRulePref),
-				"fwmark", "0/0xffffffff", "lookup", table,
-			},
-			Optional: true,
-			Group:    ipv6CaptureGroup,
-			Warning:  ipv6RejectWarning,
-		})
+		ipv6Route := routeJob(
+			fmt.Sprintf("add IPv6 route %s to capture table", ipv6CaptureCIDR),
+			captureRoute(netutil.FamilyV6, table, info.TUNIndex),
+			info.TUNName,
+		)
+		ipv6Route.Optional, ipv6Route.Group = true, ipv6CaptureGroup
+		ipv6Route.Warning = ipv6RejectWarning
+		jobs = append(jobs, ipv6Route)
 	}
 
 	return jobs
+}
+
+// ruleJob returns the job that adds r and deletes it on reset.
+func ruleJob(description string, r route.Rule) server.NetworkJob {
+	return server.NetworkJob{
+		Description: description,
+		Apply:       ruleAction{add: true, rule: r},
+		Reset:       ruleAction{add: false, rule: r},
+	}
+}
+
+// routeJob returns the job that adds e, whose output link is named dev,
+// and deletes it on reset.
+func routeJob(description string, e route.RouteEntry, dev string) server.NetworkJob {
+	return server.NetworkJob{
+		Description: description,
+		Apply:       routeAction{add: true, entry: e, dev: dev},
+		Reset:       routeAction{add: false, entry: e, dev: dev},
+	}
 }
 
 // tunSystemNetworkLinux implements TUNSystemNetwork for Linux
@@ -469,62 +518,46 @@ func ipv6Disabled(path string) bool {
 	return err == nil && strings.TrimSpace(string(b)) == "1"
 }
 
-// findAvailableTableID returns an unused table ID.
-func findAvailableTableID() (int, error) {
-	for id := 200; id <= 250; id++ {
-		if tableAvailable(id) {
-			return id, nil
+// findAvailableTableID returns a capture table ID that holds no IPv4 or
+// IPv6 route and that no rule refers to.
+func findAvailableTableID() (uint32, error) {
+	nl := systemNetlink{}
+	var rules []route.Rule
+	var routes []route.RouteEntry
+	for _, fam := range captureFamilies {
+		famRules, err := nl.Rules(fam)
+		if err != nil {
+			return 0, err
 		}
+		famRoutes, err := nl.Routes(fam)
+		if err != nil {
+			return 0, err
+		}
+		rules = append(rules, famRules...)
+		routes = append(routes, famRoutes...)
 	}
-	return 0, fmt.Errorf("no available routing table ID in range 200-250")
+	return freeCaptureTable(rules, routes)
 }
 
-// tableAvailable reports whether table id holds no IPv4 or IPv6 route and
-// no rule refers to it.
-func tableAvailable(id int) bool {
-	out, err := executil.Commandf("ip route show table %d", id)
+// getInterfaceIP returns the first IPv4 address of the interface named
+// ifaceName.
+func getInterfaceIP(ifaceName string) (netip.Addr, error) {
+	iface, err := net.InterfaceByName(ifaceName)
 	if err != nil {
-		return true
+		return netip.Addr{}, err
 	}
-	if len(out) > 0 {
-		return false
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return netip.Addr{}, err
 	}
-
-	// A failed command prints its error, not rules: only the output of a
-	// command that succeeded counts. The capture table also holds an IPv6
-	// route and IPv6 rules; without IPv6 the -6 commands fail, and there
-	// is nothing to collide with.
-	for _, cmd := range []string{
-		"ip rule show table %d",
-		"ip rule show lookup %d",
-		"ip -6 route show table %d",
-		"ip -6 rule show table %d",
-		"ip -6 rule show lookup %d",
-	} {
-		if out, err := executil.Commandf(cmd, id); err == nil && len(out) > 0 {
-			return false
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if ip, ok := netip.AddrFromSlice(ipnet.IP.To4()); ok {
+			return ip, nil
 		}
 	}
-	return true
-}
-
-func getInterfaceIP(ifaceName string) (string, error) {
-	out, err := executil.Commandf("ip -4 addr show %s", ifaceName)
-	if err != nil {
-		return "", err
-	}
-
-	lines := strings.Split(string(out), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "inet ") {
-			parts := strings.Fields(line)
-			if len(parts) >= 2 {
-				ip := strings.Split(parts[1], "/")[0]
-				return ip, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("IP not found for interface %s", ifaceName)
+	return netip.Addr{}, fmt.Errorf("IP not found for interface %s", ifaceName)
 }

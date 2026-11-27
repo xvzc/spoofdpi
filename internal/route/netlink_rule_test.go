@@ -441,17 +441,19 @@ func TestRuleDeleteAmbiguous(t *testing.T) {
 			want:   true,
 		},
 		{
-			name:   "a nonzero mark leaves an unmarked twin",
+			name:   "a nonzero mark matches an unmarked twin",
 			target: markedP3,
 			dump:   []Rule{ruleP3, markedP3},
+			want:   true,
 		},
 		{
-			name:   "another mask leaves the twin",
+			name:   "a twin with another mask matches",
 			target: ruleP3,
 			dump: []Rule{
 				with(ruleP3, func(r *Rule) { r.Fwmask = 0xff }),
 				ruleP3,
 			},
+			want: true,
 		},
 		{
 			name:   "no source matches a twin with one",
@@ -463,9 +465,10 @@ func TestRuleDeleteAmbiguous(t *testing.T) {
 			want: true,
 		},
 		{
-			name:   "a source leaves a twin without one",
+			name:   "a source matches a twin without one",
 			target: ruleP2,
 			dump:   []Rule{with(ruleP2, func(r *Rule) { r.Src = netip.Prefix{} }), ruleP2},
+			want:   true,
 		},
 		{
 			name:   "invert is not compared",
@@ -489,10 +492,25 @@ func TestRuleDeleteAmbiguous(t *testing.T) {
 			want:   true,
 		},
 		{
-			name:   "other tags, tables and families are left",
+			name:   "a suppress_prefixlength matches a twin without one",
+			target: ruleP1,
+			dump: []Rule{
+				with(ruleP1, func(r *Rule) { r.HasSuppressPrefixlen = false }),
+				ruleP1,
+			},
+			want: true,
+		},
+		{
+			name:   "a twin with another tag matches",
+			target: ruleP3,
+			dump:   []Rule{with(ruleP3, func(r *Rule) { r.Protocol = 4 }), ruleP3},
+			want:   true,
+		},
+		{
+			name:   "other tables, actions, preferences and families are left",
 			target: ruleP3,
 			dump: []Rule{
-				with(ruleP3, func(r *Rule) { r.Protocol = 4 }),
+				with(ruleP3, func(r *Rule) { r.Action = 2 }),
 				with(ruleP3, func(r *Rule) { r.Table = 254 }),
 				with(ruleP3, func(r *Rule) { r.Family = netutil.FamilyV6 }),
 				with(ruleP3, func(r *Rule) { r.Priority = 1 }),
