@@ -30,10 +30,11 @@ import "golang.org/x/net/ipv4"
 // fake out by the main table's routes, as the real connection goes.
 //
 // In TUN mode the socket is also bound to the physical interface with
-// SO_BINDTODEVICE and marked with SO_MARK. The mark also skips TUN mode's
-// capture rule, "not fwmark <mark> lookup <capture table>", whose default
-// route leads into the TUN, so a fake that no source-based rule matches
-// still reaches the main table's routes.
+// SO_BINDTODEVICE and marked with SO_MARK. A marked packet also skips TUN
+// mode's capture rule, "fwmark 0/0xffffffff lookup <capture table>", which
+// matches only unmarked packets and whose default route leads into the TUN,
+// so a fake that no source-based rule matches still reaches the main
+// table's routes.
 //
 // The interface index stays 0, which keeps the socket's bound interface
 // (ip_cmsg_send in net/ipv4/ip_sockglue.c). Any source is accepted, since

@@ -59,7 +59,7 @@ func TestFreeRulePrefs(t *testing.T) {
 			rules: `0:	from all lookup local
 32763:	from all lookup main suppress_prefixlength 0
 32764:	from 192.168.1.10 lookup 200
-32765:	not from all fwmark 0x30d5 lookup 201
+32765:	from all fwmark 0 lookup 201
 32766:	from all lookup main
 32767:	from all lookup default
 `,
@@ -68,7 +68,7 @@ func TestFreeRulePrefs(t *testing.T) {
 			wantAhead: []string{
 				"32763:	from all lookup main suppress_prefixlength 0",
 				"32764:	from 192.168.1.10 lookup 200",
-				"32765:	not from all fwmark 0x30d5 lookup 201",
+				"32765:	from all fwmark 0 lookup 201",
 			},
 		},
 		{

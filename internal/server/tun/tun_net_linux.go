@@ -20,9 +20,10 @@ import (
 const StateFile = "/tmp/spoofdpi.linux.tun.state"
 
 // egressFwmark marks every socket TUN mode sends through the physical
-// interface, so the capture rule passes them by. It is matched exactly and
-// avoids the bits that kube-proxy (0x4000, 0x8000), Cilium (0x0f00), Calico
-// (0xffff0000) and Tailscale (0xff0000) use.
+// interface, so the capture rule, which matches only unmarked packets, passes
+// them by. Any nonzero mark would do; this one avoids the bits that
+// kube-proxy (0x4000, 0x8000), Cilium (0x0f00), Calico (0xffff0000) and
+// Tailscale (0xff0000) use.
 const egressFwmark = 0x30d5
 
 // ipv6CaptureGroup is the server.NetworkJob group of the IPv6 jobs.
@@ -179,8 +180,10 @@ func (n *tunSystemNetworkLinux) BuildJobs() ([]server.NetworkJob, error) {
 // that looks up the capture table, whose default route leads into the TUN.
 // A rule before it looks up main with its default route suppressed, so the
 // more specific routes in main, such as the local subnets, still win.
-// Sockets marked with egressFwmark skip the capture rule and leave by the
-// main table's routes.
+// The capture rule matches only packets whose mark is 0, so packets that
+// carry any mark skip it and follow the system's other rules. That covers
+// sockets marked with egressFwmark, which leave by the main table's routes,
+// and the tunnel packets of a VPN such as wg-quick, which marks its own.
 func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 	var jobs []server.NetworkJob
 
@@ -263,15 +266,13 @@ func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 	jobs = append(jobs, server.NetworkJob{
 		Description: "add capture rule for unmarked traffic",
 		Apply: fmt.Sprintf(
-			"ip rule add pref %d not fwmark 0x%x lookup %d",
+			"ip rule add pref %d fwmark 0/0xffffffff lookup %d",
 			info.CaptureRulePref,
-			egressFwmark,
 			info.CaptureTableID,
 		),
 		Reset: fmt.Sprintf(
-			"ip rule del pref %d not fwmark 0x%x lookup %d",
+			"ip rule del pref %d fwmark 0/0xffffffff lookup %d",
 			info.CaptureRulePref,
-			egressFwmark,
 			info.CaptureTableID,
 		),
 	})
@@ -324,15 +325,13 @@ func buildJobs(info *tunNetworkInfoLinux) []server.NetworkJob {
 		jobs = append(jobs, server.NetworkJob{
 			Description: "add IPv6 capture rule for unmarked traffic",
 			Apply: fmt.Sprintf(
-				"ip -6 rule add pref %d not fwmark 0x%x lookup %d",
+				"ip -6 rule add pref %d fwmark 0/0xffffffff lookup %d",
 				info.IPv6CaptureRulePref,
-				egressFwmark,
 				info.CaptureTableID,
 			),
 			Reset: fmt.Sprintf(
-				"ip -6 rule del pref %d not fwmark 0x%x lookup %d",
+				"ip -6 rule del pref %d fwmark 0/0xffffffff lookup %d",
 				info.IPv6CaptureRulePref,
-				egressFwmark,
 				info.CaptureTableID,
 			),
 			Optional: true,
@@ -385,8 +384,8 @@ func (n *tunSystemNetworkLinux) FIBID() int {
 // EgressControl returns the socket control that binds a socket to the
 // physical interface of rt with SO_BINDTODEVICE and marks it with
 // egressFwmark through SO_MARK, as TUN mode needs: its capture rule would
-// otherwise carry the traffic into the TUN, and the mark is what lets the
-// socket pass that rule. fibID is not used on Linux. It returns nil when
+// otherwise carry the traffic into the TUN, and any mark lets the socket
+// pass that rule. fibID is not used on Linux. It returns nil when
 // rt has no interface. BindDialer pins the dialed connections with it, and
 // TUN mode pins the raw sockets of fake packets with it too, so the two
 // cannot diverge.

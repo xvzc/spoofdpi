@@ -46,8 +46,8 @@ func TestBuildJobs_Linux(t *testing.T) {
 		},
 		{
 			Description: "add capture rule for unmarked traffic",
-			Apply:       "ip rule add pref 32765 not fwmark 0x30d5 lookup 200",
-			Reset:       "ip rule del pref 32765 not fwmark 0x30d5 lookup 200",
+			Apply:       "ip rule add pref 32765 fwmark 0/0xffffffff lookup 200",
+			Reset:       "ip rule del pref 32765 fwmark 0/0xffffffff lookup 200",
 		},
 	}
 	ipv6Jobs := []server.NetworkJob{
@@ -68,8 +68,8 @@ func TestBuildJobs_Linux(t *testing.T) {
 		},
 		{
 			Description: "add IPv6 capture rule for unmarked traffic",
-			Apply:       "ip -6 rule add pref 32765 not fwmark 0x30d5 lookup 200",
-			Reset:       "ip -6 rule del pref 32765 not fwmark 0x30d5 lookup 200",
+			Apply:       "ip -6 rule add pref 32765 fwmark 0/0xffffffff lookup 200",
+			Reset:       "ip -6 rule del pref 32765 fwmark 0/0xffffffff lookup 200",
 			Optional:    true,
 			Group:       ipv6CaptureGroup,
 			Warning:     ipv6RejectWarning,
