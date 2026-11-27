@@ -133,7 +133,10 @@ func (c *httpConn) checkDestination() bool {
 // dial connects to the destination, and writes a 502 when it can't.
 func (c *httpConn) dial(ctx context.Context) error {
 	rConn, err := netutil.DialFastest(
-		ctx, c.dst, "tcp", netutil.DialOptions{Timeout: c.cfg.Conn.TCPTimeout},
+		ctx, c.dst, "tcp", netutil.DialOptions{
+			Timeout: c.cfg.Conn.TCPTimeout,
+			Control: netutil.NoAutoFlowLabelControl(c.logger),
+		},
 	)
 	if err != nil {
 		_ = proto.HTTPBadGatewayResponse().Write(c.conn)

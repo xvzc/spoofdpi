@@ -165,7 +165,10 @@ func (c *httpsConn) reply() (bool, error) {
 
 func (c *httpsConn) dial(ctx context.Context) error {
 	rConn, err := netutil.DialFastest(
-		ctx, c.dst, "tcp", netutil.DialOptions{Timeout: c.cfg.Conn.TCPTimeout},
+		ctx, c.dst, "tcp", netutil.DialOptions{
+			Timeout: c.cfg.Conn.TCPTimeout,
+			Control: netutil.NoAutoFlowLabelControl(c.logger),
+		},
 	)
 	if err != nil {
 		return err

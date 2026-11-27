@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/netip"
 	"syscall"
+
+	"github.com/rs/zerolog"
 )
 
 // Packet is one IP packet to send. The sender builds the IP header.
@@ -39,6 +41,9 @@ type Options struct {
 	// net.ListenConfig.Control. nil leaves the route to the kernel; TUN
 	// mode pins the sockets to the physical interface with it.
 	Control func(network, address string, c syscall.RawConn) error
+	// Logger gets what fails without failing the open, such as turning the
+	// automatic flow label off on the IPv6 sockets.
+	Logger zerolog.Logger
 }
 
 // ErrNeedsRoot is returned, wrapped, when a socket that fake packets are

@@ -27,7 +27,7 @@ func TestFakeSenderOptions(t *testing.T) {
 		t.Run(mode.String(), func(t *testing.T) {
 			cfg := config.DefaultConfig()
 			cfg.App.Mode = mode
-			assert.Nil(t, fakeSenderOptions(cfg, rt).Control,
+			assert.Nil(t, fakeSenderOptions(zerolog.Nop(), cfg, rt).Control,
 				"the proxy modes leave the route to the kernel")
 		})
 	}
@@ -36,13 +36,13 @@ func TestFakeSenderOptions(t *testing.T) {
 		cfg := config.DefaultConfig()
 		cfg.App.Mode = config.AppModeTUN
 		cfg.App.FreebsdFIB = 2
-		assert.NotNil(t, fakeSenderOptions(cfg, rt).Control,
+		assert.NotNil(t, fakeSenderOptions(zerolog.Nop(), cfg, rt).Control,
 			"TUN mode pins the raw sockets like the dialed connections")
 		rt6 := &route.Route{
 			Family: netutil.FamilyV6,
 			Iface:  net.Interface{Index: 1, Name: "lo0"},
 		}
-		assert.NotNil(t, fakeSenderOptions(cfg, rt6).Control,
+		assert.NotNil(t, fakeSenderOptions(zerolog.Nop(), cfg, rt6).Control,
 			"TUN mode returns a control for an IPv6 route as well")
 	})
 }

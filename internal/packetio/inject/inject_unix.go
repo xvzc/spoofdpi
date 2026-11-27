@@ -27,6 +27,8 @@ import (
 //     with each packet as IPV6_HOPLIMIT and IPV6_PKTINFO ancillary data.
 //     The kernel leaves the transport checksum as it is given, since
 //     IPV6_CHECKSUM is off by default on raw sockets other than ICMPv6.
+//     IPV6_AUTOFLOWLABEL is off on them, so the packets carry flow label
+//     0, like spoofdpi's own IPv6 connections that they imitate.
 
 // protoTCP and protoUDP are the transport protocols a Packet can carry.
 const (
@@ -138,6 +140,11 @@ func openV6(opts Options) (*v6Sender, error) {
 }
 
 func openV6Conn(network string, opts Options) (*ipv6.PacketConn, error) {
+	// darwin would give the socket a flow label of its own, fixed on its
+	// first send, and Linux one hashed from each packet's addresses.
+	opts.Control = netutil.ChainControls(
+		opts.Control, netutil.NoAutoFlowLabelControl(opts.Logger),
+	)
 	pc, err := listenRaw(network, "::", opts)
 	if err != nil {
 		return nil, err
@@ -169,7 +176,9 @@ func (s *v6Sender) Close() error {
 }
 
 // ipv6Control returns the ancillary data that sets the hop limit and the
-// source of p. The flow label stays 0.
+// source of p. The flow label is the socket's: 0, unless turning
+// IPV6_AUTOFLOWLABEL off failed or Linux forces one with
+// net.ipv6.auto_flowlabels=3.
 func ipv6Control(p Packet) *ipv6.ControlMessage {
 	return &ipv6.ControlMessage{
 		HopLimit: int(p.HopLimit),

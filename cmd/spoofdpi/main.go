@@ -469,7 +469,7 @@ func openFakeSenders(
 	startup startupNet,
 	open openSenderFunc,
 ) (senders desync.Senders, fakesV6 error, err error) {
-	v4, err := open(netutil.FamilyV4, fakeSenderOptions(cfg, &startup.V4.Route))
+	v4, err := open(netutil.FamilyV4, fakeSenderOptions(logger, cfg, &startup.V4.Route))
 	if err != nil {
 		return desync.Senders{}, nil, fakeSenderError(err)
 	}
@@ -478,7 +478,7 @@ func openFakeSenders(
 		return senders, fakesOffV6(cfg, startup, nil), nil
 	}
 
-	v6, err := open(netutil.FamilyV6, fakeSenderOptions(cfg, &startup.V6.Route))
+	v6, err := open(netutil.FamilyV6, fakeSenderOptions(logger, cfg, &startup.V6.Route))
 	if err != nil {
 		logger.Warn().
 			Err(err).
@@ -522,12 +522,20 @@ func fakesOffV6(cfg *config.Config, startup startupNet, senderErr error) error {
 // that fake packets leave through. In TUN mode they are pinned to rt, the
 // egress of that family, like the dialed connections, so that the TUN's
 // routes cannot carry the fakes into the TUN. The proxy modes leave the
-// route to the kernel.
-func fakeSenderOptions(cfg *config.Config, rt *route.Route) inject.Options {
+// route to the kernel. What fails without failing the open is logged to
+// logger.
+func fakeSenderOptions(
+	logger zerolog.Logger,
+	cfg *config.Config,
+	rt *route.Route,
+) inject.Options {
 	if cfg.App.Mode != config.AppModeTUN {
-		return inject.Options{}
+		return inject.Options{Logger: logger}
 	}
-	return inject.Options{Control: tun.EgressControl(rt, cfg.App.FreebsdFIB)}
+	return inject.Options{
+		Control: tun.EgressControl(rt, cfg.App.FreebsdFIB),
+		Logger:  logger,
+	}
 }
 
 // fakesPinning describes where fakeSenderOptions pins fake packets on goos,

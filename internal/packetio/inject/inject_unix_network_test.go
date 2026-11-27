@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"syscall"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/xvzc/spoofdpi/internal/packetio/capture"
 	"github.com/xvzc/spoofdpi/internal/route"
 	"github.com/xvzc/spoofdpi/internal/testutil"
+	"golang.org/x/sys/unix"
 )
 
 // liveFakeSeq and liveFakeAck are the sequence numbers of the live tests'
@@ -86,6 +88,37 @@ func TestSenderLive_LocalConnection_RequireRoot(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, []byte("real"), buf, "the real connection survives the fake")
 		})
+	}
+}
+
+// TestOpenV6_NoAutoFlowLabel_RequireRoot checks that the IPv6 raw sockets
+// open with IPV6_AUTOFLOWLABEL off, and that the control of Options
+// still runs.
+func TestOpenV6_NoAutoFlowLabel_RequireRoot(t *testing.T) {
+	testutil.RequireRoot(t)
+
+	// The raw conns stay usable after the control, while the sockets are
+	// open.
+	var socks []syscall.RawConn
+	capture := func(_, _ string, c syscall.RawConn) error {
+		socks = append(socks, c)
+		return nil
+	}
+	s, err := Open(netutil.FamilyV6, Options{Control: capture})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	require.Len(t, socks, 2, "the control of Options runs on the TCP and UDP sockets")
+	for _, c := range socks {
+		var v int
+		var sockErr error
+		require.NoError(t, c.Control(func(fd uintptr) {
+			v, sockErr = unix.GetsockoptInt(
+				int(fd), unix.IPPROTO_IPV6, unix.IPV6_AUTOFLOWLABEL,
+			)
+		}))
+		require.NoError(t, sockErr)
+		assert.Equal(t, 0, v, "IPV6_AUTOFLOWLABEL of the raw socket")
 	}
 }
 

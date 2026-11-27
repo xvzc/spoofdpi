@@ -39,6 +39,9 @@ type DialOptions struct {
 	Timeout time.Duration
 	// Bind, if not nil, configures the dialer before each attempt.
 	Bind BindFunc
+	// Control, if not nil, runs on the socket of each attempt after the
+	// control that Bind sets, if any.
+	Control SocketControl
 	// AttemptDelay is how long DialFastest waits for an attempt before it
 	// starts the next one; 0 means 250ms.
 	AttemptDelay time.Duration
@@ -182,6 +185,7 @@ func dialAttempt(
 			return dialResult{err: err}
 		}
 	}
+	dialer.Control = ChainControls(dialer.Control, o.Control)
 
 	conn, err := dialContext(ctx, dialer, network, targetAddr)
 	if err == nil && ctx.Err() != nil {

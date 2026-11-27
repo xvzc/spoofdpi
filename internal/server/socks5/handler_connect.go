@@ -157,7 +157,10 @@ func (c *connectConn) dial(ctx context.Context) error {
 	c.h.desyncer.PrepareHopTrack(c.dst.Addrs, &c.cfg.HTTPS)
 
 	rConn, err := netutil.DialFastest(
-		ctx, c.dst, "tcp", netutil.DialOptions{Timeout: c.cfg.Conn.TCPTimeout},
+		ctx, c.dst, "tcp", netutil.DialOptions{
+			Timeout: c.cfg.Conn.TCPTimeout,
+			Control: netutil.NoAutoFlowLabelControl(c.logger),
+		},
 	)
 	if err != nil {
 		_ = proto.SOCKS5FailureResponse().Write(c.conn)
