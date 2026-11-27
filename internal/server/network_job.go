@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -60,6 +62,11 @@ var (
 	createTempFile = os.CreateTemp
 )
 
+// errUntrustedState marks a state file that was refused because it may have
+// been planted by another user. Its commands run with the privileges of this
+// process, so they must not be executed.
+var errUntrustedState = errors.New("untrusted state file")
+
 // SaveJobs marshals jobs to a JSON state file at path, along with lifetime and
 // the current boot ID. The file is replaced atomically, so a failed save
 // leaves the previous state file intact.
@@ -104,20 +111,29 @@ func saveState(path string, s jobState) error {
 
 // LoadJobs reads and unmarshals the state file at path.
 // Returns (nil, false, nil) when path is empty or the file does not exist.
+// A file that is not a regular file owned by the effective user and closed to
+// writes by others is refused with an error and left in place.
 func LoadJobs(path string) ([]NetworkJob, bool, error) {
-	s, exists, err := loadState(path)
+	s, exists, err := loadState(path, false)
 	return s.Jobs, exists, err
 }
 
-func loadState(path string) (jobState, bool, error) {
+// loadState reads the state file at path. requireSingleLink also refuses a
+// file with other hard links; see openStateFile.
+func loadState(path string, requireSingleLink bool) (jobState, bool, error) {
 	if path == "" {
 		return jobState{}, false, nil
 	}
-	data, err := os.ReadFile(path)
+	f, err := openStateFile(path, requireSingleLink)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return jobState{}, false, nil
 		}
+		return jobState{}, false, fmt.Errorf("%s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(f)
+	if err != nil {
 		return jobState{}, false, err
 	}
 	var s jobState
@@ -140,7 +156,7 @@ func ApplyJobs(logger zerolog.Logger, path string) error {
 	if path == "" {
 		return nil
 	}
-	state, exists, err := loadState(path)
+	state, exists, err := loadState(path, false)
 	if err != nil {
 		return fmt.Errorf("failed to load state: %w", err)
 	}
@@ -237,7 +253,9 @@ func resetStateFile(logger zerolog.Logger, path string, stale bool) {
 	if path == "" {
 		return
 	}
-	state, exists, err := loadState(path)
+	// Only a stale file is checked for hard links: refusing a live file for
+	// them would let another user block the reset at shutdown.
+	state, exists, err := loadState(path, stale)
 	if err != nil {
 		logger.Warn().Err(err).Str("state", path).Msg("failed to load network state")
 		return
