@@ -247,14 +247,17 @@ func walkAttrs(b []byte, fn func(typ uint16, val []byte)) error {
 
 // netlinkRoute is a decoded RTM_NEWROUTE message.
 type netlinkRoute struct {
-	family uint8
-	dstLen uint8
-	typ    uint8
+	family   uint8
+	dstLen   uint8
+	protocol uint8
+	scope    uint8
+	typ      uint8
 	// flags is rtm_flags, which carries the RTNH_F_* flags of a route
 	// with a single next hop.
 	flags   uint32
 	table   int
 	oif     int
+	dst     netip.Addr
 	gateway netip.Addr
 	prefsrc netip.Addr
 	// via reports an RTA_VIA next hop, a gateway of another family
@@ -272,14 +275,18 @@ func parseNetlinkRoute(data []byte) (netlinkRoute, error) {
 		return netlinkRoute{}, errors.New("netlink: short route message")
 	}
 	r := netlinkRoute{
-		family: data[0],
-		dstLen: data[1],
-		table:  int(data[4]),
-		typ:    data[7],
-		flags:  binary.NativeEndian.Uint32(data[8:12]),
+		family:   data[0],
+		dstLen:   data[1],
+		table:    int(data[4]),
+		protocol: data[5],
+		scope:    data[6],
+		typ:      data[7],
+		flags:    binary.NativeEndian.Uint32(data[8:12]),
 	}
 	err := walkAttrs(data[rtmsgLen:], func(typ uint16, val []byte) {
 		switch typ {
+		case rtaDst:
+			r.dst, _ = netip.AddrFromSlice(val)
 		case rtaOif:
 			if len(val) >= 4 {
 				r.oif = int(binary.NativeEndian.Uint32(val))
