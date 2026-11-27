@@ -211,8 +211,10 @@ Specifies whether to automatically set up the system-wide proxy configuration. `
 
 The system proxy points at the address in [`listen-addr`](#listen-addr). When that address is `0.0.0.0` or `[::]`, it points at `127.0.0.1` instead, on the same port.
 
+In `tun` mode, spoofdpi exits with an error when it fails to set up the network config, since no traffic reaches the TUN interface without it. In `http` and `socks5` modes, it logs the error and keeps running.
+
 !!! important
-    This option is currently only supported on **macOS**.
+    In `http` and `socks5` modes, setting the system proxy is currently only supported on **macOS**. In `tun` mode, this option sets up the routing into the TUN interface on Linux, macOS and FreeBSD.
 
 ### Usage
 

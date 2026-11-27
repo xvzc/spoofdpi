@@ -207,13 +207,14 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	context.AfterFunc(appctx, beginShutdown)
 	serveCtx := shutdownCtx
 	if cfg.App.AutoConfigureNetwork {
-		if stateFile, acErr := srv.SetupNetworkJobs(appctx); acErr != nil {
-			// Non-fatal: server is running, just couldn't auto-set
-			// system proxy. Log and continue rather than tearing down.
-			logger.Error().Err(acErr).Msg("failed to set system network config")
-		} else if acErr := server.ApplyJobs(logger, stateFile); acErr != nil {
-			logger.Error().Err(acErr).Msg("failed to apply network config")
-		} else {
+		stateFile, acErr := srv.SetupNetworkJobs(appctx)
+		if acErr != nil {
+			acErr = fmt.Errorf("set system network config: %w", acErr)
+		} else if acErr = server.ApplyJobs(logger, stateFile); acErr != nil {
+			acErr = fmt.Errorf("apply network config: %w", acErr)
+		}
+		switch {
+		case acErr == nil:
 			// Restore the network config as soon as shutdown starts, and
 			// only then shut the server down: closing a TUN device removes
 			// its routes, which would make their reset commands fail.
@@ -222,6 +223,18 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 				server.ResetJobs(logger, stateFile)
 			})
 			defer restore()
+		case isNetworkSetupFatal(cfg.App.Mode):
+			// ApplyJobs rolled back its own jobs, so there is nothing to
+			// reset. Serve on an ended context only closes the server.
+			beginShutdown()
+			if sErr := srv.Serve(shutdownCtx); sErr != nil {
+				logger.Error().Err(sErr).Msg("failed to stop server")
+			}
+			return acErr
+		default:
+			// Non-fatal: server is running, just couldn't auto-set
+			// system proxy. Log and continue rather than tearing down.
+			logger.Error().Err(acErr).Msg("failed to configure system network")
 		}
 	}
 
@@ -230,6 +243,13 @@ func runApp(mainctx context.Context, configDir string, cfg *config.Config) (err 
 	// Deferred last, so it runs first: before the network is restored.
 	defer beginShutdown()
 	return srv.Serve(serveCtx)
+}
+
+// isNetworkSetupFatal reports whether a failure to set up the network config
+// must end the run. The TUN server has no traffic without its routes, while
+// the HTTP and SOCKS5 proxies still work when only the system proxy fails.
+func isNetworkSetupFatal(mode config.AppModeType) bool {
+	return mode == config.AppModeTUN
 }
 
 // shutdownAfterLimit bounds how long shutdownAfter holds the server up while
